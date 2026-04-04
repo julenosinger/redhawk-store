@@ -1,0 +1,24 @@
+{
+  "name": "redhawk-escrow",
+  "version": "1.0.0",
+  "description": "RedHawk Escrow smart contracts for Arc Network",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "test:gas": "REPORT_GAS=true hardhat test",
+    "coverage": "hardhat coverage",
+    "deploy:local": "hardhat run scripts/deploy.js --network localhost",
+    "deploy:arc": "hardhat run scripts/deploy.js --network arcTestnet",
+    "node": "hardhat node",
+    "clean": "hardhat clean"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-chai-matchers": "^2.0.0",
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@openzeppelin/contracts": "^5.1.0",
+    "chai": "^4.4.1",
+    "dotenv": "^17.4.0",
+    "ethers": "^6.13.0",
+    "hardhat": "^2.22.0"
+  }
+}
