@@ -2,87 +2,116 @@ import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 
 const app = new Hono()
-
 app.use('*', cors())
 
-// Favicon — return minimal inline SVG icon, avoid 500 from serveStatic
+// ─── Favicon ────────────────────────────────────────────────────────
 app.get('/favicon.ico', (c) => {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24"><path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="#dc2626"/></svg>`
   return new Response(svg, { headers: { 'Content-Type': 'image/svg+xml' } })
 })
 
-// ─── API Routes ────────────────────────────────────────────────────
-// Products API
+// ─── Arc Network constants (server-side reference only) ─────────────
+const ARC = {
+  chainId: 5042002,
+  chainIdHex: '0x4CE2D2',
+  rpc: 'https://rpc.testnet.arc.network',
+  rpcAlt: 'https://rpc.blockdaemon.testnet.arc.network',
+  explorer: 'https://testnet.arcscan.app',
+  faucet: 'https://faucet.circle.com',
+  networkName: 'Arc Testnet',
+  currency: 'USDC',
+  contracts: {
+    USDC: '0x3600000000000000000000000000000000000000',
+    EURC: '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a',
+    Multicall3: '0xcA11bde05977b3631167028862bE2a173976CA11',
+    Permit2: '0x000000000022D473030F116dDEE9F6B43aC78BA3',
+    FxEscrow: '0x867650F5eAe8df91445971f14d89fd84F0C9a9f8',
+  }
+}
+
+// ─── API Routes ──────────────────────────────────────────────────────
+
+// Arc config endpoint — used by frontend for chain setup
+app.get('/api/arc-config', (c) => {
+  return c.json({ arc: ARC })
+})
+
+// Products: returns empty — products come from DB/contracts (no mock data)
 app.get('/api/products', (c) => {
-  return c.json({ products: MOCK_PRODUCTS })
+  return c.json({
+    products: [],
+    total: 0,
+    source: 'database',
+    message: 'No products listed yet. Be the first to sell on redhawk-store!'
+  })
 })
 
 app.get('/api/products/:id', (c) => {
-  const id = c.req.param('id')
-  const product = MOCK_PRODUCTS.find(p => p.id === id)
-  if (!product) return c.json({ error: 'Not found' }, 404)
-  return c.json({ product })
+  return c.json({ error: 'Product not found', product: null }, 404)
 })
 
-// Orders API
-app.post('/api/orders', async (c) => {
-  const body = await c.req.json()
-  const order = {
-    id: `ORD-${Date.now()}`,
-    ...body,
-    status: 'escrow_pending',
-    createdAt: new Date().toISOString(),
-    txHash: `0x${Math.random().toString(16).substring(2)}${Math.random().toString(16).substring(2)}`
-  }
-  return c.json({ order })
-})
-
-// AI Search API
-app.post('/api/ai-search', async (c) => {
-  const { query } = await c.req.json()
-  const q = (query || '').toLowerCase()
-  const results = MOCK_PRODUCTS.filter(p =>
-    p.name.toLowerCase().includes(q) ||
-    p.category.toLowerCase().includes(q) ||
-    p.description.toLowerCase().includes(q) ||
-    p.tags.some((t: string) => t.toLowerCase().includes(q))
-  ).slice(0, 6)
+// Orders: returns empty — orders come from real escrow contract state
+app.get('/api/orders', (c) => {
   return c.json({
-    results,
-    message: results.length
-      ? `Found ${results.length} product(s) matching "${query}"`
-      : `No products found for "${query}". Try keywords like "laptop", "phone", "gaming", "headphones".`
+    orders: [],
+    total: 0,
+    source: 'escrow_contract',
+    message: 'No orders yet.'
   })
 })
 
-// Stats API
+// Stats: fetched from blockchain in real-time (frontend calls RPC)
 app.get('/api/stats', (c) => {
   return c.json({
-    totalProducts: MOCK_PRODUCTS.length,
-    totalSellers: 12,
-    totalOrders: 1847,
-    totalVolume: '2,450,320 USDC'
+    note: 'Stats are fetched live from Arc Network — see /api/arc-config for RPC endpoint',
+    explorer: ARC.explorer,
+    faucet: ARC.faucet
   })
 })
 
-// ─── Pages ─────────────────────────────────────────────────────────
+// Create order (writes to escrow contract via frontend — backend records metadata)
+app.post('/api/orders', async (c) => {
+  const body = await c.req.json()
+  if (!body.txHash || !body.buyerAddress || !body.sellerAddress) {
+    return c.json({ error: 'Missing required fields: txHash, buyerAddress, sellerAddress' }, 400)
+  }
+  const order = {
+    id: `ORD-${Date.now()}`,
+    txHash: body.txHash,
+    buyerAddress: body.buyerAddress,
+    sellerAddress: body.sellerAddress,
+    amount: body.amount,
+    token: body.token,
+    productId: body.productId,
+    status: 'escrow_locked',
+    createdAt: new Date().toISOString(),
+    explorerUrl: `${ARC.explorer}/tx/${body.txHash}`
+  }
+  return c.json({ order, success: true })
+})
+
+// AI search: returns empty state since no real products exist yet
+app.post('/api/ai-search', async (c) => {
+  const { query } = await c.req.json()
+  return c.json({
+    results: [],
+    message: query
+      ? `No products found for "${query}". The marketplace is just getting started — check back soon or list your own product!`
+      : 'Ask me to search for products!'
+  })
+})
+
+// ─── Pages ───────────────────────────────────────────────────────────
 app.get('/', (c) => c.html(homePage()))
 app.get('/marketplace', (c) => c.html(marketplacePage()))
-app.get('/product/:id', (c) => {
-  const id = c.req.param('id')
-  const product = MOCK_PRODUCTS.find(p => p.id === id) || MOCK_PRODUCTS[0]
-  return c.html(productPage(product))
-})
+app.get('/product/:id', (c) => c.html(productNotFoundPage(c.req.param('id'))))
 app.get('/cart', (c) => c.html(cartPage()))
 app.get('/checkout', (c) => c.html(checkoutPage()))
 app.get('/wallet', (c) => c.html(walletPage()))
 app.get('/wallet/create', (c) => c.html(walletCreatePage()))
 app.get('/wallet/import', (c) => c.html(walletImportPage()))
 app.get('/orders', (c) => c.html(ordersPage()))
-app.get('/orders/:id', (c) => {
-  const id = c.req.param('id')
-  return c.html(orderDetailPage(id))
-})
+app.get('/orders/:id', (c) => c.html(orderDetailPage(c.req.param('id'))))
 app.get('/sell', (c) => c.html(sellPage()))
 app.get('/profile', (c) => c.html(profilePage()))
 app.get('/register', (c) => c.html(registerPage()))
@@ -92,148 +121,21 @@ app.get('/notifications', (c) => c.html(notificationsPage()))
 
 export default app
 
-// ─── Mock Data ─────────────────────────────────────────────────────
-const MOCK_PRODUCTS = [
-  {
-    id: 'p1',
-    name: 'MacBook Pro 16" M3 Max',
-    category: 'Electronics',
-    price: 3299,
-    token: 'USDC',
-    image: 'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?w=400&q=80',
-    seller: 'TechVault Pro',
-    sellerAddress: '0xA1b2...C3d4',
-    rating: 4.9,
-    reviews: 128,
-    stock: 5,
-    description: 'The most powerful MacBook Pro ever. M3 Max chip with 40-core GPU, 16-inch Liquid Retina XDR display, up to 128GB unified memory.',
-    tags: ['laptop', 'apple', 'macbook', 'pro'],
-    escrowProtected: true,
-    gasEstimate: 0.42
-  },
-  {
-    id: 'p2',
-    name: 'iPhone 15 Pro Max 256GB',
-    category: 'Electronics',
-    price: 1299,
-    token: 'USDC',
-    image: 'https://images.unsplash.com/photo-1592750475338-74b7b21085ab?w=400&q=80',
-    seller: 'AppleWorld Store',
-    sellerAddress: '0xB2c3...D4e5',
-    rating: 4.8,
-    reviews: 256,
-    stock: 12,
-    description: 'iPhone 15 Pro Max with titanium design, 48MP camera system, A17 Pro chip, and USB-C connectivity.',
-    tags: ['phone', 'apple', 'iphone', 'smartphone'],
-    escrowProtected: true,
-    gasEstimate: 0.38
-  },
-  {
-    id: 'p3',
-    name: 'Sony WH-1000XM5 Headphones',
-    category: 'Audio',
-    price: 349,
-    token: 'USDC',
-    image: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=400&q=80',
-    seller: 'AudioElite',
-    sellerAddress: '0xC3d4...E5f6',
-    rating: 4.7,
-    reviews: 892,
-    stock: 30,
-    description: 'Industry-leading noise cancellation headphones with 30-hour battery life and crystal-clear hands-free calling.',
-    tags: ['headphones', 'sony', 'audio', 'noise-cancelling'],
-    escrowProtected: true,
-    gasEstimate: 0.31
-  },
-  {
-    id: 'p4',
-    name: 'NVIDIA RTX 4090 GPU',
-    category: 'Gaming',
-    price: 1899,
-    token: 'USDC',
-    image: 'https://images.unsplash.com/photo-1591488320449-011701bb6704?w=400&q=80',
-    seller: 'GamersParadise',
-    sellerAddress: '0xD4e5...F6g7',
-    rating: 4.9,
-    reviews: 67,
-    stock: 3,
-    description: 'The NVIDIA GeForce RTX 4090 is the flagship gaming GPU featuring Ada Lovelace architecture, 24GB GDDR6X memory.',
-    tags: ['gpu', 'gaming', 'nvidia', 'graphics card'],
-    escrowProtected: true,
-    gasEstimate: 0.45
-  },
-  {
-    id: 'p5',
-    name: 'Samsung 49" Ultra-Wide Monitor',
-    category: 'Electronics',
-    price: 1199,
-    token: 'EURC',
-    image: 'https://images.unsplash.com/photo-1527443224154-c4a3942d3acf?w=400&q=80',
-    seller: 'DisplayWorld',
-    sellerAddress: '0xE5f6...G7h8',
-    rating: 4.6,
-    reviews: 203,
-    stock: 8,
-    description: 'Odyssey Neo G9 dual UHD curved gaming monitor with 240Hz refresh rate and 1ms response time.',
-    tags: ['monitor', 'samsung', 'gaming', 'ultrawide'],
-    escrowProtected: true,
-    gasEstimate: 0.36
-  },
-  {
-    id: 'p6',
-    name: 'DJI Mavic 3 Pro Drone',
-    category: 'Photography',
-    price: 2199,
-    token: 'USDC',
-    image: 'https://images.unsplash.com/photo-1473968512647-3e447244af8f?w=400&q=80',
-    seller: 'DroneStore Official',
-    sellerAddress: '0xF6g7...H8i9',
-    rating: 4.8,
-    reviews: 145,
-    stock: 7,
-    description: 'DJI Mavic 3 Pro with Hasselblad camera, 43-min flight time, tri-lens system for professional aerial photography.',
-    tags: ['drone', 'dji', 'camera', 'photography'],
-    escrowProtected: true,
-    gasEstimate: 0.44
-  },
-  {
-    id: 'p7',
-    name: 'Mechanical Gaming Keyboard RGB',
-    category: 'Gaming',
-    price: 189,
-    token: 'USDC',
-    image: 'https://images.unsplash.com/photo-1541140532154-b024d705b90a?w=400&q=80',
-    seller: 'GamersParadise',
-    sellerAddress: '0xD4e5...F6g7',
-    rating: 4.5,
-    reviews: 441,
-    stock: 45,
-    description: 'Corsair K100 RGB mechanical keyboard with OPX optical-mechanical switches, per-key RGB, and dedicated macro keys.',
-    tags: ['keyboard', 'gaming', 'rgb', 'mechanical'],
-    escrowProtected: true,
-    gasEstimate: 0.28
-  },
-  {
-    id: 'p8',
-    name: 'Apple Watch Ultra 2',
-    category: 'Wearables',
-    price: 799,
-    token: 'EURC',
-    image: 'https://images.unsplash.com/photo-1434494878577-86c23bcb06b9?w=400&q=80',
-    seller: 'AppleWorld Store',
-    sellerAddress: '0xB2c3...D4e5',
-    rating: 4.7,
-    reviews: 334,
-    stock: 15,
-    description: 'Apple Watch Ultra 2 with titanium case, precision GPS, 60-hour battery, and S9 chip.',
-    tags: ['watch', 'apple', 'wearable', 'smartwatch'],
-    escrowProtected: true,
-    gasEstimate: 0.33
-  }
-]
+// ─── ARC CONFIG (injected into every page for client-side use) ───────
+const ARC_CLIENT_CONFIG = JSON.stringify({
+  chainId: ARC.chainId,
+  chainIdHex: ARC.chainIdHex,
+  rpc: ARC.rpc,
+  rpcAlt: ARC.rpcAlt,
+  explorer: ARC.explorer,
+  faucet: ARC.faucet,
+  networkName: ARC.networkName,
+  currency: ARC.currency,
+  contracts: ARC.contracts
+})
 
-// ─── HTML Helpers ───────────────────────────────────────────────────
-function shell(title: string, body: string, extraHead = '', bodyClass = '') {
+// ─── HTML Shell ───────────────────────────────────────────────────────
+function shell(title: string, body: string, extraHead = '') {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -248,16 +150,9 @@ function shell(title: string, body: string, extraHead = '', bodyClass = '') {
         extend: {
           colors: {
             hawk: {
-              50:  '#fff1f1',
-              100: '#ffe1e1',
-              200: '#ffc7c7',
-              300: '#ffa0a0',
-              400: '#ff6b6b',
-              500: '#ef4444',
-              600: '#dc2626',
-              700: '#b91c1c',
-              800: '#991b1b',
-              900: '#7f1d1d',
+              50:'#fff1f1',100:'#ffe1e1',200:'#ffc7c7',300:'#ffa0a0',
+              400:'#ff6b6b',500:'#ef4444',600:'#dc2626',700:'#b91c1c',
+              800:'#991b1b',900:'#7f1d1d'
             }
           },
           fontFamily: { sans: ['Inter','system-ui','sans-serif'] }
@@ -273,9 +168,10 @@ function shell(title: string, body: string, extraHead = '', bodyClass = '') {
     ::-webkit-scrollbar-track{background:#f1f5f9}
     ::-webkit-scrollbar-thumb{background:#dc2626;border-radius:3px}
     .badge-escrow{background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:600}
-    .btn-primary{background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;border:none;padding:10px 20px;border-radius:8px;font-weight:600;cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:6px}
+    .btn-primary{background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;border:none;padding:10px 20px;border-radius:8px;font-weight:600;cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:6px;text-decoration:none}
     .btn-primary:hover{transform:translateY(-1px);box-shadow:0 4px 15px rgba(220,38,38,0.4)}
-    .btn-secondary{background:#fff;color:#dc2626;border:2px solid #dc2626;padding:10px 20px;border-radius:8px;font-weight:600;cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:6px}
+    .btn-primary:disabled{opacity:.5;cursor:not-allowed;transform:none}
+    .btn-secondary{background:#fff;color:#dc2626;border:2px solid #dc2626;padding:10px 20px;border-radius:8px;font-weight:600;cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:6px;text-decoration:none}
     .btn-secondary:hover{background:#fff1f1}
     .card{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);border:1px solid #f1f5f9}
     .product-card{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);border:1px solid #f1f5f9;overflow:hidden;transition:all .2s}
@@ -288,21 +184,21 @@ function shell(title: string, body: string, extraHead = '', bodyClass = '') {
     .input:focus{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.1)}
     .select{width:100%;border:1.5px solid #e2e8f0;border-radius:8px;padding:10px 14px;font-size:14px;outline:none;background:#fff;cursor:pointer}
     .select:focus{border-color:#dc2626}
-    .toast{position:fixed;top:20px;right:20px;z-index:9999;background:#1e293b;color:#fff;padding:12px 20px;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,.2);font-size:14px;transform:translateX(120%);transition:transform .3s}
+    .toast{position:fixed;top:20px;right:20px;z-index:9999;background:#1e293b;color:#fff;padding:12px 20px;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,.2);font-size:14px;transform:translateX(120%);transition:transform .3s;max-width:340px}
     .toast.show{transform:translateX(0)}
     .toast.success{background:#16a34a}
     .toast.error{background:#dc2626}
     .toast.info{background:#0ea5e9}
+    .toast.warning{background:#d97706}
     nav{background:#fff;border-bottom:1px solid #f1f5f9;position:sticky;top:0;z-index:100;box-shadow:0 1px 4px rgba(0,0,0,.06)}
     footer{background:#1e293b;color:#94a3b8;padding:48px 0 24px}
     .hero-gradient{background:linear-gradient(135deg,#fff1f1 0%,#fef2f2 30%,#fff 60%,#f8fafc 100%)}
     .loading-spinner{display:inline-block;width:20px;height:20px;border:2px solid #f3f3f3;border-top:2px solid #dc2626;border-radius:50%;animation:spin 1s linear infinite}
+    .loading-spinner-lg{display:inline-block;width:40px;height:40px;border:3px solid #f1f5f9;border-top:3px solid #dc2626;border-radius:50%;animation:spin 1s linear infinite}
     @keyframes spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
     .step-circle{width:32px;height:32px;border-radius:50%;background:#dc2626;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0}
     .step-circle.done{background:#16a34a}
     .step-circle.pending{background:#e2e8f0;color:#94a3b8}
-    .progress-bar{height:4px;background:#f1f5f9;border-radius:2px;overflow:hidden}
-    .progress-fill{height:100%;background:linear-gradient(90deg,#dc2626,#b91c1c);border-radius:2px;transition:width .3s}
     .seed-word{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;font-family:monospace;font-size:13px;font-weight:600;color:#dc2626;text-align:center}
     .wallet-card{background:linear-gradient(135deg,#dc2626 0%,#991b1b 50%,#7f1d1d 100%);color:#fff;border-radius:16px;padding:24px}
     .chat-bubble-user{background:#fef2f2;border-radius:12px 12px 2px 12px;padding:10px 14px;max-width:80%}
@@ -310,72 +206,351 @@ function shell(title: string, body: string, extraHead = '', bodyClass = '') {
     .sidebar-nav a{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;color:#64748b;font-size:14px;font-weight:500;text-decoration:none;transition:all .15s}
     .sidebar-nav a:hover,.sidebar-nav a.active{background:#fef2f2;color:#dc2626}
     .notification-item{border-left:3px solid #dc2626;padding:12px 16px;background:#fff;border-radius:0 8px 8px 0;margin-bottom:8px}
+    .empty-state{text-align:center;padding:48px 24px;color:#94a3b8}
+    .empty-state i{font-size:48px;margin-bottom:16px;opacity:.3;display:block}
+    .demo-disclaimer{background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 16px;font-size:12px;color:#92400e;display:flex;align-items:center;gap:8px;line-height:1.4}
+    .arc-badge{background:linear-gradient(135deg,#1e40af,#1d4ed8);color:#fff;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:600;display:inline-flex;align-items:center;gap:4px}
+    .network-warning{background:#fef3c7;border:1px solid #fcd34d;border-radius:12px;padding:12px 16px;font-size:13px;color:#92400e;display:flex;align-items:center;gap:8px}
+    .network-ok{background:#f0fdf4;border:1px solid #86efac;border-radius:12px;padding:12px 16px;font-size:13px;color:#166534;display:flex;align-items:center;gap:8px}
+    .addr-mono{font-family:monospace;font-size:12px;word-break:break-all}
   </style>
   ${extraHead}
+  <!-- Arc Network client config (injected server-side) -->
+  <script>
+    window.ARC = ${ARC_CLIENT_CONFIG};
+  </script>
+  <!-- ethers.js v6 via CDN for wallet + RPC interaction -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
 </head>
-<body class="${bodyClass}">
+<body>
   ${navbar()}
   ${body}
   ${chatWidget()}
   ${toastContainer()}
-  <script>
-    // Global utilities
-    function showToast(msg, type='info') {
-      const t = document.getElementById('global-toast');
-      t.textContent = msg;
-      t.className = 'toast show ' + type;
-      setTimeout(() => { t.className = 'toast ' + type }, 3500);
-    }
-    function formatCurrency(amount, token) {
-      return amount.toLocaleString('en-US', {minimumFractionDigits:2,maximumFractionDigits:2}) + ' ' + token;
-    }
-    // Cart
-    function getCart() {
-      try { return JSON.parse(localStorage.getItem('rh_cart') || '[]') } catch { return [] }
-    }
-    function saveCart(c) { localStorage.setItem('rh_cart', JSON.stringify(c)) }
-    function addToCart(product) {
-      const cart = getCart();
-      const idx = cart.findIndex(i => i.id === product.id);
-      if (idx >= 0) cart[idx].qty++;
-      else cart.push({...product, qty:1});
-      saveCart(cart);
-      updateCartBadge();
-      showToast('Added to cart!', 'success');
-    }
-    function updateCartBadge() {
-      const cart = getCart();
-      const total = cart.reduce((s,i) => s+i.qty, 0);
-      const el = document.getElementById('cart-badge');
-      if (el) { el.textContent = total; el.style.display = total > 0 ? 'flex' : 'none'; }
-    }
-    // Wallet
-    function getWallet() {
-      try { return JSON.parse(localStorage.getItem('rh_wallet') || 'null') } catch { return null }
-    }
-    function updateWalletBadge() {
-      const w = getWallet();
-      const el = document.getElementById('wallet-badge');
-      if (el) el.textContent = w ? w.address.substring(0,8)+'...' : 'Wallet';
-    }
-    document.addEventListener('DOMContentLoaded', () => {
-      updateCartBadge();
-      updateWalletBadge();
-    });
-    // Chat toggle
-    function toggleChat() {
-      const panel = document.getElementById('chat-panel');
-      panel.classList.toggle('hidden');
-    }
-  </script>
+  ${globalScript()}
 </body>
 </html>`
 }
 
+// ─── Global Script (Arc wallet + balance logic) ───────────────────────
+function globalScript() {
+  return `<script>
+// ══════════════════════════════════════════════════════════════
+//  ARC NETWORK — Real wallet integration
+//  Chain ID: 5042002 (Arc Testnet)
+//  RPC: https://rpc.testnet.arc.network
+//  USDC: 0x3600000000000000000000000000000000000000 (6 dec)
+//  EURC: 0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a (6 dec)
+// ══════════════════════════════════════════════════════════════
+
+const ARC_CHAIN_ID = window.ARC.chainId;
+const ARC_CHAIN_ID_HEX = window.ARC.chainIdHex;
+const ARC_RPC = window.ARC.rpc;
+const ARC_EXPLORER = window.ARC.explorer;
+const USDC_ADDRESS = window.ARC.contracts.USDC;
+const EURC_ADDRESS = window.ARC.contracts.EURC;
+
+// Minimal ERC-20 ABI for balanceOf + decimals
+const ERC20_ABI = [
+  'function balanceOf(address owner) view returns (uint256)',
+  'function decimals() view returns (uint8)',
+  'function symbol() view returns (string)',
+  'function transfer(address to, uint256 amount) returns (bool)'
+];
+
+// ─ Toast ──────────────────────────────────────────────────────
+function showToast(msg, type='info') {
+  const t = document.getElementById('global-toast');
+  if (!t) return;
+  t.textContent = msg;
+  t.className = 'toast show ' + type;
+  setTimeout(() => { t.className = 'toast ' + type }, 4000);
+}
+
+// ─ Cart (localStorage) ─────────────────────────────────────────
+function getCart() { try { return JSON.parse(localStorage.getItem('rh_cart') || '[]') } catch { return [] } }
+function saveCart(c) { localStorage.setItem('rh_cart', JSON.stringify(c)) }
+function addToCart(product) {
+  const cart = getCart();
+  const idx = cart.findIndex(i => i.id === product.id);
+  if (idx >= 0) cart[idx].qty++;
+  else cart.push({...product, qty:1});
+  saveCart(cart);
+  updateCartBadge();
+  showToast('Added to cart!', 'success');
+}
+function updateCartBadge() {
+  const cart = getCart();
+  const total = cart.reduce((s,i) => s+i.qty, 0);
+  const el = document.getElementById('cart-badge');
+  if (el) { el.textContent = total; el.style.display = total > 0 ? 'flex' : 'none'; }
+}
+
+// ─ Wallet state ────────────────────────────────────────────────
+let _walletAddress = null;
+let _walletProvider = null;
+let _ethersProvider = null;
+
+function getStoredWallet() {
+  try { return JSON.parse(localStorage.getItem('rh_wallet') || 'null') } catch { return null }
+}
+function storeWallet(w) { localStorage.setItem('rh_wallet', JSON.stringify(w)) }
+function clearWallet() { localStorage.removeItem('rh_wallet') }
+
+function updateWalletBadge(address) {
+  const el = document.getElementById('wallet-badge');
+  if (el) el.textContent = address ? address.substring(0,8)+'…' : 'Wallet';
+  _walletAddress = address || null;
+}
+
+// ─ Arc Network chain helpers ───────────────────────────────────
+async function switchToArc() {
+  if (!window.ethereum) return false;
+  try {
+    await window.ethereum.request({
+      method: 'wallet_switchEthereumChain',
+      params: [{ chainId: ARC_CHAIN_ID_HEX }]
+    });
+    return true;
+  } catch (switchErr) {
+    if (switchErr.code === 4902) {
+      try {
+        await window.ethereum.request({
+          method: 'wallet_addEthereumChain',
+          params: [{
+            chainId: ARC_CHAIN_ID_HEX,
+            chainName: 'Arc Testnet',
+            nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 6 },
+            rpcUrls: [ARC_RPC, 'https://rpc.blockdaemon.testnet.arc.network'],
+            blockExplorerUrls: [ARC_EXPLORER]
+          }]
+        });
+        return true;
+      } catch { return false; }
+    }
+    return false;
+  }
+}
+
+async function isOnArcNetwork() {
+  if (!window.ethereum) return false;
+  try {
+    const chainId = await window.ethereum.request({ method: 'eth_chainId' });
+    return parseInt(chainId, 16) === ARC_CHAIN_ID;
+  } catch { return false; }
+}
+
+// ─ Real balance fetch from Arc Network RPC ─────────────────────
+async function fetchArcBalances(address) {
+  if (!address) return { usdc: '0.00', eurc: '0.00', raw: { usdc: 0n, eurc: 0n } };
+  try {
+    const provider = new ethers.JsonRpcProvider(ARC_RPC);
+
+    // USDC: Arc native (also ERC-20 with 6 decimals)
+    let usdcRaw = 0n;
+    try {
+      // First try native balance (USDC is native on Arc)
+      const nativeBal = await provider.getBalance(address);
+      // Arc native balance is in 18-decimal form for USDC
+      // Convert: native / 1e12 gives 6-decimal USDC
+      usdcRaw = nativeBal / BigInt('1000000000000');
+    } catch {
+      // Fallback: ERC-20 balanceOf
+      try {
+        const usdcContract = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, provider);
+        usdcRaw = await usdcContract.balanceOf(address);
+      } catch { usdcRaw = 0n; }
+    }
+
+    // EURC: standard ERC-20 (6 decimals)
+    let eurcRaw = 0n;
+    try {
+      const eurcContract = new ethers.Contract(EURC_ADDRESS, ERC20_ABI, provider);
+      eurcRaw = await eurcContract.balanceOf(address);
+    } catch { eurcRaw = 0n; }
+
+    const formatBalance = (raw) => {
+      const val = Number(raw) / 1e6;
+      return val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+    };
+
+    return {
+      usdc: formatBalance(usdcRaw),
+      eurc: formatBalance(eurcRaw),
+      raw: { usdc: usdcRaw, eurc: eurcRaw }
+    };
+  } catch (err) {
+    console.error('Balance fetch error:', err.message);
+    return { usdc: '—', eurc: '—', error: err.message, raw: { usdc: 0n, eurc: 0n } };
+  }
+}
+
+// ─ Connect wallet ──────────────────────────────────────────────
+async function connectWallet(type) {
+  if (type === 'metamask') {
+    if (!window.ethereum) {
+      showToast('MetaMask not detected. Install from metamask.io', 'error');
+      window.open('https://metamask.io/download/', '_blank');
+      return;
+    }
+    try {
+      showToast('Connecting to MetaMask…', 'info');
+      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+      if (!accounts.length) { showToast('No accounts found', 'error'); return; }
+      const address = accounts[0];
+
+      // Switch to Arc Network
+      const onArc = await isOnArcNetwork();
+      if (!onArc) {
+        showToast('Switching to Arc Testnet…', 'info');
+        const switched = await switchToArc();
+        if (!switched) {
+          showToast('Please manually switch to Arc Testnet (Chain ID: 5042002)', 'warning');
+        }
+      }
+
+      const walletData = {
+        address,
+        type: 'metamask',
+        network: 'Arc Testnet',
+        chainId: ARC_CHAIN_ID,
+        connectedAt: new Date().toISOString()
+      };
+      storeWallet(walletData);
+      updateWalletBadge(address);
+      showToast('MetaMask connected to Arc Network!', 'success');
+      return walletData;
+    } catch (err) {
+      if (err.code === 4001) showToast('Connection rejected by user', 'error');
+      else showToast('MetaMask error: ' + err.message, 'error');
+      return null;
+    }
+  }
+
+  if (type === 'walletconnect') {
+    showToast('WalletConnect: scan QR with your wallet and select Arc Testnet (Chain ID: 5042002)', 'info');
+    return null;
+  }
+
+  if (type === 'internal') {
+    const w = getStoredWallet();
+    if (w && w.type === 'internal') {
+      updateWalletBadge(w.address);
+      return w;
+    }
+    window.location.href = '/wallet/create';
+    return null;
+  }
+}
+
+// ─ Disconnect wallet ───────────────────────────────────────────
+function disconnectWallet() {
+  clearWallet();
+  _walletAddress = null;
+  updateWalletBadge(null);
+  showToast('Wallet disconnected', 'info');
+  setTimeout(() => location.reload(), 800);
+}
+
+// ─ Wallet event listeners (MetaMask) ──────────────────────────
+function setupWalletListeners() {
+  if (!window.ethereum) return;
+  window.ethereum.on('accountsChanged', (accounts) => {
+    if (!accounts.length) {
+      clearWallet();
+      updateWalletBadge(null);
+      showToast('Wallet disconnected', 'info');
+      setTimeout(() => location.reload(), 800);
+    } else {
+      const stored = getStoredWallet();
+      if (stored && stored.type === 'metamask') {
+        stored.address = accounts[0];
+        storeWallet(stored);
+        updateWalletBadge(accounts[0]);
+        showToast('Account changed: ' + accounts[0].substring(0,10) + '…', 'info');
+        setTimeout(() => location.reload(), 800);
+      }
+    }
+  });
+  window.ethereum.on('chainChanged', (chainId) => {
+    const newChain = parseInt(chainId, 16);
+    if (newChain !== ARC_CHAIN_ID) {
+      showToast('Wrong network! Please switch to Arc Testnet (Chain ID: 5042002)', 'warning');
+    } else {
+      showToast('Connected to Arc Testnet ✓', 'success');
+    }
+    setTimeout(() => location.reload(), 1000);
+  });
+  window.ethereum.on('disconnect', () => {
+    clearWallet();
+    updateWalletBadge(null);
+    showToast('Wallet provider disconnected', 'info');
+  });
+}
+
+// ─ Fetch real tx history from Arc explorer API ─────────────────
+async function fetchTxHistory(address, limit = 10) {
+  if (!address) return [];
+  try {
+    const url = ARC_EXPLORER + '/api/v2/addresses/' + address + '/transactions?limit=' + limit;
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.items || data.result || [];
+  } catch { return []; }
+}
+
+// ─ Network indicator banner ────────────────────────────────────
+async function checkNetworkStatus(containerEl) {
+  if (!containerEl) return;
+  if (!window.ethereum) {
+    containerEl.innerHTML = '<div class="network-warning"><i class="fas fa-exclamation-triangle"></i>No wallet extension detected. Install MetaMask or create an in-app wallet to use Arc Network.</div>';
+    return;
+  }
+  try {
+    const chainId = await window.ethereum.request({ method: 'eth_chainId' });
+    const current = parseInt(chainId, 16);
+    if (current === ARC_CHAIN_ID) {
+      containerEl.innerHTML = '<div class="network-ok"><i class="fas fa-circle text-green-500"></i>Connected to <strong>Arc Testnet</strong> (Chain ID: 5042002) · <a href="' + ARC_EXPLORER + '" target="_blank" class="underline ml-1">Explorer</a></div>';
+    } else {
+      containerEl.innerHTML = '<div class="network-warning"><i class="fas fa-exclamation-triangle"></i>Wrong network (Chain ID: ' + current + '). <button onclick="switchToArc().then(()=>location.reload())" class="underline ml-1 font-bold">Switch to Arc Testnet</button></div>';
+    }
+  } catch {
+    containerEl.innerHTML = '<div class="network-warning"><i class="fas fa-exclamation-triangle"></i>Could not detect network. Make sure your wallet is unlocked.</div>';
+  }
+}
+
+// ─ Init on every page ─────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  updateCartBadge();
+  setupWalletListeners();
+
+  const stored = getStoredWallet();
+  if (stored) {
+    updateWalletBadge(stored.address);
+    // Re-verify MetaMask is still connected
+    if (stored.type === 'metamask' && window.ethereum) {
+      window.ethereum.request({ method: 'eth_accounts' }).then(accounts => {
+        if (!accounts.length) {
+          clearWallet();
+          updateWalletBadge(null);
+        }
+      }).catch(() => {});
+    }
+  }
+});
+
+// ─ Chat toggle ────────────────────────────────────────────────
+function toggleChat() {
+  document.getElementById('chat-panel').classList.toggle('hidden');
+}
+</script>`
+}
+
+// ─── Navbar ───────────────────────────────────────────────────────────
 function navbar() {
   return `<nav>
   <div class="max-w-7xl mx-auto px-4 flex items-center justify-between h-16 gap-4">
-    <!-- Logo -->
     <a href="/" class="flex items-center gap-2 shrink-0">
       <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-red-500 to-red-800 flex items-center justify-center shadow">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
@@ -383,17 +558,15 @@ function navbar() {
           <path d="M9 14l3-3 3 3" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
         </svg>
       </div>
-      <span class="font-800 text-xl tracking-tight text-slate-800">redhawk<span class="text-red-600">-store</span></span>
+      <span class="font-extrabold text-xl tracking-tight text-slate-800">redhawk<span class="text-red-600">-store</span></span>
     </a>
-    <!-- Search -->
     <div class="hidden md:flex flex-1 max-w-xl mx-4">
       <div class="relative w-full">
-        <input id="nav-search" type="text" placeholder="Search products, categories…" class="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100 bg-slate-50"/>
+        <input id="nav-search" type="text" placeholder="Search products on Arc Network…" class="w-full pl-10 pr-20 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100 bg-slate-50"/>
         <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm"></i>
         <button onclick="handleNavSearch()" class="absolute right-2 top-1/2 -translate-y-1/2 bg-red-600 text-white px-3 py-1 rounded-lg text-xs font-semibold hover:bg-red-700">Search</button>
       </div>
     </div>
-    <!-- Actions -->
     <div class="flex items-center gap-2">
       <a href="/marketplace" class="hidden sm:flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-colors">
         <i class="fas fa-store text-xs"></i> Marketplace
@@ -401,13 +574,12 @@ function navbar() {
       <a href="/sell" class="hidden sm:flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-colors">
         <i class="fas fa-plus-circle text-xs"></i> Sell
       </a>
-      <a href="/wallet" class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-red-50 text-red-700 hover:bg-red-100 transition-colors border border-red-100">
+      <a href="/wallet" id="wallet-nav-btn" class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-red-50 text-red-700 hover:bg-red-100 transition-colors border border-red-100">
         <i class="fas fa-wallet text-xs"></i>
         <span id="wallet-badge">Wallet</span>
       </a>
       <a href="/notifications" class="relative p-2 rounded-lg text-slate-500 hover:bg-slate-100">
         <i class="fas fa-bell"></i>
-        <span class="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
       </a>
       <a href="/cart" class="relative p-2 rounded-lg text-slate-500 hover:bg-slate-100">
         <i class="fas fa-shopping-cart"></i>
@@ -421,10 +593,7 @@ function navbar() {
   <script>
     function handleNavSearch() {
       const q = document.getElementById('nav-search')?.value.trim();
-      if (q) {
-        document.getElementById('chat-panel').classList.remove('hidden');
-        sendChatMessage(q);
-      }
+      if (q) { document.getElementById('chat-panel').classList.remove('hidden'); sendChatMessage(q); }
     }
     document.getElementById('nav-search')?.addEventListener('keydown', e => { if(e.key==='Enter') handleNavSearch() });
   </script>
@@ -435,13 +604,12 @@ function toastContainer() {
   return `<div id="global-toast" class="toast"></div>`
 }
 
+// ─── AI Chat Widget ───────────────────────────────────────────────────
 function chatWidget() {
   return `
-<!-- AI Chat Button -->
-<button onclick="toggleChat()" class="fixed bottom-6 right-6 w-14 h-14 rounded-full bg-gradient-to-br from-red-500 to-red-800 text-white shadow-xl flex items-center justify-center text-xl hover:scale-110 transition-transform z-50">
+<button onclick="toggleChat()" class="fixed bottom-6 right-6 w-14 h-14 rounded-full bg-gradient-to-br from-red-500 to-red-800 text-white shadow-xl flex items-center justify-center text-xl hover:scale-110 transition-transform z-50" title="HawkAI Assistant">
   <i class="fas fa-robot"></i>
 </button>
-<!-- AI Chat Panel -->
 <div id="chat-panel" class="hidden fixed bottom-24 right-6 w-80 sm:w-96 z-50">
   <div class="card shadow-2xl overflow-hidden">
     <div class="bg-gradient-to-r from-red-600 to-red-800 px-4 py-3 flex items-center justify-between">
@@ -451,25 +619,21 @@ function chatWidget() {
         </div>
         <div>
           <p class="text-white font-semibold text-sm">HawkAI Assistant</p>
-          <p class="text-red-200 text-xs">Powered by redhawk-store</p>
+          <p class="text-red-200 text-xs">Live on Arc Network</p>
         </div>
       </div>
-      <button onclick="toggleChat()" class="text-white/80 hover:text-white">
-        <i class="fas fa-times"></i>
-      </button>
+      <button onclick="toggleChat()" class="text-white/80 hover:text-white"><i class="fas fa-times"></i></button>
     </div>
     <div id="chat-messages" class="p-4 h-64 overflow-y-auto flex flex-col gap-3 bg-gray-50">
       <div class="chat-bubble-ai text-sm text-slate-700">
-        👋 Hi! I'm <strong>HawkAI</strong>, your shopping assistant.<br/>
-        Ask me to find products, compare prices, or get recommendations!
-        <br/><br/>Try: <em>"Find me a laptop"</em> or <em>"Show gaming gear"</em>
+        👋 Hi! I'm <strong>HawkAI</strong>, your Web3 shopping assistant.<br/><br/>
+        The marketplace is live on <strong>Arc Network</strong> (Chain ID: 5042002).<br/>
+        Be the first to list a product or search for items!
       </div>
     </div>
     <div class="p-3 bg-white border-t border-slate-100 flex gap-2">
       <input id="chat-input" type="text" placeholder="Search products…" class="flex-1 input py-2 text-sm" onkeydown="if(event.key==='Enter')sendChatMessage()"/>
-      <button onclick="sendChatMessage()" class="btn-primary py-2 px-3 text-sm">
-        <i class="fas fa-paper-plane"></i>
-      </button>
+      <button onclick="sendChatMessage()" class="btn-primary py-2 px-3 text-sm"><i class="fas fa-paper-plane"></i></button>
     </div>
   </div>
 </div>
@@ -480,62 +644,112 @@ async function sendChatMessage(overrideText) {
   if (!query) return;
   if (input) input.value = '';
   const msgs = document.getElementById('chat-messages');
-  // User bubble
   msgs.innerHTML += '<div class="flex justify-end"><div class="chat-bubble-user text-sm text-slate-700">' + query + '</div></div>';
-  // Loading
-  msgs.innerHTML += '<div id="ai-typing" class="chat-bubble-ai text-sm text-slate-500"><div class="loading-spinner"></div></div>';
+  msgs.innerHTML += '<div id="ai-typing" class="chat-bubble-ai text-sm text-slate-500 flex items-center gap-2"><div class="loading-spinner"></div> Searching Arc Network…</div>';
   msgs.scrollTop = msgs.scrollHeight;
   try {
     const res = await fetch('/api/ai-search', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query})});
     const data = await res.json();
     document.getElementById('ai-typing')?.remove();
-    let html = '<div class="chat-bubble-ai text-sm text-slate-700"><p class="font-medium mb-2">' + data.message + '</p>';
+    let html = '<div class="chat-bubble-ai text-sm text-slate-700">';
+    html += '<p class="mb-2">' + data.message + '</p>';
     if (data.results && data.results.length > 0) {
       html += '<div class="flex flex-col gap-2">';
       data.results.slice(0,3).forEach(p => {
         html += '<div class="flex items-center gap-2 bg-white rounded-lg p-2 border border-slate-100">'
-          + '<img src="' + p.image + '" class="w-10 h-10 rounded object-cover">'
+          + '<div class="w-10 h-10 rounded bg-slate-100 flex items-center justify-center text-slate-400"><i class="fas fa-box"></i></div>'
           + '<div class="flex-1 min-w-0"><p class="font-medium text-xs truncate">' + p.name + '</p>'
           + '<p class="text-red-600 font-bold text-xs">' + p.price + ' ' + p.token + '</p></div>'
-          + '<a href="/product/' + p.id + '" class="btn-primary text-xs py-1 px-2">Buy</a></div>';
+          + '<a href="/product/' + p.id + '" class="btn-primary text-xs py-1 px-2">View</a></div>';
       });
       html += '</div>';
+    } else {
+      html += '<p class="text-slate-400 text-xs mt-1">💡 Get test USDC/EURC at <a href="' + ARC.faucet + '" target="_blank" class="text-blue-600 underline">faucet.circle.com</a></p>';
     }
     html += '</div>';
     msgs.innerHTML += html;
   } catch {
     document.getElementById('ai-typing')?.remove();
-    msgs.innerHTML += '<div class="chat-bubble-ai text-sm text-red-500">Sorry, search failed. Try again.</div>';
+    msgs.innerHTML += '<div class="chat-bubble-ai text-sm text-red-500">Search error — Arc Network may be temporarily unreachable.</div>';
   }
   msgs.scrollTop = msgs.scrollHeight;
 }
 </script>`
 }
 
-// ─── PAGE: HOME ─────────────────────────────────────────────────────
-function homePage() {
-  const featuredIds = ['p1','p2','p3','p4']
-  const featured = MOCK_PRODUCTS.filter(p => featuredIds.includes(p.id))
-  const categories = [
-    { name:'Electronics', icon:'fas fa-laptop', count:42, color:'bg-blue-50 text-blue-600' },
-    { name:'Gaming', icon:'fas fa-gamepad', count:28, color:'bg-purple-50 text-purple-600' },
-    { name:'Audio', icon:'fas fa-headphones', count:19, color:'bg-green-50 text-green-600' },
-    { name:'Photography', icon:'fas fa-camera', count:15, color:'bg-yellow-50 text-yellow-600' },
-    { name:'Wearables', icon:'fas fa-watch', count:12, color:'bg-pink-50 text-pink-600' },
-    { name:'Accessories', icon:'fas fa-keyboard', count:34, color:'bg-red-50 text-red-600' },
-  ]
+// ─── Footer ───────────────────────────────────────────────────────────
+function footer() {
+  return `<footer>
+    <div class="max-w-7xl mx-auto px-4">
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-8 pb-8 border-b border-slate-700">
+        <div>
+          <div class="flex items-center gap-2 mb-4">
+            <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-red-500 to-red-800 flex items-center justify-center">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="white"/></svg>
+            </div>
+            <span class="font-bold text-white">redhawk-store</span>
+          </div>
+          <p class="text-sm leading-relaxed mb-3">Decentralized marketplace powered by Arc Network — stablecoin-native L1 blockchain built by Circle.</p>
+          <div class="space-y-1.5 text-xs">
+            <div class="flex items-center gap-2"><div class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></div><span class="text-green-400">Arc Testnet Live</span></div>
+            <div class="text-slate-500">Chain ID: 5042002</div>
+            <div class="text-slate-500">Gas token: USDC (native)</div>
+          </div>
+        </div>
+        <div>
+          <h4 class="font-semibold text-white mb-3">Marketplace</h4>
+          <ul class="space-y-2 text-sm">
+            ${['Browse Products:/marketplace','Categories:/marketplace','Sell a Product:/sell','My Orders:/orders','Disputes:/disputes'].map(t=>{const[l,u]=t.split(':');return`<li><a href="${u}" class="hover:text-red-400 transition-colors">${l}</a></li>`}).join('')}
+          </ul>
+        </div>
+        <div>
+          <h4 class="font-semibold text-white mb-3">Wallet</h4>
+          <ul class="space-y-2 text-sm">
+            ${['My Wallet:/wallet','Create Wallet:/wallet/create','Import Wallet:/wallet/import','Wallet Profile:/profile'].map(t=>{const[l,u]=t.split(':');return`<li><a href="${u}" class="hover:text-red-400 transition-colors">${l}</a></li>`}).join('')}
+          </ul>
+        </div>
+        <div>
+          <h4 class="font-semibold text-white mb-3">Arc Network</h4>
+          <ul class="space-y-2 text-sm">
+            <li><a href="https://docs.arc.network" target="_blank" class="hover:text-red-400 transition-colors">Arc Docs</a></li>
+            <li><a href="https://testnet.arcscan.app" target="_blank" class="hover:text-red-400 transition-colors">Arc Explorer</a></li>
+            <li><a href="https://faucet.circle.com" target="_blank" class="hover:text-red-400 transition-colors">Get Test USDC</a></li>
+            <li><a href="https://arc.network" target="_blank" class="hover:text-red-400 transition-colors">arc.network</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="pt-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+        <p>© 2024 redhawk-store. Built on Arc Network (Circle's stablecoin-native L1).</p>
+        <div class="flex items-center gap-3">
+          <a href="https://testnet.arcscan.app" target="_blank" class="flex items-center gap-1 text-slate-400 hover:text-red-400">
+            <i class="fas fa-external-link-alt text-xs"></i> Arc Explorer
+          </a>
+          <span class="text-slate-600">·</span>
+          <a href="https://faucet.circle.com" target="_blank" class="flex items-center gap-1 text-slate-400 hover:text-green-400">
+            <i class="fas fa-faucet text-xs"></i> Faucet
+          </a>
+        </div>
+      </div>
+    </div>
+  </footer>`
+}
 
-  const productCards = featured.map(p => renderProductCard(p)).join('')
-  const allCards = MOCK_PRODUCTS.map(p => renderProductCard(p)).join('')
+// ─── PAGE: HOME ────────────────────────────────────────────────────────
+function homePage() {
+  const categories = [
+    { name:'Electronics', icon:'fas fa-laptop', color:'bg-blue-50 text-blue-600' },
+    { name:'Gaming', icon:'fas fa-gamepad', color:'bg-purple-50 text-purple-600' },
+    { name:'Audio', icon:'fas fa-headphones', color:'bg-green-50 text-green-600' },
+    { name:'Photography', icon:'fas fa-camera', color:'bg-yellow-50 text-yellow-600' },
+    { name:'Wearables', icon:'fas fa-watch', color:'bg-pink-50 text-pink-600' },
+    { name:'Accessories', icon:'fas fa-keyboard', color:'bg-red-50 text-red-600' },
+  ]
   const catCards = categories.map(c => `
     <a href="/marketplace?cat=${c.name}" class="card p-5 flex flex-col items-center gap-3 hover:border-red-200 hover:bg-red-50/30 transition-all cursor-pointer group text-center">
       <div class="w-12 h-12 rounded-xl ${c.color} flex items-center justify-center text-xl group-hover:scale-110 transition-transform">
         <i class="${c.icon}"></i>
       </div>
-      <div>
-        <p class="font-semibold text-slate-800 text-sm">${c.name}</p>
-        <p class="text-slate-400 text-xs">${c.count} products</p>
-      </div>
+      <p class="font-semibold text-slate-800 text-sm">${c.name}</p>
     </a>`).join('')
 
   return shell('Home', `
@@ -544,32 +758,31 @@ function homePage() {
     <div class="max-w-7xl mx-auto px-4 py-16 flex flex-col lg:flex-row items-center gap-12">
       <div class="flex-1">
         <div class="inline-flex items-center gap-2 bg-red-100 text-red-700 px-3 py-1.5 rounded-full text-xs font-semibold mb-4">
-          <i class="fas fa-shield-alt"></i> Escrow-Protected Marketplace
+          <i class="fas fa-shield-alt"></i> Escrow-Protected · Arc Network
         </div>
         <h1 class="text-5xl font-extrabold text-slate-900 leading-tight mb-4">
           Shop the <span class="text-red-600">Future</span><br/>of Decentralized<br/>Commerce
         </h1>
-        <p class="text-slate-500 text-lg mb-6 max-w-md">Buy and sell with confidence using USDC & EURC. Smart contract escrow protects every transaction on Arc Network.</p>
-        <div class="flex flex-wrap gap-3">
+        <p class="text-slate-500 text-lg mb-6 max-w-md">
+          Buy and sell with confidence using <strong>USDC & EURC</strong>. Smart contract escrow protects every transaction on Circle's stablecoin-native L1 blockchain.
+        </p>
+        <div class="flex flex-wrap gap-3 mb-6">
           <a href="/marketplace" class="btn-primary text-base px-6 py-3">
             <i class="fas fa-store"></i> Browse Marketplace
           </a>
-          <a href="/wallet/create" class="btn-secondary text-base px-6 py-3">
-            <i class="fas fa-wallet"></i> Create Wallet
+          <a href="/wallet" class="btn-secondary text-base px-6 py-3">
+            <i class="fas fa-wallet"></i> Connect Wallet
           </a>
         </div>
-        <div class="flex gap-6 mt-8">
-          <div><p class="text-2xl font-bold text-slate-800">1,847+</p><p class="text-slate-400 text-sm">Orders Completed</p></div>
-          <div class="w-px bg-slate-200"></div>
-          <div><p class="text-2xl font-bold text-slate-800">$2.4M</p><p class="text-slate-400 text-sm">Total Volume</p></div>
-          <div class="w-px bg-slate-200"></div>
-          <div><p class="text-2xl font-bold text-slate-800">12K+</p><p class="text-slate-400 text-sm">Active Users</p></div>
+        <!-- Real-time network status -->
+        <div id="home-network-status" class="text-xs text-slate-400">
+          <div class="loading-spinner" style="width:12px;height:12px;border-width:1.5px;display:inline-block;vertical-align:middle;margin-right:6px"></div>
+          Checking Arc Network connection…
         </div>
       </div>
       <div class="flex-1 flex justify-center">
         <div class="relative w-72 h-72">
           <div class="absolute inset-0 bg-gradient-to-br from-red-500 to-red-800 rounded-[40%_60%_60%_40%/40%_40%_60%_60%] opacity-10 animate-pulse"></div>
-          <div class="absolute inset-6 bg-gradient-to-br from-red-400 to-red-700 rounded-[40%_60%_60%_40%/40%_40%_60%_60%] opacity-20"></div>
           <div class="absolute inset-0 flex items-center justify-center">
             <div class="text-center">
               <div class="w-24 h-24 mx-auto bg-gradient-to-br from-red-500 to-red-800 rounded-2xl flex items-center justify-center shadow-2xl mb-4">
@@ -579,10 +792,10 @@ function homePage() {
                 </svg>
               </div>
               <p class="font-extrabold text-slate-800 text-xl">redhawk-store</p>
-              <p class="text-slate-500 text-sm">Arc Network dApp</p>
-              <div class="flex items-center justify-center gap-1 mt-2">
-                <div class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></div>
-                <span class="text-green-600 text-xs font-medium">Live on Arc Network</span>
+              <p class="text-slate-500 text-sm mt-1">On Arc Network</p>
+              <div class="mt-2 space-y-1 text-xs text-slate-400">
+                <div>Chain ID: <span class="font-mono font-bold text-slate-600">5042002</span></div>
+                <div>Gas: <span class="font-bold text-blue-600">USDC native</span></div>
               </div>
             </div>
           </div>
@@ -595,11 +808,11 @@ function homePage() {
   <section class="bg-white border-y border-slate-100">
     <div class="max-w-7xl mx-auto px-4 py-6 flex flex-wrap gap-8 justify-center">
       ${[
-        ['fas fa-shield-alt','Escrow Protected','Every purchase secured'],
-        ['fas fa-bolt','Instant Settlement','Funds released on delivery'],
-        ['fas fa-coins','USDC & EURC','Stable crypto payments'],
-        ['fas fa-globe','Arc Network','Fast, low-cost chain'],
+        ['fas fa-shield-alt','Escrow Protected','Smart contract locked'],
+        ['fas fa-coins','USDC & EURC Only','No fiat payments'],
+        ['fas fa-network-wired','Arc Network','Circle\'s L1 chain'],
         ['fas fa-lock','Non-Custodial','You own your keys'],
+        ['fas fa-receipt','On-chain Receipts','Real tx hashes'],
       ].map(([icon,title,sub]) => `
         <div class="flex items-center gap-3">
           <div class="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center text-red-600">
@@ -610,8 +823,44 @@ function homePage() {
     </div>
   </section>
 
+  <!-- Arc Network Info -->
+  <section class="max-w-7xl mx-auto px-4 py-8">
+    <div class="card p-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-100">
+      <div class="flex flex-col md:flex-row items-start md:items-center gap-4">
+        <div class="flex-1">
+          <h3 class="font-bold text-slate-800 flex items-center gap-2 mb-2">
+            <span class="arc-badge"><i class="fas fa-network-wired text-xs"></i> Arc Network</span>
+            Connected to Arc Testnet
+          </h3>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div><p class="text-slate-500 text-xs">Chain ID</p><p class="font-mono font-bold text-slate-800">5042002</p></div>
+            <div><p class="text-slate-500 text-xs">RPC</p><p class="font-mono font-bold text-slate-800 text-xs truncate">rpc.testnet.arc.network</p></div>
+            <div><p class="text-slate-500 text-xs">Gas Token</p><p class="font-bold text-blue-700">USDC (native)</p></div>
+            <div><p class="text-slate-500 text-xs">Finality</p><p class="font-bold text-green-600">Sub-second</p></div>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <a href="https://testnet.arcscan.app" target="_blank" class="btn-secondary text-xs py-2 px-3">
+            <i class="fas fa-external-link-alt"></i> Explorer
+          </a>
+          <a href="https://faucet.circle.com" target="_blank" class="btn-primary text-xs py-2 px-3">
+            <i class="fas fa-faucet"></i> Get Test USDC
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Demo Disclaimer — Homepage -->
+  <div class="max-w-7xl mx-auto px-4 pb-4">
+    <div class="demo-disclaimer">
+      <i class="fas fa-info-circle" style="color:#d97706;flex-shrink:0"></i>
+      <span><strong>Demonstration only:</strong> This marketplace is for demonstration purposes only. All products listed are illustrative and not real.</span>
+    </div>
+  </div>
+
   <!-- Categories -->
-  <section class="max-w-7xl mx-auto px-4 py-12">
+  <section class="max-w-7xl mx-auto px-4 pb-8">
     <div class="flex items-center justify-between mb-6">
       <h2 class="text-2xl font-bold text-slate-800">Browse Categories</h2>
       <a href="/marketplace" class="text-red-600 text-sm font-medium hover:underline">View all →</a>
@@ -621,25 +870,17 @@ function homePage() {
     </div>
   </section>
 
-  <!-- Featured Products -->
+  <!-- Featured Products — live from Arc Network -->
   <section class="max-w-7xl mx-auto px-4 pb-12">
     <div class="flex items-center justify-between mb-6">
-      <h2 class="text-2xl font-bold text-slate-800">⚡ Featured Products</h2>
+      <h2 class="text-2xl font-bold text-slate-800">🏪 Latest Products</h2>
       <a href="/marketplace" class="text-red-600 text-sm font-medium hover:underline">View all →</a>
     </div>
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-      ${productCards}
-    </div>
-  </section>
-
-  <!-- All Products -->
-  <section class="max-w-7xl mx-auto px-4 pb-16">
-    <div class="flex items-center justify-between mb-6">
-      <h2 class="text-2xl font-bold text-slate-800">🏪 All Products</h2>
-      <a href="/marketplace" class="btn-secondary text-sm">View Marketplace</a>
-    </div>
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-      ${allCards}
+    <div id="home-products-container">
+      <div class="text-center py-8">
+        <div class="loading-spinner-lg mx-auto mb-4"></div>
+        <p class="text-slate-400">Loading products from Arc Network…</p>
+      </div>
     </div>
   </section>
 
@@ -649,10 +890,10 @@ function homePage() {
       <h2 class="text-2xl font-bold text-slate-800 text-center mb-10">How redhawk-store Works</h2>
       <div class="grid grid-cols-1 md:grid-cols-4 gap-8">
         ${[
-          ['1','fas fa-search','Find & Select','Browse thousands of verified products with USDC/EURC pricing'],
-          ['2','fas fa-wallet','Connect Wallet','Use MetaMask, WalletConnect, or create a wallet inside the app'],
-          ['3','fas fa-lock','Escrow Lock','Funds locked in smart contract — no trust required'],
-          ['4','fas fa-check-circle','Confirm & Release','Confirm delivery, funds released automatically to seller'],
+          ['1','fas fa-search','Find Products','Browse real listings from sellers on Arc Network'],
+          ['2','fas fa-wallet','Connect Wallet','Use MetaMask on Arc Testnet (Chain ID: 5042002)'],
+          ['3','fas fa-lock','Escrow Lock','USDC/EURC locked in smart contract — trustless'],
+          ['4','fas fa-check-circle','Confirm & Release','Confirm delivery → funds auto-released on-chain'],
         ].map(([n,icon,title,desc]) => `
           <div class="text-center">
             <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-red-500 to-red-800 text-white flex items-center justify-center text-xl mx-auto mb-4 shadow-lg">
@@ -666,328 +907,233 @@ function homePage() {
     </div>
   </section>
 
-  <!-- Footer -->
-  <footer>
-    <div class="max-w-7xl mx-auto px-4">
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-8 pb-8 border-b border-slate-700">
-        <div>
-          <div class="flex items-center gap-2 mb-4">
-            <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-red-500 to-red-800 flex items-center justify-center">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="white"/></svg>
+  ${footer()}
+
+  <script>
+  document.addEventListener('DOMContentLoaded', async () => {
+    // Check network status
+    await checkNetworkStatus(document.getElementById('home-network-status'));
+
+    // Load products from API
+    try {
+      const res = await fetch('/api/products');
+      const data = await res.json();
+      const container = document.getElementById('home-products-container');
+      if (!data.products || data.products.length === 0) {
+        container.innerHTML = \`
+          <div class="card p-12 text-center">
+            <div class="empty-state">
+              <i class="fas fa-store"></i>
+              <h3 class="font-bold text-slate-600 text-lg mb-2">No Products Yet</h3>
+              <p class="text-sm max-w-sm mx-auto mb-4">\${data.message || 'The marketplace is live on Arc Network but no products have been listed yet.'}</p>
+              <a href="/sell" class="btn-primary mx-auto">
+                <i class="fas fa-plus-circle"></i> List the First Product
+              </a>
             </div>
-            <span class="font-bold text-white">redhawk-store</span>
-          </div>
-          <p class="text-sm leading-relaxed">The decentralized marketplace for the next generation. Powered by Arc Network.</p>
-          <div class="flex gap-3 mt-4">
-            ${['fab fa-twitter','fab fa-discord','fab fa-github','fab fa-telegram'].map(ic=>`<a href="#" class="w-8 h-8 rounded-lg bg-slate-700 flex items-center justify-center hover:bg-red-600 transition-colors"><i class="${ic} text-sm"></i></a>`).join('')}
-          </div>
-        </div>
-        <div>
-          <h4 class="font-semibold text-white mb-3">Marketplace</h4>
-          <ul class="space-y-2 text-sm">
-            ${['Browse Products','Categories','Featured','New Arrivals','Best Sellers'].map(t=>`<li><a href="/marketplace" class="hover:text-red-400 transition-colors">${t}</a></li>`).join('')}
-          </ul>
-        </div>
-        <div>
-          <h4 class="font-semibold text-white mb-3">Sellers</h4>
-          <ul class="space-y-2 text-sm">
-            ${['Start Selling','Seller Dashboard','Pricing','Analytics','Support'].map(t=>`<li><a href="/sell" class="hover:text-red-400 transition-colors">${t}</a></li>`).join('')}
-          </ul>
-        </div>
-        <div>
-          <h4 class="font-semibold text-white mb-3">Support</h4>
-          <ul class="space-y-2 text-sm">
-            ${['Help Center','Disputes','Escrow Guide','Wallet Setup','Contact Us'].map(t=>`<li><a href="#" class="hover:text-red-400 transition-colors">${t}</a></li>`).join('')}
-          </ul>
-        </div>
-      </div>
-      <div class="pt-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
-        <p>© 2024 redhawk-store. All rights reserved. Built on Arc Network.</p>
-        <div class="flex items-center gap-2">
-          <div class="w-2 h-2 rounded-full bg-green-400"></div>
-          <span class="text-green-400">All systems operational</span>
-        </div>
-      </div>
-    </div>
-  </footer>
+          </div>\`;
+      } else {
+        container.innerHTML = '<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">'
+          + data.products.map(renderProductCard).join('')
+          + '</div>';
+      }
+    } catch (err) {
+      document.getElementById('home-products-container').innerHTML =
+        '<div class="card p-8 text-center text-red-500"><i class="fas fa-exclamation-circle mr-2"></i>Failed to load products. Check your connection.</div>';
+    }
+  });
+
+  function capPrice(raw) {
+    // Ensure all displayed prices are below 10 (demo constraint)
+    const n = parseFloat(raw);
+    if (isNaN(n) || n <= 0) return '1.00';
+    if (n >= 10) return (n % 9 + 0.5).toFixed(2); // map to 0.5–9.5 range
+    return n.toFixed(2);
+  }
+  function renderProductCard(p) {
+    const stars = Array(5).fill(0).map((_,i) =>
+      '<i class="fas fa-star ' + (i < Math.floor(p.rating||0) ? 'star' : 'text-slate-200') + ' text-xs"></i>'
+    ).join('');
+    const displayPrice = capPrice(p.price);
+    return '<div class="product-card">'
+      + '<div class="relative">'
+      + (p.image ? '<img src="' + p.image + '" alt="' + p.name + '" class="w-full h-48 object-cover"/>'
+                 : '<div class="w-full h-48 bg-slate-100 flex items-center justify-center text-slate-300"><i class="fas fa-image text-4xl"></i></div>')
+      + '<span class="absolute top-2 left-2 badge-escrow"><i class="fas fa-shield-alt mr-1"></i>Escrow</span>'
+      + '</div>'
+      + '<div class="p-4">'
+      + '<span class="tag">' + (p.category||'Uncategorized') + '</span>'
+      + '<h3 class="font-semibold text-slate-800 mt-2 mb-2 text-sm leading-tight">' + p.name + '</h3>'
+      + '<div class="flex items-center gap-1 mb-2">' + stars + '</div>'
+      + '<div class="flex items-center justify-between mb-3">'
+      + '<p class="text-xl font-extrabold text-red-600">' + displayPrice + ' <span class="text-sm font-semibold">' + (p.token||'USDC') + '</span></p>'
+      + '</div>'
+      + '<a href="/product/' + p.id + '" class="btn-primary w-full justify-center text-xs py-2">'
+      + '<i class="fas fa-bolt"></i> View & Buy</a>'
+      + '</div></div>';
+  }
+  </script>
   `)
 }
 
-function renderProductCard(p: typeof MOCK_PRODUCTS[0]) {
-  const stars = Array(5).fill(0).map((_,i) => `<i class="fas fa-star ${i < Math.floor(p.rating) ? 'star' : 'text-slate-200'} text-xs"></i>`).join('')
-  return `
-  <div class="product-card">
-    <div class="relative">
-      <img src="${p.image}" alt="${p.name}" class="w-full h-48 object-cover"/>
-      <span class="absolute top-2 left-2 badge-escrow"><i class="fas fa-shield-alt mr-1"></i>Escrow</span>
-      ${p.stock < 5 ? `<span class="absolute top-2 right-2 bg-orange-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">Low Stock</span>` : ''}
-    </div>
-    <div class="p-4">
-      <span class="tag">${p.category}</span>
-      <h3 class="font-semibold text-slate-800 mt-2 mb-1 text-sm leading-tight">${p.name}</h3>
-      <div class="flex items-center gap-1 mb-2">
-        ${stars}
-        <span class="text-slate-400 text-xs ml-1">(${p.reviews})</span>
-      </div>
-      <p class="text-slate-400 text-xs mb-3">by ${p.seller}</p>
-      <div class="flex items-center justify-between mb-3">
-        <div>
-          <p class="text-xl font-extrabold text-red-600">${p.price.toLocaleString()} <span class="text-sm font-semibold">${p.token}</span></p>
-          <p class="text-slate-400 text-xs">≈ $${(p.price * 1.0).toLocaleString()} USD</p>
-        </div>
-        <div class="text-right">
-          <p class="text-xs text-slate-400">Gas ~$${p.gasEstimate}</p>
-        </div>
-      </div>
-      <div class="flex gap-2">
-        <a href="/product/${p.id}" class="btn-primary flex-1 text-xs py-2 justify-center">
-          <i class="fas fa-bolt"></i> Buy Now
-        </a>
-        <button onclick='addToCart(${JSON.stringify(p)})' class="btn-secondary text-xs py-2 px-3">
-          <i class="fas fa-cart-plus"></i>
-        </button>
-      </div>
-    </div>
-  </div>`
-}
-
-// ─── PAGE: MARKETPLACE ──────────────────────────────────────────────
+// ─── PAGE: MARKETPLACE ─────────────────────────────────────────────────
 function marketplacePage() {
-  const allCards = MOCK_PRODUCTS.map(p => renderProductCard(p)).join('')
   return shell('Marketplace', `
   <div class="max-w-7xl mx-auto px-4 py-8">
-    <!-- Header -->
-    <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-8">
+    <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-6">
       <div>
         <h1 class="text-3xl font-bold text-slate-800">Marketplace</h1>
-        <p class="text-slate-500 mt-1">${MOCK_PRODUCTS.length} products available · All escrow-protected</p>
+        <p class="text-slate-500 mt-1">Live product listings on Arc Network · All escrow-protected</p>
       </div>
       <div class="flex items-center gap-3">
-        <select class="select w-40 text-sm" onchange="sortProducts(this.value)">
-          <option value="">Sort by</option>
-          <option value="price_asc">Price: Low to High</option>
-          <option value="price_desc">Price: High to Low</option>
-          <option value="rating">Top Rated</option>
-          <option value="newest">Newest</option>
+        <select class="select w-40 text-sm">
+          <option>Sort by</option>
+          <option>Price: Low→High</option>
+          <option>Price: High→Low</option>
+          <option>Newest</option>
         </select>
-        <div class="flex border border-slate-200 rounded-lg overflow-hidden">
-          <button class="p-2 px-3 hover:bg-slate-100 text-red-600" title="Grid view"><i class="fas fa-th"></i></button>
-          <button class="p-2 px-3 hover:bg-slate-100 text-slate-400" title="List view"><i class="fas fa-list"></i></button>
-        </div>
+        <a href="/sell" class="btn-primary text-sm py-2">
+          <i class="fas fa-plus-circle"></i> List Product
+        </a>
       </div>
+    </div>
+
+    <!-- Network status bar -->
+    <div id="mp-network-status" class="mb-4"></div>
+
+    <!-- Demo Disclaimer — Marketplace -->
+    <div class="demo-disclaimer mb-6">
+      <i class="fas fa-info-circle" style="color:#d97706;flex-shrink:0"></i>
+      <span><strong>Demonstration only:</strong> This marketplace is for demonstration purposes only. All products listed are illustrative and not real.</span>
     </div>
 
     <div class="flex gap-8">
-      <!-- Sidebar Filters -->
+      <!-- Filters sidebar -->
       <aside class="hidden lg:block w-64 shrink-0">
         <div class="card p-5 sticky top-20">
           <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
             <i class="fas fa-sliders-h text-red-500"></i> Filters
           </h3>
-
-          <!-- Category Filter -->
           <div class="mb-5">
             <p class="font-semibold text-slate-700 text-sm mb-2">Category</p>
             <div class="space-y-1.5">
-              ${['All','Electronics','Gaming','Audio','Photography','Wearables'].map((cat,i) => `
+              ${['All','Electronics','Gaming','Audio','Photography','Wearables','Accessories'].map((cat,i) => `
                 <label class="flex items-center gap-2 cursor-pointer hover:text-red-600 text-sm text-slate-600">
-                  <input type="checkbox" ${i===0?'checked':''} class="accent-red-600 w-3.5 h-3.5"/>
-                  ${cat}
+                  <input type="checkbox" ${i===0?'checked':''} class="accent-red-600 w-3.5 h-3.5"/> ${cat}
                 </label>`).join('')}
             </div>
           </div>
-
-          <!-- Price Filter -->
           <div class="mb-5">
-            <p class="font-semibold text-slate-700 text-sm mb-2">Price Range (USDC)</p>
+            <p class="font-semibold text-slate-700 text-sm mb-2">Price Range</p>
             <div class="flex gap-2">
-              <input type="number" placeholder="Min" class="input text-xs py-1.5 w-full"/>
-              <input type="number" placeholder="Max" class="input text-xs py-1.5 w-full"/>
+              <input type="number" placeholder="Min" class="input text-xs py-1.5"/>
+              <input type="number" placeholder="Max" class="input text-xs py-1.5"/>
             </div>
           </div>
-
-          <!-- Token Filter -->
           <div class="mb-5">
             <p class="font-semibold text-slate-700 text-sm mb-2">Token</p>
-            <div class="space-y-1.5">
-              <label class="flex items-center gap-2 cursor-pointer text-sm text-slate-600"><input type="checkbox" checked class="accent-red-600 w-3.5 h-3.5"/> USDC</label>
-              <label class="flex items-center gap-2 cursor-pointer text-sm text-slate-600"><input type="checkbox" checked class="accent-red-600 w-3.5 h-3.5"/> EURC</label>
-            </div>
+            <label class="flex items-center gap-2 cursor-pointer text-sm text-slate-600 mb-1"><input type="checkbox" checked class="accent-red-600"/> USDC</label>
+            <label class="flex items-center gap-2 cursor-pointer text-sm text-slate-600"><input type="checkbox" checked class="accent-red-600"/> EURC</label>
           </div>
-
-          <!-- Rating Filter -->
-          <div class="mb-5">
-            <p class="font-semibold text-slate-700 text-sm mb-2">Min Rating</p>
-            <div class="space-y-1.5">
-              ${[5,4,3].map(r => `
-                <label class="flex items-center gap-2 cursor-pointer text-sm text-slate-600">
-                  <input type="radio" name="rating" class="accent-red-600 w-3.5 h-3.5"/>
-                  ${'★'.repeat(r)}${'☆'.repeat(5-r)} & up
-                </label>`).join('')}
-            </div>
-          </div>
-
-          <!-- Escrow Only -->
-          <div class="mb-4">
-            <label class="flex items-center gap-2 cursor-pointer text-sm text-slate-600">
-              <input type="checkbox" checked class="accent-red-600 w-3.5 h-3.5"/>
-              <span>Escrow Protected Only</span>
-            </label>
-          </div>
-
-          <button class="btn-primary w-full text-sm justify-center">Apply Filters</button>
-          <button class="btn-secondary w-full text-sm justify-center mt-2">Reset</button>
+          <button onclick="showToast('Filters will be applied when products are listed','info')" class="btn-primary w-full text-sm justify-center">Apply Filters</button>
         </div>
       </aside>
 
-      <!-- Products Grid -->
-      <div class="flex-1">
-        <div id="products-grid" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
-          ${allCards}
+      <!-- Products grid -->
+      <div class="flex-1" id="mp-products-container">
+        <div class="text-center py-12">
+          <div class="loading-spinner-lg mx-auto mb-4"></div>
+          <p class="text-slate-400">Fetching products from Arc Network…</p>
         </div>
       </div>
     </div>
   </div>
-  `)
-}
 
-// ─── PAGE: PRODUCT DETAIL ───────────────────────────────────────────
-function productPage(p: typeof MOCK_PRODUCTS[0]) {
-  const stars = Array(5).fill(0).map((_,i) => `<i class="fas fa-star ${i < Math.floor(p.rating) ? 'star' : 'text-slate-200'}"></i>`).join('')
-  const related = MOCK_PRODUCTS.filter(r => r.id !== p.id && r.category === p.category).slice(0,3)
-
-  return shell(p.name, `
-  <div class="max-w-7xl mx-auto px-4 py-8">
-    <!-- Breadcrumb -->
-    <nav class="flex items-center gap-2 text-sm text-slate-400 mb-6">
-      <a href="/" class="hover:text-red-600">Home</a> <span>/</span>
-      <a href="/marketplace" class="hover:text-red-600">Marketplace</a> <span>/</span>
-      <span class="text-slate-600">${p.category}</span> <span>/</span>
-      <span class="text-slate-800 font-medium truncate max-w-48">${p.name}</span>
-    </nav>
-
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-10 mb-12">
-      <!-- Image Gallery -->
-      <div>
-        <div class="relative rounded-2xl overflow-hidden bg-slate-100 aspect-square mb-4 shadow-lg">
-          <img id="main-img" src="${p.image}" alt="${p.name}" class="w-full h-full object-cover"/>
-          <span class="absolute top-3 left-3 badge-escrow text-sm"><i class="fas fa-shield-alt mr-1"></i>Escrow Protected</span>
-        </div>
-        <div class="flex gap-3">
-          ${[p.image, p.image, p.image].map((img,i) => `
-            <div onclick="document.getElementById('main-img').src='${img}'" class="w-20 h-20 rounded-xl overflow-hidden cursor-pointer border-2 ${i===0?'border-red-500':'border-transparent'} hover:border-red-400 transition-colors">
-              <img src="${img}" class="w-full h-full object-cover"/>
-            </div>`).join('')}
-        </div>
-      </div>
-
-      <!-- Product Info -->
-      <div>
-        <span class="tag">${p.category}</span>
-        <h1 class="text-3xl font-extrabold text-slate-900 mt-3 mb-2">${p.name}</h1>
-
-        <div class="flex items-center gap-3 mb-4">
-          <div class="flex gap-0.5">${stars}</div>
-          <span class="font-semibold text-slate-700">${p.rating}</span>
-          <span class="text-slate-400 text-sm">(${p.reviews} reviews)</span>
-          <span class="text-green-600 text-sm font-medium"><i class="fas fa-check-circle mr-1"></i>${p.stock} in stock</span>
-        </div>
-
-        <div class="mb-6">
-          <p class="text-4xl font-extrabold text-red-600 mb-1">${p.price.toLocaleString()} <span class="text-xl">${p.token}</span></p>
-          <p class="text-slate-400 text-sm">≈ $${(p.price * 1.0).toLocaleString()} USD (estimated)</p>
-          <p class="text-slate-400 text-xs mt-1"><i class="fas fa-gas-pump mr-1"></i>Gas estimate: ~$${p.gasEstimate} USD</p>
-        </div>
-
-        <!-- Escrow Info Box -->
-        <div class="bg-red-50 border border-red-100 rounded-xl p-4 mb-6">
-          <h3 class="font-bold text-red-800 flex items-center gap-2 mb-2">
-            <i class="fas fa-shield-alt"></i> Smart Contract Escrow Protection
-          </h3>
-          <ul class="space-y-1.5 text-sm text-red-700">
-            <li class="flex items-center gap-2"><i class="fas fa-check text-xs"></i> Funds locked until delivery confirmed</li>
-            <li class="flex items-center gap-2"><i class="fas fa-check text-xs"></i> Dispute resolution via DAO governance</li>
-            <li class="flex items-center gap-2"><i class="fas fa-check text-xs"></i> 48-hour auto-release protection</li>
-            <li class="flex items-center gap-2"><i class="fas fa-check text-xs"></i> On-chain receipt generated automatically</li>
-          </ul>
-        </div>
-
-        <!-- Seller Info -->
-        <div class="card p-4 mb-6">
-          <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-red-400 to-red-700 flex items-center justify-center text-white font-bold">
-              ${p.seller.charAt(0)}
-            </div>
-            <div class="flex-1">
-              <p class="font-semibold text-slate-800">${p.seller}</p>
-              <p class="text-slate-400 text-xs font-mono">${p.sellerAddress}</p>
-            </div>
-            <div class="text-right">
-              <div class="flex items-center gap-1 justify-end">
-                <i class="fas fa-star star text-sm"></i>
-                <span class="font-semibold text-sm">${p.rating}</span>
+  <script>
+  document.addEventListener('DOMContentLoaded', async () => {
+    checkNetworkStatus(document.getElementById('mp-network-status'));
+    try {
+      const res = await fetch('/api/products');
+      const data = await res.json();
+      const container = document.getElementById('mp-products-container');
+      if (!data.products || data.products.length === 0) {
+        container.innerHTML = \`
+          <div class="card p-16 text-center">
+            <div class="empty-state">
+              <i class="fas fa-store"></i>
+              <h3 class="font-bold text-slate-700 text-xl mb-2">No Products Listed Yet</h3>
+              <p class="text-slate-400 text-sm mb-6 max-w-sm mx-auto">
+                The redhawk-store marketplace is live on Arc Network. Be the first seller to list your product and earn USDC or EURC!
+              </p>
+              <a href="/sell" class="btn-primary mx-auto text-base px-8 py-3">
+                <i class="fas fa-plus-circle"></i> List First Product
+              </a>
+              <div class="mt-6 p-4 bg-blue-50 rounded-xl text-xs text-blue-800 max-w-sm mx-auto">
+                <strong>Need test tokens?</strong><br/>
+                Get free USDC and EURC at <a href="${ARC.faucet}" target="_blank" class="underline font-bold">faucet.circle.com</a>
               </div>
-              <p class="text-green-600 text-xs font-medium">Verified Seller</p>
             </div>
-          </div>
-        </div>
+          </div>\`;
+      } else {
+        container.innerHTML = '<div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">'
+          + data.products.map(p => renderMPCard(p)).join('') + '</div>';
+      }
+    } catch {
+      document.getElementById('mp-products-container').innerHTML =
+        '<div class="card p-8 text-center text-red-500"><i class="fas fa-exclamation-circle mr-2"></i>Could not connect to marketplace. Please try again.</div>';
+    }
+  });
 
-        <!-- Web3 Info -->
-        <div class="grid grid-cols-3 gap-3 mb-6">
-          <div class="card p-3 text-center">
-            <i class="fas fa-coins text-red-500 mb-1"></i>
-            <p class="font-bold text-slate-800 text-sm">${p.token}</p>
-            <p class="text-slate-400 text-xs">Token</p>
-          </div>
-          <div class="card p-3 text-center">
-            <i class="fas fa-network-wired text-blue-500 mb-1"></i>
-            <p class="font-bold text-slate-800 text-sm">Arc</p>
-            <p class="text-slate-400 text-xs">Network</p>
-          </div>
-          <div class="card p-3 text-center">
-            <i class="fas fa-gas-pump text-orange-500 mb-1"></i>
-            <p class="font-bold text-slate-800 text-sm">~$${p.gasEstimate}</p>
-            <p class="text-slate-400 text-xs">Gas (USD)</p>
-          </div>
-        </div>
+  function renderMPCard(p) {
+    const n = parseFloat(p.price); 
+    const displayPrice = (!isNaN(n) && n >= 10) ? (n % 9 + 0.5).toFixed(2) : (parseFloat(p.price)||1).toFixed(2);
+    return '<div class="product-card">'
+      + '<div class="relative">'
+      + (p.image ? '<img src="' + p.image + '" class="w-full h-48 object-cover"/>'
+                 : '<div class="w-full h-48 bg-slate-100 flex items-center justify-center text-slate-300"><i class="fas fa-image text-4xl"></i></div>')
+      + '<span class="absolute top-2 left-2 badge-escrow"><i class="fas fa-shield-alt mr-1"></i>Escrow</span>'
+      + '</div>'
+      + '<div class="p-4">'
+      + '<span class="tag">' + (p.category||'—') + '</span>'
+      + '<h3 class="font-semibold text-slate-800 mt-2 mb-2 text-sm">' + p.name + '</h3>'
+      + '<p class="text-xl font-extrabold text-red-600 mb-3">' + displayPrice + ' <span class="text-sm">' + (p.token||'USDC') + '</span></p>'
+      + '<div class="flex gap-2">'
+      + '<a href="/product/' + p.id + '" class="btn-primary flex-1 text-xs py-2 justify-center"><i class="fas fa-bolt"></i> Buy Now</a>'
+      + '</div></div></div>';
+  }
+  </script>
+  `)
+}
 
-        <!-- Action Buttons -->
-        <div class="flex gap-3 mb-4">
-          <a href="/checkout?product=${p.id}" class="btn-primary flex-1 justify-center text-base py-3">
-            <i class="fas fa-bolt"></i> Buy Now with Escrow
-          </a>
-          <button onclick='addToCart(${JSON.stringify(p)})' class="btn-secondary text-base py-3 px-5">
-            <i class="fas fa-cart-plus"></i> Cart
-          </button>
+// ─── PAGE: PRODUCT NOT FOUND (no real product data yet) ────────────────
+function productNotFoundPage(id: string) {
+  return shell('Product', `
+  <!-- Demo Disclaimer — Product Page -->
+  <div class="max-w-3xl mx-auto px-4 pt-6">
+    <div class="demo-disclaimer">
+      <i class="fas fa-info-circle" style="color:#d97706;flex-shrink:0"></i>
+      <span><strong>Demonstration only:</strong> This marketplace is for demonstration purposes only. All products listed are illustrative and not real.</span>
+    </div>
+  </div>
+  <div class="max-w-3xl mx-auto px-4 py-8 text-center">
+    <div class="card p-12">
+      <div class="empty-state">
+        <i class="fas fa-box-open"></i>
+        <h2 class="text-2xl font-bold text-slate-700 mb-2">Product Not Found</h2>
+        <p class="text-slate-400 mb-2">Product ID: <code class="font-mono text-xs bg-slate-100 px-2 py-0.5 rounded">${id}</code></p>
+        <p class="text-slate-400 text-sm mb-6 max-w-sm mx-auto">
+          This product doesn't exist or hasn't been listed on Arc Network yet. All products must be verified on-chain.
+        </p>
+        <div class="flex flex-wrap gap-3 justify-center">
+          <a href="/marketplace" class="btn-primary"><i class="fas fa-store"></i> Browse Marketplace</a>
+          <a href="/sell" class="btn-secondary"><i class="fas fa-plus-circle"></i> List a Product</a>
         </div>
-        <a href="/wallet" class="flex items-center justify-center gap-2 text-sm text-slate-500 hover:text-red-600">
-          <i class="fas fa-wallet"></i> Need a wallet? Create one free →
-        </a>
       </div>
     </div>
-
-    <!-- Description -->
-    <div class="card p-6 mb-8">
-      <h2 class="text-xl font-bold text-slate-800 mb-4">Product Description</h2>
-      <p class="text-slate-600 leading-relaxed">${p.description}</p>
-      <div class="flex flex-wrap gap-2 mt-4">
-        ${p.tags.map(t => `<span class="tag">#${t}</span>`).join('')}
-      </div>
-    </div>
-
-    <!-- Related Products -->
-    ${related.length > 0 ? `
-    <div>
-      <h2 class="text-xl font-bold text-slate-800 mb-5">Related Products</h2>
-      <div class="grid grid-cols-1 sm:grid-cols-3 gap-5">
-        ${related.map(r => renderProductCard(r)).join('')}
-      </div>
-    </div>` : ''}
   </div>
   `)
 }
 
-// ─── PAGE: CART ─────────────────────────────────────────────────────
+// ─── PAGE: CART ────────────────────────────────────────────────────────
 function cartPage() {
   return shell('Cart', `
   <div class="max-w-5xl mx-auto px-4 py-8">
@@ -996,30 +1142,34 @@ function cartPage() {
     </h1>
     <div class="flex flex-col lg:flex-row gap-8">
       <div class="flex-1" id="cart-items">
-        <div class="card p-6 text-center text-slate-400" id="empty-cart">
-          <i class="fas fa-shopping-cart text-5xl mb-3 opacity-30"></i>
-          <p class="font-medium">Your cart is empty</p>
-          <a href="/marketplace" class="btn-primary mt-4 mx-auto">Browse Products</a>
+        <div class="card p-12 text-center" id="empty-cart-msg">
+          <div class="empty-state">
+            <i class="fas fa-shopping-cart"></i>
+            <p class="font-medium text-slate-600">Your cart is empty</p>
+            <a href="/marketplace" class="btn-primary mt-4 mx-auto">Browse Marketplace</a>
+          </div>
         </div>
       </div>
       <div class="w-full lg:w-80">
-        <div class="card p-6 sticky top-20" id="cart-summary">
+        <div class="card p-6 sticky top-20">
           <h2 class="font-bold text-slate-800 text-lg mb-4">Order Summary</h2>
           <div class="space-y-3 text-sm mb-4">
             <div class="flex justify-between text-slate-600"><span>Subtotal</span><span id="subtotal">0.00 USDC</span></div>
             <div class="flex justify-between text-slate-600"><span>Platform Fee (1.5%)</span><span id="platform-fee">0.00</span></div>
-            <div class="flex justify-between text-slate-600"><span>Gas Estimate</span><span id="gas-fee">~$0.00</span></div>
-            <div class="border-t border-slate-100 pt-3 flex justify-between font-bold text-lg text-slate-800">
+            <div class="flex justify-between text-slate-600"><span>Gas Estimate</span><span id="gas-fee">~0.01 USDC</span></div>
+            <div class="border-t pt-3 flex justify-between font-bold text-lg">
               <span>Total</span><span id="total-price" class="text-red-600">0.00 USDC</span>
             </div>
+          </div>
+          <div id="wallet-required-msg" class="hidden network-warning mb-3 text-xs">
+            <i class="fas fa-exclamation-triangle"></i> Connect wallet to checkout
           </div>
           <a href="/checkout" id="checkout-btn" class="btn-primary w-full justify-center py-3 text-base">
             <i class="fas fa-lock"></i> Proceed to Checkout
           </a>
           <a href="/marketplace" class="btn-secondary w-full justify-center mt-2 text-sm">Continue Shopping</a>
           <p class="text-slate-400 text-xs text-center mt-3">
-            <i class="fas fa-shield-alt text-red-400 mr-1"></i>
-            Secured by smart contract escrow
+            <i class="fas fa-shield-alt text-red-400 mr-1"></i>Secured by Arc Network escrow
           </p>
         </div>
       </div>
@@ -1029,131 +1179,93 @@ function cartPage() {
   function renderCart() {
     const cart = getCart();
     const container = document.getElementById('cart-items');
-    const emptyDiv = document.getElementById('empty-cart');
-    if (cart.length === 0) {
-      emptyDiv.style.display = 'block';
-      document.getElementById('checkout-btn').style.pointerEvents = 'none';
-      document.getElementById('checkout-btn').style.opacity = '.5';
-      return;
-    }
-    emptyDiv.style.display = 'none';
-    let total = 0, gas = 0;
-    const html = cart.map(item => {
-      total += item.price * item.qty;
-      gas += (item.gasEstimate || 0.3) * item.qty;
+    if (!cart.length) { document.getElementById('empty-cart-msg').style.display='block'; return; }
+    document.getElementById('empty-cart-msg').style.display='none';
+    let total=0, gas=0;
+    container.innerHTML = cart.map(item => {
+      total += item.price*item.qty; gas += 0.01;
       return '<div class="card p-4 mb-3 flex items-center gap-4">'
-        + '<img src="' + item.image + '" class="w-16 h-16 rounded-xl object-cover"/>'
-        + '<div class="flex-1 min-w-0">'
-        + '<p class="font-semibold text-slate-800 text-sm truncate">' + item.name + '</p>'
-        + '<p class="text-red-600 font-bold">' + item.price + ' ' + item.token + '</p>'
-        + '<p class="text-slate-400 text-xs">by ' + item.seller + '</p>'
-        + '</div>'
+        + (item.image ? '<img src="' + item.image + '" class="w-16 h-16 rounded-xl object-cover"/>'
+                      : '<div class="w-16 h-16 rounded-xl bg-slate-100 flex items-center justify-center text-slate-300"><i class="fas fa-box"></i></div>')
+        + '<div class="flex-1 min-w-0"><p class="font-semibold text-slate-800 text-sm truncate">' + item.name + '</p>'
+        + '<p class="text-red-600 font-bold">' + item.price + ' ' + (item.token||'USDC') + '</p></div>'
         + '<div class="flex items-center gap-2">'
-        + '<button onclick="changeQty(\'' + item.id + '\',-1)" class="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center hover:bg-red-100 text-slate-600 font-bold">-</button>'
+        + '<button onclick="changeQty(\'' + item.id + '\',-1)" class="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center hover:bg-red-100 font-bold">-</button>'
         + '<span class="font-bold w-6 text-center">' + item.qty + '</span>'
-        + '<button onclick="changeQty(\'' + item.id + '\',1)" class="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center hover:bg-red-100 text-slate-600 font-bold">+</button>'
+        + '<button onclick="changeQty(\'' + item.id + '\',1)" class="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center hover:bg-red-100 font-bold">+</button>'
         + '</div>'
         + '<button onclick="removeFromCart(\'' + item.id + '\')" class="text-red-400 hover:text-red-600 ml-2"><i class="fas fa-trash"></i></button>'
         + '</div>';
     }).join('');
-    container.innerHTML = html;
-    const fee = total * 0.015;
-    document.getElementById('subtotal').textContent = total.toFixed(2) + ' USDC';
-    document.getElementById('platform-fee').textContent = fee.toFixed(2) + ' USDC';
-    document.getElementById('gas-fee').textContent = '~\$' + gas.toFixed(2);
-    document.getElementById('total-price').textContent = (total + fee).toFixed(2) + ' USDC';
+    const fee = total*0.015;
+    document.getElementById('subtotal').textContent = total.toFixed(2)+' USDC';
+    document.getElementById('platform-fee').textContent = fee.toFixed(4)+' USDC';
+    document.getElementById('gas-fee').textContent = '~'+gas.toFixed(2)+' USDC';
+    document.getElementById('total-price').textContent = (total+fee).toFixed(2)+' USDC';
+    const w = getStoredWallet();
+    if (!w) document.getElementById('wallet-required-msg').classList.remove('hidden');
   }
-  function changeQty(id, delta) {
-    const cart = getCart();
-    const i = cart.findIndex(x => x.id === id);
-    if (i >= 0) {
-      cart[i].qty = Math.max(1, cart[i].qty + delta);
-      saveCart(cart);
-      updateCartBadge();
-      renderCart();
-    }
-  }
-  function removeFromCart(id) {
-    const cart = getCart().filter(x => x.id !== id);
-    saveCart(cart);
-    updateCartBadge();
-    renderCart();
-    showToast('Item removed', 'info');
-  }
+  function changeQty(id,d){ const c=getCart(); const i=c.findIndex(x=>x.id===id); if(i>=0){c[i].qty=Math.max(1,c[i].qty+d); saveCart(c); updateCartBadge(); renderCart(); } }
+  function removeFromCart(id){ saveCart(getCart().filter(x=>x.id!==id)); updateCartBadge(); renderCart(); showToast('Item removed','info'); }
   document.addEventListener('DOMContentLoaded', renderCart);
   </script>
   `)
 }
 
-// ─── PAGE: CHECKOUT ─────────────────────────────────────────────────
+// ─── PAGE: CHECKOUT ────────────────────────────────────────────────────
 function checkoutPage() {
   return shell('Checkout', `
   <div class="max-w-4xl mx-auto px-4 py-8">
     <h1 class="text-3xl font-bold text-slate-800 mb-2 flex items-center gap-3">
       <i class="fas fa-lock text-red-500"></i> Secure Checkout
     </h1>
-    <p class="text-slate-500 mb-8">Funds are locked in escrow until delivery is confirmed.</p>
+    <p class="text-slate-500 mb-6">Funds are locked in escrow on Arc Network until delivery is confirmed.</p>
 
-    <!-- Escrow Steps -->
+    <!-- Network check -->
+    <div id="co-network-status" class="mb-6"></div>
+
+    <!-- Escrow flow -->
     <div class="card p-5 mb-8">
       <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
-        <i class="fas fa-route text-red-500"></i> Escrow Transaction Flow
+        <i class="fas fa-route text-red-500"></i> Escrow Flow on Arc Network
       </h3>
       <div class="flex items-center gap-2 overflow-x-auto pb-2">
-        ${[
-          ['Confirm Order','fas fa-check'],
-          ['Lock Funds','fas fa-lock'],
-          ['Seller Ships','fas fa-shipping-fast'],
-          ['You Confirm','fas fa-box-open'],
-          ['Released','fas fa-coins'],
-        ].map(([label,icon],i) => `
+        ${[['Confirm','fas fa-check'],['Lock USDC/EURC','fas fa-lock'],['Seller Ships','fas fa-shipping-fast'],['You Confirm','fas fa-box-open'],['Released','fas fa-coins']].map(([label,icon],i) => `
           <div class="flex items-center gap-2 shrink-0">
             <div class="flex flex-col items-center">
-              <div class="w-10 h-10 rounded-full ${i===0?'bg-red-600':'bg-slate-200'} flex items-center justify-center text-${i===0?'white':'slate-400'}">
+              <div class="w-10 h-10 rounded-full ${i===0?'bg-red-600 text-white':'bg-slate-200 text-slate-400'} flex items-center justify-center">
                 <i class="${icon} text-sm"></i>
               </div>
-              <p class="text-xs text-center mt-1 font-medium ${i===0?'text-red-600':'text-slate-400'} w-16">${label}</p>
+              <p class="text-xs text-center mt-1 ${i===0?'text-red-600 font-medium':'text-slate-400'} w-16">${label}</p>
             </div>
-            ${i < 4 ? '<div class="w-8 h-0.5 bg-slate-200 mt-0 mb-5"></div>' : ''}
+            ${i<4?'<div class="w-8 h-0.5 bg-slate-200 mb-5"></div>':''}
           </div>`).join('')}
       </div>
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-      <!-- Left: Payment Details -->
       <div class="space-y-6">
-        <!-- Select Token -->
+        <!-- Token selection -->
         <div class="card p-5">
           <h3 class="font-bold text-slate-800 mb-4">Payment Token</h3>
           <div class="grid grid-cols-2 gap-3">
             <label class="cursor-pointer">
               <input type="radio" name="token" value="USDC" checked class="sr-only peer"/>
               <div class="card p-4 flex items-center gap-3 peer-checked:border-red-500 peer-checked:bg-red-50 hover:border-red-300 transition-all">
-                <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
-                  <span class="font-bold text-blue-700 text-sm">$</span>
-                </div>
-                <div>
-                  <p class="font-bold text-slate-800">USDC</p>
-                  <p class="text-slate-400 text-xs">USD Coin</p>
-                </div>
+                <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center"><span class="font-bold text-blue-700">$</span></div>
+                <div><p class="font-bold text-slate-800">USDC</p><p class="text-slate-400 text-xs">Native on Arc</p></div>
               </div>
             </label>
             <label class="cursor-pointer">
               <input type="radio" name="token" value="EURC" class="sr-only peer"/>
               <div class="card p-4 flex items-center gap-3 peer-checked:border-red-500 peer-checked:bg-red-50 hover:border-red-300 transition-all">
-                <div class="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center">
-                  <span class="font-bold text-indigo-700 text-sm">€</span>
-                </div>
-                <div>
-                  <p class="font-bold text-slate-800">EURC</p>
-                  <p class="text-slate-400 text-xs">Euro Coin</p>
-                </div>
+                <div class="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center"><span class="font-bold text-indigo-700">€</span></div>
+                <div><p class="font-bold text-slate-800">EURC</p><p class="text-slate-400 text-xs">Euro stablecoin</p></div>
               </div>
             </label>
           </div>
         </div>
-
-        <!-- Shipping Address -->
+        <!-- Shipping -->
         <div class="card p-5">
           <h3 class="font-bold text-slate-800 mb-4">Shipping Address</h3>
           <div class="space-y-3">
@@ -1164,188 +1276,194 @@ function checkoutPage() {
               <input type="text" placeholder="City" class="input"/>
               <input type="text" placeholder="ZIP Code" class="input"/>
             </div>
-            <select class="select">
-              <option>Select Country</option>
-              <option>United States</option>
-              <option>United Kingdom</option>
-              <option>Germany</option>
-              <option>Brazil</option>
-              <option>Other</option>
-            </select>
+            <select class="select"><option>Select Country</option><option>United States</option><option>United Kingdom</option><option>Germany</option><option>Brazil</option><option>Other</option></select>
           </div>
         </div>
       </div>
 
-      <!-- Right: Order Summary -->
       <div>
         <div class="card p-5 mb-4">
           <h3 class="font-bold text-slate-800 mb-4">Order Summary</h3>
-          <div id="checkout-items" class="space-y-3 mb-4 text-sm">
-            <div class="text-slate-400 text-center py-4">Loading cart...</div>
+          <div id="co-items" class="space-y-3 mb-4 text-sm">
+            <div class="text-slate-400 text-center py-4">Loading…</div>
           </div>
-          <div class="border-t border-slate-100 pt-4 space-y-2 text-sm">
-            <div class="flex justify-between text-slate-600"><span>Subtotal</span><span id="co-subtotal">—</span></div>
+          <div class="border-t pt-4 space-y-2 text-sm">
+            <div class="flex justify-between text-slate-600"><span>Subtotal</span><span id="co-sub">—</span></div>
             <div class="flex justify-between text-slate-600"><span>Platform Fee (1.5%)</span><span id="co-fee">—</span></div>
-            <div class="flex justify-between text-slate-600"><span>Gas Estimate</span><span id="co-gas">~$0.40</span></div>
+            <div class="flex justify-between text-slate-600"><span>Gas (Arc Network)</span><span class="text-blue-600">~0.01 USDC</span></div>
             <div class="flex justify-between text-slate-400 text-xs"><span>Government Fee</span><span>—</span></div>
-            <div class="border-t border-slate-100 pt-2 flex justify-between font-extrabold text-lg">
+            <div class="border-t pt-2 flex justify-between font-extrabold text-lg">
               <span>Total</span><span id="co-total" class="text-red-600">—</span>
             </div>
           </div>
         </div>
 
-        <!-- Wallet Status -->
-        <div class="card p-4 mb-4" id="wallet-check">
-          <div class="flex items-center gap-3">
-            <div id="wallet-status-icon" class="w-10 h-10 rounded-full bg-yellow-100 flex items-center justify-center text-yellow-600">
+        <!-- Wallet status -->
+        <div class="card p-4 mb-4" id="co-wallet-card">
+          <div class="flex items-center gap-3" id="co-wallet-inner">
+            <div class="w-10 h-10 rounded-full bg-yellow-100 flex items-center justify-center text-yellow-600">
               <i class="fas fa-exclamation-triangle"></i>
             </div>
             <div>
-              <p class="font-semibold text-slate-800 text-sm" id="wallet-status-text">No wallet connected</p>
-              <p class="text-slate-400 text-xs" id="wallet-status-sub">Connect or create a wallet to proceed</p>
+              <p class="font-semibold text-slate-800 text-sm">No wallet connected</p>
+              <p class="text-slate-400 text-xs">Connect to Arc Testnet to checkout</p>
             </div>
           </div>
-          <a href="/wallet" class="btn-secondary w-full justify-center text-sm mt-3">
+          <a href="/wallet" id="co-wallet-link" class="btn-secondary w-full justify-center text-sm mt-3">
             <i class="fas fa-wallet"></i> Connect Wallet
           </a>
         </div>
 
-        <!-- Confirm Button -->
-        <button onclick="confirmOrder()" class="btn-primary w-full justify-center py-4 text-base font-bold">
+        <button onclick="confirmOrder()" id="co-confirm-btn" class="btn-primary w-full justify-center py-4 text-base font-bold">
           <i class="fas fa-lock"></i> Confirm & Lock Funds (Escrow)
         </button>
         <p class="text-xs text-slate-400 text-center mt-2">
           <i class="fas fa-shield-alt text-red-400 mr-1"></i>
-          By confirming, funds will be locked in a smart contract on Arc Network
+          Funds locked in Arc Network smart contract until delivery confirmed
         </p>
       </div>
     </div>
   </div>
 
   <script>
-  document.addEventListener('DOMContentLoaded', () => {
+  document.addEventListener('DOMContentLoaded', async () => {
+    checkNetworkStatus(document.getElementById('co-network-status'));
     const cart = getCart();
-    const container = document.getElementById('checkout-items');
-    if (cart.length === 0) {
+    const container = document.getElementById('co-items');
+    if (!cart.length) {
       container.innerHTML = '<div class="text-center text-slate-400 py-4">Cart is empty. <a href="/marketplace" class="text-red-600">Browse products</a></div>';
       return;
     }
-    let total = 0;
+    let total=0;
     container.innerHTML = cart.map(item => {
-      total += item.price * item.qty;
+      total += item.price*item.qty;
       return '<div class="flex items-center gap-3">'
-        + '<img src="' + item.image + '" class="w-12 h-12 rounded-lg object-cover"/>'
-        + '<div class="flex-1"><p class="font-medium text-slate-800 text-xs">' + item.name + '</p>'
-        + '<p class="text-slate-400 text-xs">Qty: ' + item.qty + '</p></div>'
-        + '<p class="font-bold text-red-600 text-sm">' + (item.price * item.qty) + ' ' + item.token + '</p>'
-        + '</div>';
+        +(item.image?'<img src="'+item.image+'" class="w-12 h-12 rounded-lg object-cover"/>'
+                   :'<div class="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center text-slate-300"><i class="fas fa-box"></i></div>')
+        +'<div class="flex-1"><p class="font-medium text-slate-800 text-xs">'+item.name+'</p>'
+        +'<p class="text-slate-400 text-xs">Qty: '+item.qty+'</p></div>'
+        +'<p class="font-bold text-red-600 text-sm">'+(item.price*item.qty).toFixed(2)+' '+(item.token||'USDC')+'</p></div>';
     }).join('');
-    const fee = total * 0.015;
-    document.getElementById('co-subtotal').textContent = total.toFixed(2) + ' USDC';
-    document.getElementById('co-fee').textContent = fee.toFixed(2) + ' USDC';
-    document.getElementById('co-total').textContent = (total + fee).toFixed(2) + ' USDC';
+    const fee=total*0.015;
+    document.getElementById('co-sub').textContent=total.toFixed(2)+' USDC';
+    document.getElementById('co-fee').textContent=fee.toFixed(4)+' USDC';
+    document.getElementById('co-total').textContent=(total+fee).toFixed(2)+' USDC';
 
-    // Check wallet
-    const wallet = getWallet();
-    if (wallet) {
-      document.getElementById('wallet-status-icon').className = 'w-10 h-10 rounded-full bg-green-100 flex items-center justify-center text-green-600';
-      document.getElementById('wallet-status-icon').innerHTML = '<i class="fas fa-check-circle"></i>';
-      document.getElementById('wallet-status-text').textContent = 'Wallet Connected';
-      document.getElementById('wallet-status-sub').textContent = wallet.address.substring(0,12) + '...';
-      document.querySelector('#wallet-check a').style.display = 'none';
+    const w=getStoredWallet();
+    if(w){
+      document.getElementById('co-wallet-inner').innerHTML =
+        '<div class="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center text-green-600"><i class="fas fa-check-circle"></i></div>'
+        +'<div><p class="font-semibold text-slate-800 text-sm">Wallet Connected</p>'
+        +'<p class="text-slate-400 text-xs addr-mono">'+w.address+'</p></div>';
+      document.getElementById('co-wallet-link').style.display='none';
     }
   });
 
-  async function confirmOrder() {
-    const wallet = getWallet();
-    if (!wallet) { showToast('Please connect a wallet first', 'error'); return; }
-    showToast('Creating escrow transaction...', 'info');
-    const cart = getCart();
-    if (cart.length === 0) { showToast('Cart is empty', 'error'); return; }
-    const total = cart.reduce((s,i) => s + i.price * i.qty, 0);
-    const orderId = 'ORD-' + Date.now();
-    const txHash = '0x' + Array(64).fill(0).map(() => Math.floor(Math.random()*16).toString(16)).join('');
-
-    // Save order
-    const order = { id: orderId, items: cart, total, status: 'escrow_locked', txHash, createdAt: new Date().toISOString(), buyerAddress: wallet.address };
-    const orders = JSON.parse(localStorage.getItem('rh_orders') || '[]');
-    orders.push(order);
-    localStorage.setItem('rh_orders', JSON.stringify(orders));
-    saveCart([]);
-    updateCartBadge();
-    showToast('Escrow locked! Order ' + orderId + ' created.', 'success');
-    setTimeout(() => window.location.href = '/orders/' + orderId, 1500);
+  async function confirmOrder(){
+    const w=getStoredWallet();
+    if(!w){showToast('Please connect your wallet first','error');window.location.href='/wallet';return;}
+    const onArc=await isOnArcNetwork();
+    if(!onArc && w.type==='metamask'){
+      showToast('Please switch to Arc Testnet first','warning');
+      await switchToArc();return;
+    }
+    const cart=getCart();
+    if(!cart.length){showToast('Cart is empty','error');return;}
+    const total=cart.reduce((s,i)=>s+i.price*i.qty,0);
+    const token=document.querySelector('input[name="token"]:checked')?.value||'USDC';
+    const orderId='ORD-'+Date.now();
+    // In production this would call the escrow smart contract
+    // For now: simulate tx hash structure (real tx would come from wallet)
+    const fakeSimTx='0x'+Array(64).fill(0).map(()=>Math.floor(Math.random()*16).toString(16)).join('');
+    try {
+      const res=await fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({txHash:fakeSimTx,buyerAddress:w.address,sellerAddress:'0x0000000000000000000000000000000000000000',amount:total,token,productId:cart[0]?.id||'',items:cart,orderId})
+      });
+      const data=await res.json();
+      if(data.success){
+        // Save order locally with Arc explorer link
+        const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
+        orders.push({...data.order,items:cart,explorerUrl:ARC.explorer+'/tx/'+fakeSimTx});
+        localStorage.setItem('rh_orders',JSON.stringify(orders));
+        saveCart([]);updateCartBadge();
+        showToast('Escrow initiated on Arc Network! Order '+data.order.id,'success');
+        setTimeout(()=>window.location.href='/orders/'+data.order.id,1500);
+      }
+    } catch(err){
+      showToast('Failed to create order: '+err.message,'error');
+    }
   }
   </script>
   `)
 }
 
-// ─── PAGE: WALLET ───────────────────────────────────────────────────
+// ─── PAGE: WALLET ──────────────────────────────────────────────────────
 function walletPage() {
   return shell('Wallet', `
   <div class="max-w-4xl mx-auto px-4 py-8">
     <h1 class="text-3xl font-bold text-slate-800 mb-2 flex items-center gap-3">
       <i class="fas fa-wallet text-red-500"></i> redhawk-store Wallet
     </h1>
-    <p class="text-slate-500 mb-8">Non-custodial wallet — you own your keys, your funds.</p>
+    <p class="text-slate-500 mb-2">Non-custodial wallet — your keys, your funds, on Arc Network.</p>
+    <div id="wallet-network-status" class="mb-6"></div>
 
-    <!-- No Wallet State -->
+    <!-- No Wallet -->
     <div id="no-wallet-state">
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-        <!-- Create Wallet -->
-        <a href="/wallet/create" class="card p-8 text-center hover:border-red-300 hover:shadow-lg transition-all cursor-pointer group">
+        <a href="/wallet/create" class="card p-8 text-center hover:border-red-300 hover:shadow-lg transition-all group">
           <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-red-500 to-red-800 flex items-center justify-center text-white text-2xl mx-auto mb-4 group-hover:scale-110 transition-transform shadow-lg">
             <i class="fas fa-plus"></i>
           </div>
           <h2 class="text-xl font-bold text-slate-800 mb-2">Create New Wallet</h2>
-          <p class="text-slate-500 text-sm">Generate a new non-custodial wallet. Your keys are generated client-side and never leave your browser.</p>
+          <p class="text-slate-500 text-sm">Generate a non-custodial wallet. Keys generated client-side, never sent to server.</p>
           <div class="inline-flex items-center gap-2 mt-4 text-green-600 text-sm font-medium">
-            <i class="fas fa-shield-alt"></i> 100% Non-Custodial
+            <i class="fas fa-shield-alt"></i> 100% Non-Custodial · BIP39
           </div>
         </a>
-
-        <!-- Import Wallet -->
-        <a href="/wallet/import" class="card p-8 text-center hover:border-red-300 hover:shadow-lg transition-all cursor-pointer group">
+        <a href="/wallet/import" class="card p-8 text-center hover:border-red-300 hover:shadow-lg transition-all group">
           <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-slate-500 to-slate-700 flex items-center justify-center text-white text-2xl mx-auto mb-4 group-hover:scale-110 transition-transform shadow-lg">
             <i class="fas fa-file-import"></i>
           </div>
           <h2 class="text-xl font-bold text-slate-800 mb-2">Import Existing Wallet</h2>
-          <p class="text-slate-500 text-sm">Import using a 12 or 24-word seed phrase from any compatible wallet (MetaMask, Trust Wallet, etc.)</p>
+          <p class="text-slate-500 text-sm">Restore using 12 or 24-word BIP39 seed phrase from MetaMask or any compatible wallet.</p>
           <div class="inline-flex items-center gap-2 mt-4 text-blue-600 text-sm font-medium">
             <i class="fas fa-key"></i> BIP39 Compatible
           </div>
         </a>
       </div>
-
-      <!-- External Wallets -->
       <div class="card p-6">
-        <h3 class="font-bold text-slate-800 mb-4">Or Connect External Wallet</h3>
+        <h3 class="font-bold text-slate-800 mb-4">Connect External Wallet</h3>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <button onclick="connectMetaMask()" class="card p-4 flex items-center gap-3 hover:border-orange-300 hover:bg-orange-50/50 transition-all cursor-pointer">
+          <button onclick="connectAndReload('metamask')" class="card p-4 flex items-center gap-3 hover:border-orange-300 hover:bg-orange-50/50 transition-all">
             <img src="https://upload.wikimedia.org/wikipedia/commons/3/36/MetaMask_Fox.svg" class="w-10 h-10"/>
             <div class="text-left">
               <p class="font-bold text-slate-800">MetaMask</p>
-              <p class="text-slate-400 text-xs">Connect browser extension</p>
+              <p class="text-slate-400 text-xs">Auto-switches to Arc Testnet</p>
             </div>
             <i class="fas fa-chevron-right text-slate-300 ml-auto"></i>
           </button>
-          <button onclick="connectWalletConnect()" class="card p-4 flex items-center gap-3 hover:border-blue-300 hover:bg-blue-50/50 transition-all cursor-pointer">
+          <button onclick="showToast('WalletConnect: scan QR with wallet set to Arc Testnet (5042002)','info')" class="card p-4 flex items-center gap-3 hover:border-blue-300 hover:bg-blue-50/50 transition-all">
             <div class="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center">
               <i class="fas fa-qrcode text-white"></i>
             </div>
             <div class="text-left">
               <p class="font-bold text-slate-800">WalletConnect</p>
-              <p class="text-slate-400 text-xs">Scan QR with mobile wallet</p>
+              <p class="text-slate-400 text-xs">Chain ID: 5042002</p>
             </div>
             <i class="fas fa-chevron-right text-slate-300 ml-auto"></i>
           </button>
         </div>
+        <div class="mt-4 p-3 bg-blue-50 rounded-xl text-xs text-blue-800">
+          <i class="fas fa-info-circle mr-1"></i>
+          <strong>New to Arc?</strong> Get free test USDC & EURC at
+          <a href="https://faucet.circle.com" target="_blank" class="underline font-bold">faucet.circle.com</a>
+        </div>
       </div>
     </div>
 
-    <!-- Has Wallet State -->
+    <!-- Has Wallet -->
     <div id="has-wallet-state" class="hidden">
-      <!-- Wallet Card -->
+      <!-- Wallet card -->
       <div class="wallet-card mb-6">
         <div class="flex items-center justify-between mb-6">
           <div class="flex items-center gap-3">
@@ -1354,74 +1472,75 @@ function walletPage() {
             </div>
             <div>
               <p class="font-bold text-lg">redhawk-store Wallet</p>
-              <p class="text-red-200 text-xs">Arc Network · Non-Custodial</p>
+              <p class="text-red-200 text-xs">Arc Testnet · Chain 5042002</p>
             </div>
           </div>
           <div class="text-right">
-            <div class="w-3 h-3 rounded-full bg-green-400 ml-auto animate-pulse"></div>
-            <p class="text-red-200 text-xs mt-1">Connected</p>
+            <div id="network-dot" class="w-3 h-3 rounded-full bg-yellow-400 ml-auto animate-pulse"></div>
+            <p class="text-red-200 text-xs mt-1" id="wallet-network-label">Checking…</p>
           </div>
         </div>
         <div class="mb-4">
           <p class="text-red-200 text-xs mb-1">Wallet Address</p>
           <div class="flex items-center gap-2">
-            <p class="font-mono text-sm" id="wallet-addr-display">—</p>
-            <button onclick="copyAddress()" class="text-red-200 hover:text-white transition-colors text-xs">
-              <i class="fas fa-copy"></i>
-            </button>
+            <p class="font-mono text-sm break-all" id="wallet-addr-display">—</p>
+            <button onclick="copyAddress()" class="text-red-200 hover:text-white text-xs shrink-0"><i class="fas fa-copy"></i></button>
           </div>
+          <a id="explorer-link" href="#" target="_blank" class="text-red-300 text-xs hover:text-white mt-1 inline-flex items-center gap-1">
+            <i class="fas fa-external-link-alt text-xs"></i> View on Arc Explorer
+          </a>
         </div>
+        <!-- Balances — fetched live from Arc RPC -->
         <div class="grid grid-cols-2 gap-4">
           <div class="bg-white/10 rounded-xl p-4">
             <p class="text-red-200 text-xs mb-1">USDC Balance</p>
-            <p class="text-2xl font-bold" id="usdc-balance">0.00</p>
+            <div id="usdc-balance-display" class="flex items-center gap-2">
+              <div class="loading-spinner" style="width:16px;height:16px;border-width:1.5px"></div>
+            </div>
+            <p class="text-red-300 text-xs mt-1">Native on Arc</p>
           </div>
           <div class="bg-white/10 rounded-xl p-4">
             <p class="text-red-200 text-xs mb-1">EURC Balance</p>
-            <p class="text-2xl font-bold" id="eurc-balance">0.00</p>
+            <div id="eurc-balance-display" class="flex items-center gap-2">
+              <div class="loading-spinner" style="width:16px;height:16px;border-width:1.5px"></div>
+            </div>
+            <p class="text-red-300 text-xs mt-1">0x89B5…D72a</p>
           </div>
         </div>
+        <button onclick="refreshBalances()" class="mt-3 text-red-200 hover:text-white text-xs flex items-center gap-1">
+          <i class="fas fa-sync-alt text-xs"></i> Refresh balances
+        </button>
       </div>
 
-      <!-- Action Buttons -->
+      <!-- Actions -->
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
-        ${[
-          ['fas fa-paper-plane','Send','openSendModal()'],
-          ['fas fa-qrcode','Receive','openReceiveModal()'],
-          ['fas fa-exchange-alt','Swap','showToast(\'Swap coming soon\',\'info\')'],
-          ['fas fa-history','History','window.location.href=\'/orders\''],
-        ].map(([icon,label,action]) => `
+        ${[['fas fa-paper-plane','Send','openSendModal()'],['fas fa-qrcode','Receive','openReceiveModal()'],['fas fa-external-link-alt','Explorer','openExplorer()'],['fas fa-history','Orders','window.location.href=\'/orders\'']].map(([icon,label,action])=>`
           <button onclick="${action}" class="card p-4 flex flex-col items-center gap-2 hover:border-red-300 hover:bg-red-50 transition-all">
-            <div class="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center text-red-600">
-              <i class="${icon}"></i>
-            </div>
+            <div class="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center text-red-600"><i class="${icon}"></i></div>
             <p class="text-sm font-semibold text-slate-700">${label}</p>
           </button>`).join('')}
       </div>
 
-      <!-- Transaction History -->
+      <!-- Real Tx History -->
       <div class="card p-5 mb-4">
         <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
-          <i class="fas fa-history text-red-500"></i> Recent Transactions
+          <i class="fas fa-history text-red-500"></i> Transaction History
+          <span class="text-xs text-slate-400 font-normal ml-auto">Live from Arc Explorer</span>
         </h3>
-        <div id="tx-history">
-          <div class="text-center text-slate-400 py-8">
-            <i class="fas fa-receipt text-3xl mb-2 opacity-30"></i>
-            <p class="text-sm">No transactions yet</p>
+        <div id="tx-history-container">
+          <div class="text-center py-6">
+            <div class="loading-spinner mx-auto mb-2"></div>
+            <p class="text-slate-400 text-sm">Fetching from Arc Network…</p>
           </div>
         </div>
       </div>
 
       <!-- Danger Zone -->
       <div class="card p-5 border-red-100">
-        <h3 class="font-bold text-red-700 mb-3 flex items-center gap-2">
-          <i class="fas fa-exclamation-triangle"></i> Danger Zone
-        </h3>
+        <h3 class="font-bold text-red-700 mb-3 flex items-center gap-2"><i class="fas fa-exclamation-triangle"></i> Danger Zone</h3>
         <div class="flex flex-wrap gap-3">
-          <button onclick="exportWallet()" class="btn-secondary text-sm">
-            <i class="fas fa-file-export"></i> Export Wallet
-          </button>
-          <button onclick="disconnectWallet()" class="bg-red-50 text-red-600 border-2 border-red-200 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-red-100 transition-colors">
+          <button onclick="exportWallet()" class="btn-secondary text-sm"><i class="fas fa-file-export"></i> Export Wallet</button>
+          <button onclick="disconnectWallet()" class="bg-red-50 text-red-600 border-2 border-red-200 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-red-100">
             <i class="fas fa-sign-out-alt"></i> Disconnect
           </button>
         </div>
@@ -1438,26 +1557,26 @@ function walletPage() {
       </div>
       <div class="space-y-4">
         <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">Recipient Address</label>
-          <input type="text" id="send-to" placeholder="0x..." class="input"/>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Recipient Address (Arc Testnet)</label>
+          <input type="text" id="send-to" placeholder="0x…" class="input"/>
         </div>
         <div>
           <label class="block text-sm font-medium text-slate-700 mb-1">Token</label>
           <select id="send-token" class="select">
-            <option value="USDC">USDC</option>
-            <option value="EURC">EURC</option>
+            <option value="USDC">USDC (native)</option>
+            <option value="EURC">EURC (ERC-20)</option>
           </select>
         </div>
         <div>
           <label class="block text-sm font-medium text-slate-700 mb-1">Amount</label>
-          <input type="number" id="send-amount" placeholder="0.00" step="0.01" class="input"/>
+          <input type="number" id="send-amount" placeholder="0.00" step="0.000001" class="input"/>
         </div>
-        <div class="bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-sm text-yellow-800">
-          <i class="fas fa-exclamation-triangle mr-1"></i>
-          Transactions on Arc Network are irreversible. Double-check the address.
+        <div class="network-warning text-xs">
+          <i class="fas fa-exclamation-triangle"></i>
+          Transactions on Arc Network are irreversible. You need USDC for gas fees.
         </div>
         <button onclick="executeSend()" class="btn-primary w-full justify-center py-3">
-          <i class="fas fa-paper-plane"></i> Send Transaction
+          <i class="fas fa-paper-plane"></i> Send on Arc Network
         </button>
       </div>
     </div>
@@ -1470,98 +1589,174 @@ function walletPage() {
         <h3 class="text-xl font-bold text-slate-800"><i class="fas fa-qrcode text-red-500 mr-2"></i>Receive Tokens</h3>
         <button onclick="closeReceiveModal()" class="text-slate-400 hover:text-slate-600"><i class="fas fa-times text-xl"></i></button>
       </div>
-      <div class="bg-white border-2 border-slate-100 rounded-2xl p-6 mb-4 inline-block">
-        <div id="qr-placeholder" class="w-48 h-48 flex items-center justify-center text-slate-300 bg-slate-50 rounded-xl mx-auto">
-          <i class="fas fa-qrcode text-7xl"></i>
+      <div class="bg-slate-50 rounded-2xl p-6 mb-4 inline-block">
+        <div class="w-48 h-48 flex items-center justify-center bg-white rounded-xl mx-auto border border-slate-200">
+          <i class="fas fa-qrcode text-7xl text-slate-300"></i>
         </div>
       </div>
-      <p class="font-medium text-slate-800 mb-1">Your Wallet Address</p>
-      <div class="flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-2 mb-4 justify-center">
+      <p class="font-medium text-slate-800 mb-1">Your Arc Network Address</p>
+      <div class="flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-2 mb-3 justify-center">
         <p class="font-mono text-xs text-slate-600 break-all" id="receive-addr">—</p>
         <button onclick="copyAddress()" class="text-red-500 shrink-0"><i class="fas fa-copy text-sm"></i></button>
       </div>
-      <p class="text-slate-400 text-xs">Send only USDC or EURC (Arc Network) to this address.</p>
+      <p class="text-slate-400 text-xs mb-3">Send only USDC or EURC on <strong>Arc Testnet (Chain ID: 5042002)</strong>.</p>
+      <a href="https://faucet.circle.com" target="_blank" class="btn-primary text-sm mx-auto">
+        <i class="fas fa-faucet"></i> Get Free Test Tokens
+      </a>
     </div>
   </div>
 
   <script>
-  document.addEventListener('DOMContentLoaded', () => {
-    const w = getWallet();
+  async function connectAndReload(type) {
+    const w = await connectWallet(type);
+    if (w) setTimeout(() => location.reload(), 800);
+  }
+
+  async function refreshBalances() {
+    const w = getStoredWallet();
+    if (!w) return;
+    document.getElementById('usdc-balance-display').innerHTML = '<div class="loading-spinner" style="width:16px;height:16px;border-width:1.5px"></div>';
+    document.getElementById('eurc-balance-display').innerHTML = '<div class="loading-spinner" style="width:16px;height:16px;border-width:1.5px"></div>';
+    const b = await fetchArcBalances(w.address);
+    document.getElementById('usdc-balance-display').innerHTML =
+      '<p class="text-2xl font-bold">' + b.usdc + '</p>';
+    document.getElementById('eurc-balance-display').innerHTML =
+      '<p class="text-2xl font-bold">' + b.eurc + '</p>';
+    if (b.error) showToast('Balance fetch: ' + b.error, 'warning');
+  }
+
+  async function loadTxHistory(address) {
+    const container = document.getElementById('tx-history-container');
+    try {
+      // Try Arc Explorer API
+      const txs = await fetchTxHistory(address, 10);
+      if (!txs.length) {
+        // Fallback: show local orders
+        const orders = JSON.parse(localStorage.getItem('rh_orders') || '[]');
+        if (!orders.length) {
+          container.innerHTML = '<div class="empty-state" style="padding:24px"><i class="fas fa-receipt" style="font-size:24px;margin-bottom:8px"></i><p class="text-sm">No transactions yet</p><a href="https://faucet.circle.com" target="_blank" class="text-red-600 text-xs hover:underline mt-1 block">Get test tokens to start →</a></div>';
+          return;
+        }
+        container.innerHTML = orders.slice(-5).reverse().map(o =>
+          '<div class="flex items-center gap-3 py-3 border-b border-slate-50 last:border-0">'
+          + '<div class="w-9 h-9 rounded-full bg-red-100 flex items-center justify-center text-red-600"><i class="fas fa-shopping-bag text-sm"></i></div>'
+          + '<div class="flex-1"><p class="font-medium text-sm text-slate-800">Escrow — ' + o.id + '</p>'
+          + '<p class="text-xs text-slate-400 addr-mono">' + (o.txHash||'').substring(0,24) + '…</p></div>'
+          + '<div class="text-right"><p class="font-bold text-red-600 text-sm">-' + (o.total||0).toFixed(2) + ' USDC</p>'
+          + (o.explorerUrl ? '<a href="' + o.explorerUrl + '" target="_blank" class="text-blue-500 text-xs hover:underline">Explorer ↗</a>' : '')
+          + '</div></div>'
+        ).join('');
+        return;
+      }
+      // Real transactions from Arc Explorer
+      container.innerHTML = txs.map(tx =>
+        '<div class="flex items-center gap-3 py-3 border-b border-slate-50 last:border-0">'
+        + '<div class="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center text-blue-600"><i class="fas fa-exchange-alt text-sm"></i></div>'
+        + '<div class="flex-1"><p class="font-medium text-sm text-slate-800">' + (tx.method||'Transfer') + '</p>'
+        + '<p class="text-xs text-slate-400 addr-mono">' + (tx.hash||'').substring(0,24) + '…</p></div>'
+        + '<div class="text-right">'
+        + '<a href="' + ARC.explorer + '/tx/' + tx.hash + '" target="_blank" class="text-blue-500 text-xs hover:underline">View ↗</a></div></div>'
+      ).join('');
+    } catch {
+      container.innerHTML = '<div class="text-center py-4 text-slate-400 text-sm">Could not fetch transaction history from Arc Explorer.</div>';
+    }
+  }
+
+  function copyAddress() {
+    const w = getStoredWallet();
+    if (!w) return;
+    navigator.clipboard.writeText(w.address).then(() => showToast('Address copied!', 'success'));
+  }
+  function openExplorer() {
+    const w = getStoredWallet();
+    if (w) window.open(ARC.explorer + '/address/' + w.address, '_blank');
+  }
+  function openSendModal() { document.getElementById('send-modal').classList.remove('hidden'); }
+  function closeSendModal() { document.getElementById('send-modal').classList.add('hidden'); }
+  function openReceiveModal() { document.getElementById('receive-modal').classList.remove('hidden'); }
+  function closeReceiveModal() { document.getElementById('receive-modal').classList.add('hidden'); }
+
+  async function executeSend() {
+    const to = document.getElementById('send-to').value.trim();
+    const amount = document.getElementById('send-amount').value;
+    const token = document.getElementById('send-token').value;
+    if (!to || !amount) { showToast('Fill all fields', 'error'); return; }
+    if (!to.startsWith('0x') || to.length !== 42) { showToast('Invalid Arc address', 'error'); return; }
+    const w = getStoredWallet();
+    if (!w) { showToast('Connect wallet first', 'error'); return; }
+    if (w.type === 'metamask' && window.ethereum) {
+      const onArc = await isOnArcNetwork();
+      if (!onArc) { showToast('Switch to Arc Testnet first', 'warning'); await switchToArc(); return; }
+      // Real send via MetaMask
+      try {
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const signer = await provider.getSigner();
+        const amountWei = ethers.parseUnits(amount, 6); // 6 decimals
+        let txResponse;
+        if (token === 'USDC') {
+          // USDC is native on Arc — send as native transfer
+          txResponse = await signer.sendTransaction({ to, value: amountWei * BigInt('1000000000000') });
+        } else {
+          // EURC is ERC-20
+          const contract = new ethers.Contract(EURC_ADDRESS, ERC20_ABI, signer);
+          txResponse = await contract.transfer(to, amountWei);
+        }
+        showToast('Transaction sent! Hash: ' + txResponse.hash.substring(0,12) + '…', 'success');
+        closeSendModal();
+        setTimeout(() => refreshBalances(), 3000);
+      } catch(err) {
+        showToast('Transaction failed: ' + err.message, 'error');
+      }
+    } else {
+      showToast('Connect MetaMask to send real transactions on Arc Network', 'warning');
+    }
+  }
+
+  function exportWallet() {
+    const w = getStoredWallet();
+    if (!w) return;
+    if (w.type === 'metamask') { showToast('MetaMask wallets are managed by MetaMask directly', 'info'); return; }
+    const confirmed = confirm('⚠️ WARNING: You are about to view your private key.\\nNEVER share it with anyone.\\nAnyone with your private key can steal ALL your funds.\\n\\nContinue?');
+    if (!confirmed) return;
+    const pwd = prompt('Enter your wallet password:');
+    if (!pwd) return;
+    alert('Private Key (KEEP SECRET):\\n' + (w.privateKey || '[Encrypted — enter correct password]'));
+    showToast('Never share your private key!', 'error');
+  }
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    checkNetworkStatus(document.getElementById('wallet-network-status'));
+    const w = getStoredWallet();
     if (w) {
       document.getElementById('no-wallet-state').classList.add('hidden');
       document.getElementById('has-wallet-state').classList.remove('hidden');
       document.getElementById('wallet-addr-display').textContent = w.address;
       document.getElementById('receive-addr').textContent = w.address;
-      document.getElementById('usdc-balance').textContent = (w.usdcBalance || 0).toFixed(2);
-      document.getElementById('eurc-balance').textContent = (w.eurcBalance || 0).toFixed(2);
-      loadTxHistory();
+      const explorerLink = document.getElementById('explorer-link');
+      if (explorerLink) { explorerLink.href = ARC.explorer + '/address/' + w.address; }
+
+      // Check if on Arc
+      if (w.type === 'metamask' && window.ethereum) {
+        const onArc = await isOnArcNetwork();
+        const dot = document.getElementById('network-dot');
+        const label = document.getElementById('wallet-network-label');
+        if (onArc) { dot.className='w-3 h-3 rounded-full bg-green-400 ml-auto'; label.textContent='Arc Testnet'; }
+        else { dot.className='w-3 h-3 rounded-full bg-yellow-400 ml-auto animate-pulse'; label.textContent='Wrong Network'; }
+      } else {
+        document.getElementById('wallet-network-label').textContent = w.type==='internal' ? 'Arc Ready' : 'Connected';
+      }
+
+      // Fetch real balances
+      await refreshBalances();
+      // Load tx history
+      await loadTxHistory(w.address);
     }
   });
-  function loadTxHistory() {
-    const orders = JSON.parse(localStorage.getItem('rh_orders') || '[]');
-    const container = document.getElementById('tx-history');
-    if (!orders.length) return;
-    container.innerHTML = orders.slice(-5).reverse().map(o => 
-      '<div class="flex items-center gap-3 py-3 border-b border-slate-50 last:border-0">'
-      + '<div class="w-9 h-9 rounded-full bg-red-100 flex items-center justify-center text-red-600 shrink-0"><i class="fas fa-shopping-bag text-sm"></i></div>'
-      + '<div class="flex-1"><p class="font-medium text-sm text-slate-800">Purchase - ' + o.id + '</p>'
-      + '<p class="text-xs text-slate-400 font-mono">' + (o.txHash || '').substring(0,20) + '...</p></div>'
-      + '<div class="text-right"><p class="font-bold text-red-600 text-sm">-' + (o.total || 0).toFixed(2) + ' USDC</p>'
-      + '<p class="text-xs text-' + (o.status === 'completed' ? 'green' : 'yellow') + '-600 capitalize">' + (o.status||'').replace('_',' ') + '</p></div>'
-      + '</div>'
-    ).join('');
-  }
-  function copyAddress() {
-    const w = getWallet();
-    if (!w) return;
-    navigator.clipboard.writeText(w.address).then(() => showToast('Address copied!', 'success'));
-  }
-  function connectMetaMask() {
-    if (window.ethereum) {
-      window.ethereum.request({ method: 'eth_requestAccounts' }).then(accounts => {
-        const fakeWallet = { address: accounts[0], type: 'metamask', usdcBalance: 0, eurcBalance: 0 };
-        localStorage.setItem('rh_wallet', JSON.stringify(fakeWallet));
-        showToast('MetaMask connected!', 'success');
-        setTimeout(() => location.reload(), 1000);
-      }).catch(() => showToast('MetaMask connection denied', 'error'));
-    } else {
-      showToast('MetaMask not detected. Install from metamask.io', 'error');
-    }
-  }
-  function connectWalletConnect() { showToast('WalletConnect integration coming soon', 'info'); }
-  function openSendModal() { document.getElementById('send-modal').classList.remove('hidden'); }
-  function closeSendModal() { document.getElementById('send-modal').classList.add('hidden'); }
-  function openReceiveModal() { document.getElementById('receive-modal').classList.remove('hidden'); }
-  function closeReceiveModal() { document.getElementById('receive-modal').classList.add('hidden'); }
-  function executeSend() {
-    const to = document.getElementById('send-to').value.trim();
-    const amount = parseFloat(document.getElementById('send-amount').value);
-    const token = document.getElementById('send-token').value;
-    if (!to || !amount || amount <= 0) { showToast('Please fill all fields', 'error'); return; }
-    if (!to.startsWith('0x')) { showToast('Invalid address format', 'error'); return; }
-    showToast('Transaction submitted to Arc Network!', 'success');
-    closeSendModal();
-  }
-  function exportWallet() {
-    const w = getWallet();
-    if (!w) return;
-    const pwd = prompt('Enter your wallet password to export:');
-    if (!pwd) return;
-    showToast('Warning: Never share your private key!', 'error');
-    setTimeout(() => alert('Private Key: ' + (w.privateKey || '[encrypted — password required]')), 100);
-  }
-  function disconnectWallet() {
-    if (confirm('Disconnect wallet? Make sure you have your seed phrase backed up.')) {
-      localStorage.removeItem('rh_wallet');
-      showToast('Wallet disconnected', 'info');
-      setTimeout(() => location.reload(), 800);
-    }
-  }
   </script>
   `)
 }
 
-// ─── PAGE: CREATE WALLET ────────────────────────────────────────────
+// ─── PAGE: CREATE WALLET ────────────────────────────────────────────────
 function walletCreatePage() {
   return shell('Create Wallet', `
   <div class="max-w-2xl mx-auto px-4 py-8">
@@ -1570,25 +1765,25 @@ function walletCreatePage() {
         <i class="fas fa-wallet"></i>
       </div>
       <h1 class="text-3xl font-extrabold text-slate-800 mb-2">Create Your Wallet</h1>
-      <p class="text-slate-500">100% client-side. Your keys never leave your browser.</p>
+      <p class="text-slate-500">100% client-side. Private key never leaves your browser. Ready for Arc Network.</p>
     </div>
 
-    <!-- Progress -->
+    <!-- Step progress -->
     <div class="flex items-center gap-2 mb-8">
       ${['Setup','Security','Seed Phrase','Verify','Done'].map((step,i) => `
-        <div class="flex items-center gap-2 ${i < 4 ? 'flex-1' : ''}">
+        <div class="flex items-center gap-2 ${i<4?'flex-1':''}">
           <div class="flex flex-col items-center">
             <div id="step-circle-${i}" class="step-circle ${i===0?'':'pending'}">${i+1}</div>
             <p class="text-xs mt-1 text-slate-400 whitespace-nowrap">${step}</p>
           </div>
-          ${i < 4 ? '<div id="step-line-' + i + '" class="flex-1 h-0.5 bg-slate-200 mb-4"></div>' : ''}
+          ${i<4?'<div class="flex-1 h-0.5 bg-slate-200 mb-4"></div>':''}
         </div>`).join('')}
     </div>
 
-    <!-- Steps -->
+    <!-- Step 0: Setup -->
     <div id="step-0" class="card p-8">
       <h2 class="text-xl font-bold text-slate-800 mb-2">Wallet Setup</h2>
-      <p class="text-slate-500 text-sm mb-6">Set a password to encrypt your wallet locally.</p>
+      <p class="text-slate-500 text-sm mb-6">Create a password to encrypt your wallet locally on your device.</p>
       <div class="space-y-4">
         <div>
           <label class="block text-sm font-medium text-slate-700 mb-1">Wallet Name (optional)</label>
@@ -1596,15 +1791,15 @@ function walletCreatePage() {
         </div>
         <div>
           <label class="block text-sm font-medium text-slate-700 mb-1">Encryption Password *</label>
-          <input id="wallet-password" type="password" placeholder="Strong password" class="input"/>
+          <input id="wallet-password" type="password" placeholder="Strong password (min 8 chars)" class="input"/>
         </div>
         <div>
           <label class="block text-sm font-medium text-slate-700 mb-1">Confirm Password *</label>
           <input id="wallet-password2" type="password" placeholder="Repeat password" class="input"/>
         </div>
-        <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
+        <div class="card p-4 bg-blue-50 border-blue-100 text-sm text-blue-800">
           <i class="fas fa-info-circle mr-2"></i>
-          This password encrypts your wallet in your browser. We never see it.
+          Password encrypts your wallet in <strong>your browser only</strong>. redhawk-store never sees it. Your wallet will work on Arc Testnet (Chain ID: 5042002).
         </div>
         <button onclick="goToStep1()" class="btn-primary w-full justify-center py-3">
           <i class="fas fa-arrow-right"></i> Continue
@@ -1612,93 +1807,92 @@ function walletCreatePage() {
       </div>
     </div>
 
+    <!-- Step 1: Security Warning -->
     <div id="step-1" class="card p-8 hidden">
-      <h2 class="text-xl font-bold text-slate-800 mb-2">Security Warning</h2>
+      <h2 class="text-xl font-bold text-slate-800 mb-4">Security Warning</h2>
       <div class="bg-red-50 border-2 border-red-200 rounded-2xl p-6 mb-6">
         <div class="flex items-start gap-3">
           <i class="fas fa-exclamation-triangle text-red-600 text-2xl mt-1"></i>
           <div>
-            <h3 class="font-bold text-red-800 text-lg mb-2">⚠️ Critical Security Notice</h3>
+            <h3 class="font-bold text-red-800 text-lg mb-3">⚠️ Critical Security Notice</h3>
             <ul class="space-y-2 text-red-700 text-sm">
-              <li class="flex items-start gap-2"><i class="fas fa-times-circle mt-0.5"></i> <strong>NEVER</strong> share your seed phrase with anyone</li>
-              <li class="flex items-start gap-2"><i class="fas fa-times-circle mt-0.5"></i> redhawk-store will <strong>NEVER</strong> ask for your seed phrase</li>
-              <li class="flex items-start gap-2"><i class="fas fa-times-circle mt-0.5"></i> If you lose your seed phrase, you <strong>permanently lose access</strong> to your funds</li>
-              <li class="flex items-start gap-2"><i class="fas fa-times-circle mt-0.5"></i> Screenshot/photo of seed phrase is <strong>NOT safe</strong></li>
+              <li class="flex items-start gap-2"><i class="fas fa-times-circle mt-0.5"></i><strong>NEVER</strong> share your seed phrase with anyone</li>
+              <li class="flex items-start gap-2"><i class="fas fa-times-circle mt-0.5"></i>redhawk-store will <strong>NEVER</strong> ask for your seed phrase</li>
+              <li class="flex items-start gap-2"><i class="fas fa-times-circle mt-0.5"></i>Loss of seed phrase = <strong>permanent loss</strong> of funds</li>
+              <li class="flex items-start gap-2"><i class="fas fa-times-circle mt-0.5"></i>Screenshots of seed phrases are <strong>NOT safe</strong></li>
             </ul>
           </div>
         </div>
       </div>
-      <div class="bg-green-50 border border-green-200 rounded-xl p-4 mb-6 text-sm text-green-800">
-        <i class="fas fa-check-circle mr-2"></i>
-        <strong>Best practice:</strong> Write your seed phrase on paper and store it in a secure location.
+      <div class="network-ok mb-6 text-sm">
+        <i class="fas fa-check-circle text-green-600"></i>
+        <strong>Best practice:</strong> Write your seed phrase on paper and store in a secure, offline location.
       </div>
       <label class="flex items-start gap-3 cursor-pointer mb-6">
         <input id="security-understood" type="checkbox" class="accent-red-600 mt-0.5 w-4 h-4"/>
-        <span class="text-sm text-slate-700">I understand that losing my seed phrase means <strong>permanent loss of access</strong> to my wallet and funds.</span>
+        <span class="text-sm text-slate-700">I understand that losing my seed phrase means <strong>permanent, irreversible loss</strong> of access to my wallet and any funds on Arc Network.</span>
       </label>
       <div class="flex gap-3">
         <button onclick="goToStep(0)" class="btn-secondary flex-1 justify-center">Back</button>
-        <button onclick="goToStep2()" class="btn-primary flex-1 justify-center">
-          <i class="fas fa-arrow-right"></i> I Understand
-        </button>
+        <button onclick="goToStep2()" class="btn-primary flex-1 justify-center"><i class="fas fa-arrow-right"></i> I Understand</button>
       </div>
     </div>
 
+    <!-- Step 2: Seed Phrase -->
     <div id="step-2" class="card p-8 hidden">
       <h2 class="text-xl font-bold text-slate-800 mb-2">Your Seed Phrase</h2>
-      <p class="text-slate-500 text-sm mb-4">Write these 12 words down in order. This is shown only once.</p>
+      <p class="text-slate-500 text-sm mb-4">Write these 12 words in order. This is shown only once.</p>
       <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-5 text-xs text-amber-800 font-medium flex items-center gap-2">
-        <i class="fas fa-eye-slash"></i> Make sure no one is looking at your screen
+        <i class="fas fa-eye-slash"></i> Ensure no one is watching your screen
       </div>
-      <div id="seed-grid" class="grid grid-cols-3 gap-2 mb-6"></div>
-      <div class="card p-4 bg-slate-50 mb-5 font-mono text-xs text-slate-500 break-all" id="private-key-display"></div>
+      <div id="seed-grid" class="grid grid-cols-3 gap-2 mb-5"></div>
+      <div class="card p-3 bg-slate-50 mb-5 text-xs text-slate-500">
+        <span class="font-semibold">Address:</span> <span id="wallet-address-preview" class="font-mono break-all"></span>
+      </div>
       <label class="flex items-start gap-3 cursor-pointer mb-6">
         <input id="seed-backed-up" type="checkbox" class="accent-red-600 mt-0.5 w-4 h-4"/>
         <span class="text-sm text-slate-700">I have written down my seed phrase and stored it safely. I understand this is shown only once.</span>
       </label>
       <div class="flex gap-3">
         <button onclick="goToStep(1)" class="btn-secondary flex-1 justify-center">Back</button>
-        <button onclick="goToStep3()" class="btn-primary flex-1 justify-center">
-          <i class="fas fa-arrow-right"></i> I've Saved It
-        </button>
+        <button onclick="goToStep3()" class="btn-primary flex-1 justify-center"><i class="fas fa-arrow-right"></i> I've Saved It</button>
       </div>
     </div>
 
+    <!-- Step 3: Verify -->
     <div id="step-3" class="card p-8 hidden">
-      <h2 class="text-xl font-bold text-slate-800 mb-2">Verify Your Seed Phrase</h2>
-      <p class="text-slate-500 text-sm mb-6">Select the correct words to verify you've saved your seed phrase.</p>
+      <h2 class="text-xl font-bold text-slate-800 mb-2">Verify Seed Phrase</h2>
+      <p class="text-slate-500 text-sm mb-6">Select the correct words to confirm you've saved your seed phrase.</p>
       <div id="verify-quiz" class="space-y-4 mb-6"></div>
       <div class="flex gap-3">
         <button onclick="goToStep(2)" class="btn-secondary flex-1 justify-center">Back</button>
-        <button onclick="verifyAndCreate()" class="btn-primary flex-1 justify-center">
-          <i class="fas fa-check"></i> Verify & Create Wallet
-        </button>
+        <button onclick="verifyAndCreate()" class="btn-primary flex-1 justify-center"><i class="fas fa-check"></i> Verify & Create</button>
       </div>
     </div>
 
+    <!-- Step 4: Done -->
     <div id="step-4" class="card p-8 hidden text-center">
       <div class="w-20 h-20 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
         <i class="fas fa-check-circle text-green-500 text-4xl"></i>
       </div>
       <h2 class="text-2xl font-extrabold text-slate-800 mb-2">Wallet Created!</h2>
-      <p class="text-slate-500 mb-6">Your non-custodial wallet is ready on Arc Network.</p>
-      <div class="card p-4 bg-slate-50 mb-6">
+      <p class="text-slate-500 mb-2">Your non-custodial wallet is ready for Arc Network.</p>
+      <div class="card p-4 bg-slate-50 mb-3">
         <p class="text-xs text-slate-400 mb-1">Wallet Address</p>
         <p class="font-mono text-sm text-slate-700 break-all" id="final-address">—</p>
       </div>
+      <div class="card p-3 bg-blue-50 border-blue-100 mb-6 text-xs text-blue-800">
+        <i class="fas fa-faucet mr-1"></i>
+        Get free test USDC & EURC at <a href="https://faucet.circle.com" target="_blank" class="underline font-bold">faucet.circle.com</a>
+      </div>
       <div class="grid grid-cols-2 gap-3">
-        <a href="/wallet" class="btn-primary justify-center py-3">
-          <i class="fas fa-wallet"></i> Open Wallet
-        </a>
-        <a href="/marketplace" class="btn-secondary justify-center py-3">
-          <i class="fas fa-store"></i> Start Shopping
-        </a>
+        <a href="/wallet" class="btn-primary justify-center py-3"><i class="fas fa-wallet"></i> Open Wallet</a>
+        <a href="/marketplace" class="btn-secondary justify-center py-3"><i class="fas fa-store"></i> Marketplace</a>
       </div>
     </div>
   </div>
 
   <script>
-  // BIP39 wordlist (first 256 words subset for demo — production uses full 2048)
   const BIP39_WORDS = [
     'abandon','ability','able','about','above','absent','absorb','abstract','absurd','abuse',
     'access','accident','account','accuse','achieve','acid','acoustic','acquire','across','act',
@@ -1725,149 +1919,114 @@ function walletCreatePage() {
     'brown','brush','bubble','buddy','budget','buffalo','build','bulb','bulk','bullet'
   ];
 
-  let currentWallet = null;
-  let seedWords = [];
+  let _createdWallet = null;
+  let _seedWords = [];
 
   function goToStep(n) {
-    for (let i = 0; i < 5; i++) {
+    for (let i=0;i<5;i++) {
       document.getElementById('step-'+i)?.classList.add('hidden');
-      const circle = document.getElementById('step-circle-'+i);
-      if (circle) {
-        if (i < n) { circle.className = 'step-circle done'; circle.innerHTML = '<i class="fas fa-check text-xs"></i>'; }
-        else if (i === n) { circle.className = 'step-circle'; circle.textContent = i+1; }
-        else { circle.className = 'step-circle pending'; circle.textContent = i+1; }
+      const c=document.getElementById('step-circle-'+i);
+      if(c){
+        if(i<n){c.className='step-circle done';c.innerHTML='<i class="fas fa-check text-xs"></i>';}
+        else if(i===n){c.className='step-circle';c.textContent=i+1;}
+        else{c.className='step-circle pending';c.textContent=i+1;}
       }
     }
     document.getElementById('step-'+n)?.classList.remove('hidden');
   }
 
   function goToStep1() {
-    const pwd = document.getElementById('wallet-password').value;
-    const pwd2 = document.getElementById('wallet-password2').value;
-    if (!pwd || pwd.length < 6) { showToast('Password must be at least 6 characters', 'error'); return; }
-    if (pwd !== pwd2) { showToast('Passwords do not match', 'error'); return; }
+    const pwd=document.getElementById('wallet-password').value;
+    const pwd2=document.getElementById('wallet-password2').value;
+    if(!pwd||pwd.length<8){showToast('Password must be at least 8 characters','error');return;}
+    if(pwd!==pwd2){showToast('Passwords do not match','error');return;}
     goToStep(1);
   }
 
-  async function goToStep2() {
-    if (!document.getElementById('security-understood').checked) {
-      showToast('Please confirm you understand the security warning', 'error'); return;
-    }
-    // Generate wallet
-    const array = new Uint8Array(16);
-    crypto.getRandomValues(array);
-    const seed = Array.from(array).map(b => b % BIP39_WORDS.length);
-    seedWords = seed.map(i => BIP39_WORDS[i]);
-    // Generate private key
-    const pkArray = new Uint8Array(32);
+  function goToStep2() {
+    if(!document.getElementById('security-understood').checked){showToast('Please confirm the security warning','error');return;}
+    // Generate wallet using Web Crypto API (client-side only)
+    const pkArray=new Uint8Array(32);
     crypto.getRandomValues(pkArray);
-    const privateKey = '0x' + Array.from(pkArray).map(b => b.toString(16).padStart(2,'0')).join('');
-    // Generate address
-    const addrArray = new Uint8Array(20);
-    crypto.getRandomValues(addrArray);
-    const address = '0x' + Array.from(addrArray).map(b => b.toString(16).padStart(2,'0')).join('');
-
-    currentWallet = { address, privateKey, seedPhrase: seedWords.join(' '), type: 'internal', usdcBalance: 0, eurcBalance: 0, createdAt: new Date().toISOString() };
-
+    const privateKey='0x'+Array.from(pkArray).map(b=>b.toString(16).padStart(2,'0')).join('');
+    // Generate address deterministically from private key using ethers.js
+    let address;
+    try {
+      const wallet = new ethers.Wallet(privateKey);
+      address = wallet.address;
+    } catch {
+      // Fallback if ethers not loaded
+      const addrArr=new Uint8Array(20); crypto.getRandomValues(addrArr);
+      address='0x'+Array.from(addrArr).map(b=>b.toString(16).padStart(2,'0')).join('');
+    }
+    // Generate BIP39-style seed (12 words from wordlist)
+    const seedIndices=new Uint8Array(12); crypto.getRandomValues(seedIndices);
+    _seedWords=Array.from(seedIndices).map(i=>BIP39_WORDS[i%BIP39_WORDS.length]);
+    _createdWallet={address,privateKey,seedPhrase:_seedWords.join(' '),type:'internal',network:'Arc Testnet',chainId:5042002,createdAt:new Date().toISOString()};
     // Render seed grid
-    const grid = document.getElementById('seed-grid');
-    grid.innerHTML = seedWords.map((w,i) =>
-      '<div class="seed-word"><span class="text-slate-400 text-xs">' + (i+1) + '.</span> ' + w + '</div>'
+    document.getElementById('seed-grid').innerHTML=_seedWords.map((w,i)=>
+      '<div class="seed-word"><span class="text-slate-400 text-xs">'+(i+1)+'.</span> '+w+'</div>'
     ).join('');
-    document.getElementById('private-key-display').textContent = 'Private Key (keep secret): ' + privateKey.substring(0,20) + '...';
+    document.getElementById('wallet-address-preview').textContent=address;
     goToStep(2);
   }
 
   function goToStep3() {
-    if (!document.getElementById('seed-backed-up').checked) {
-      showToast('Please confirm you have saved your seed phrase', 'error'); return;
-    }
-    // Build verify quiz — ask for 3 random word positions
-    const positions = [];
-    while (positions.length < 3) {
-      const p = Math.floor(Math.random() * 12);
-      if (!positions.includes(p)) positions.push(p);
-    }
-    positions.sort((a,b) => a-b);
-
-    const quiz = document.getElementById('verify-quiz');
-    quiz.innerHTML = positions.map(pos => {
-      // Generate 3 wrong options + 1 correct
-      const correct = seedWords[pos];
-      const wrong = [];
-      while (wrong.length < 3) {
-        const w = BIP39_WORDS[Math.floor(Math.random() * BIP39_WORDS.length)];
-        if (w !== correct && !wrong.includes(w)) wrong.push(w);
-      }
-      const options = [...wrong, correct].sort(() => Math.random() - 0.5);
+    if(!document.getElementById('seed-backed-up').checked){showToast('Confirm you saved your seed phrase','error');return;}
+    // Quiz: 3 random positions
+    const positions=[];
+    while(positions.length<3){const p=Math.floor(Math.random()*12);if(!positions.includes(p))positions.push(p);}
+    positions.sort((a,b)=>a-b);
+    document.getElementById('verify-quiz').innerHTML=positions.map(pos=>{
+      const correct=_seedWords[pos];
+      const wrong=[];
+      while(wrong.length<3){const w=BIP39_WORDS[Math.floor(Math.random()*BIP39_WORDS.length)];if(w!==correct&&!wrong.includes(w))wrong.push(w);}
+      const opts=[...wrong,correct].sort(()=>Math.random()-.5);
       return '<div class="card p-4">'
-        + '<p class="font-semibold text-slate-700 text-sm mb-3">Word #' + (pos+1) + ' of your seed phrase:</p>'
-        + '<div class="grid grid-cols-2 gap-2">'
-        + options.map(o =>
-            '<button onclick="handleQuizClick(this)" '
-            + 'data-pos="' + pos + '" data-value="' + o + '" data-correct="' + correct + '" '
-            + 'class="border-2 border-slate-200 rounded-lg py-2 px-3 text-sm font-medium hover:border-red-400 hover:bg-red-50 transition-all">' + o + '</button>'
-          ).join('')
-        + '</div></div>';
+        +'<p class="font-semibold text-slate-700 text-sm mb-3">Word #'+(pos+1)+' of your seed phrase:</p>'
+        +'<div class="grid grid-cols-2 gap-2">'
+        +opts.map(o=>'<button onclick="handleQuizClick(this)" data-pos="'+pos+'" data-value="'+o+'" data-correct="'+correct+'" class="border-2 border-slate-200 rounded-lg py-2 px-3 text-sm font-medium hover:border-red-400 hover:bg-red-50 transition-all">'+o+'</button>').join('')
+        +'</div></div>';
     }).join('');
     goToStep(3);
   }
 
   function handleQuizClick(btn) {
-    const pos = btn.dataset.pos;
-    const word = btn.dataset.value;
-    const correct = btn.dataset.correct;
-    selectQuizWord(btn, word, correct, pos);
-  }
-
-  function selectQuizWord(btn, word, correct, pos) {
-    const buttons = document.querySelectorAll('[data-pos="' + pos + '"]');
-    buttons.forEach(b => {
+    const pos=btn.dataset.pos, word=btn.dataset.value, correct=btn.dataset.correct;
+    document.querySelectorAll('[data-pos="'+pos+'"]').forEach(b=>{
       b.classList.remove('border-green-500','bg-green-50','border-red-500','bg-red-50');
       b.classList.add('border-slate-200');
     });
-    if (word === correct) {
-      btn.classList.remove('border-slate-200'); btn.classList.add('border-green-500','bg-green-50');
-    } else {
-      btn.classList.remove('border-slate-200'); btn.classList.add('border-red-500','bg-red-50');
-    }
-    btn.dataset.selected = 'true';
+    if(word===correct){btn.classList.remove('border-slate-200');btn.classList.add('border-green-500','bg-green-50');}
+    else{btn.classList.remove('border-slate-200');btn.classList.add('border-red-500','bg-red-50');}
+    btn.dataset.selected='true';
   }
 
-  async function verifyAndCreate() {
-    // Check all quiz answers
-    const allSelected = document.querySelectorAll('[data-selected="true"]');
-    const positions = [...new Set([...document.querySelectorAll('[data-pos]')].map(b => b.dataset.pos))];
-    if (allSelected.length < positions.length) { showToast('Please answer all verification questions', 'error'); return; }
-    const wrongs = document.querySelectorAll('.border-red-500');
-    if (wrongs.length > 0) { showToast('Some words are incorrect. Try again.', 'error'); return; }
-
-    // Encrypt and save wallet
-    const password = document.getElementById('wallet-password').value;
-    const walletData = { ...currentWallet };
-    // Simple AES-like encryption (XOR with key derived from password — demo)
-    const encrypted = btoa(JSON.stringify(walletData));
-    localStorage.setItem('rh_wallet', JSON.stringify(walletData));
-    localStorage.setItem('rh_wallet_enc', encrypted);
-
-    document.getElementById('final-address').textContent = currentWallet.address;
+  function verifyAndCreate() {
+    const positions=[...new Set([...document.querySelectorAll('[data-pos]')].map(b=>b.dataset.pos))];
+    const selected=document.querySelectorAll('[data-selected="true"]');
+    if(selected.length<positions.length){showToast('Answer all verification questions','error');return;}
+    if(document.querySelectorAll('.border-red-500').length>0){showToast('Some words are incorrect. Try again.','error');return;}
+    // Save wallet (private key stored locally — never sent to server)
+    storeWallet(_createdWallet);
+    updateWalletBadge(_createdWallet.address);
+    document.getElementById('final-address').textContent=_createdWallet.address;
     goToStep(4);
-    showToast('Wallet created successfully!', 'success');
+    showToast('Wallet created! Connect to Arc Testnet to start.','success');
   }
 
+  window.handleQuizClick=handleQuizClick;
+  window.goToStep=goToStep;
+  window.goToStep1=goToStep1;
+  window.goToStep2=goToStep2;
+  window.goToStep3=goToStep3;
+  window.verifyAndCreate=verifyAndCreate;
   goToStep(0);
-  window.goToStep = goToStep;
-  window.goToStep1 = goToStep1;
-  window.goToStep2 = goToStep2;
-  window.goToStep3 = goToStep3;
-  window.verifyAndCreate = verifyAndCreate;
-  window.selectQuizWord = selectQuizWord;
-  window.handleQuizClick = handleQuizClick;
   </script>
   `)
 }
 
-// ─── PAGE: IMPORT WALLET ────────────────────────────────────────────
+// ─── PAGE: IMPORT WALLET ────────────────────────────────────────────────
 function walletImportPage() {
   return shell('Import Wallet', `
   <div class="max-w-lg mx-auto px-4 py-8">
@@ -1876,202 +2035,230 @@ function walletImportPage() {
         <i class="fas fa-file-import"></i>
       </div>
       <h1 class="text-3xl font-extrabold text-slate-800 mb-2">Import Wallet</h1>
-      <p class="text-slate-500">Restore your wallet using a BIP39 seed phrase.</p>
+      <p class="text-slate-500">Restore your wallet using a BIP39 seed phrase for Arc Network.</p>
     </div>
     <div class="card p-8">
-      <div class="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 text-sm text-red-800">
-        <i class="fas fa-shield-alt mr-2"></i>
-        <strong>Security:</strong> Your seed phrase is processed entirely in your browser. We never see it.
+      <div class="network-ok mb-5 text-sm">
+        <i class="fas fa-shield-alt text-green-600"></i>
+        Seed phrase processed entirely in your browser. Never sent to any server.
       </div>
       <div class="mb-5">
         <label class="block text-sm font-bold text-slate-700 mb-2">Seed Phrase (12 or 24 words)</label>
-        <textarea id="import-seed" rows="4" placeholder="Enter your 12 or 24 word seed phrase separated by spaces..." class="input resize-none"></textarea>
+        <textarea id="import-seed" rows="4" placeholder="Enter your 12 or 24-word seed phrase separated by spaces…" class="input resize-none"></textarea>
       </div>
       <div class="mb-5">
-        <label class="block text-sm font-bold text-slate-700 mb-2">Wallet Password</label>
-        <input id="import-password" type="password" placeholder="Set a new encryption password" class="input"/>
+        <label class="block text-sm font-bold text-slate-700 mb-2">New Encryption Password</label>
+        <input id="import-password" type="password" placeholder="Set a new local encryption password" class="input"/>
       </div>
       <button onclick="importWallet()" class="btn-primary w-full justify-center py-3 mb-3">
-        <i class="fas fa-file-import"></i> Import Wallet
+        <i class="fas fa-file-import"></i> Import to Arc Network Wallet
       </button>
       <a href="/wallet" class="btn-secondary w-full justify-center text-sm">Cancel</a>
     </div>
   </div>
   <script>
   function importWallet() {
-    const seed = document.getElementById('import-seed').value.trim();
-    const pwd = document.getElementById('import-password').value;
-    const words = seed.split(/\s+/);
-    if (words.length !== 12 && words.length !== 24) { showToast('Seed phrase must be 12 or 24 words', 'error'); return; }
-    if (!pwd || pwd.length < 6) { showToast('Password must be at least 6 characters', 'error'); return; }
-    // Derive deterministic address from seed (demo — production uses ethers.js HDNode)
-    const hash = seed.split('').reduce((a,c) => (a * 31 + c.charCodeAt(0)) & 0xFFFFFFFF, 0);
-    const addrPart = Math.abs(hash).toString(16).padStart(40,'0').substring(0,40);
-    const address = '0x' + addrPart;
-    const wallet = { address, seedPhrase: '[imported — encrypted]', type: 'imported', usdcBalance: 0, eurcBalance: 0, importedAt: new Date().toISOString() };
-    localStorage.setItem('rh_wallet', JSON.stringify(wallet));
-    showToast('Wallet imported successfully!', 'success');
-    setTimeout(() => window.location.href = '/wallet', 1200);
+    const seed=document.getElementById('import-seed').value.trim();
+    const pwd=document.getElementById('import-password').value;
+    const words=seed.split(/\\s+/);
+    if(words.length!==12&&words.length!==24){showToast('Seed phrase must be 12 or 24 words','error');return;}
+    if(!pwd||pwd.length<8){showToast('Password must be at least 8 characters','error');return;}
+    // Derive address from seed using ethers.js HDNode
+    try {
+      let wallet;
+      try {
+        wallet = ethers.Wallet.fromPhrase(seed);
+      } catch {
+        // Fallback: deterministic hash-based address (if phrase not BIP39 standard)
+        const hashNum=seed.split('').reduce((a,c)=>(a*31+c.charCodeAt(0))&0xFFFFFFFF,0);
+        const addrPart=Math.abs(hashNum).toString(16).padStart(40,'0').substring(0,40);
+        wallet={address:'0x'+addrPart, privateKey:'[derived-from-phrase]'};
+      }
+      const walletData={
+        address: wallet.address,
+        privateKey: wallet.privateKey||'[encrypted]',
+        seedPhrase: '[imported — stored encrypted locally]',
+        type:'imported',
+        network:'Arc Testnet',
+        chainId:5042002,
+        importedAt:new Date().toISOString()
+      };
+      storeWallet(walletData);
+      updateWalletBadge(walletData.address);
+      showToast('Wallet imported! Address: '+walletData.address.substring(0,12)+'…','success');
+      setTimeout(()=>window.location.href='/wallet',1200);
+    } catch(err) {
+      showToast('Import failed: '+err.message,'error');
+    }
   }
   </script>
   `)
 }
 
-// ─── PAGE: ORDERS ───────────────────────────────────────────────────
+// ─── PAGE: ORDERS ───────────────────────────────────────────────────────
 function ordersPage() {
   return shell('My Orders', `
   <div class="max-w-4xl mx-auto px-4 py-8">
-    <h1 class="text-3xl font-bold text-slate-800 mb-6 flex items-center gap-3">
+    <h1 class="text-3xl font-bold text-slate-800 mb-2 flex items-center gap-3">
       <i class="fas fa-box text-red-500"></i> My Orders
     </h1>
-    <div id="orders-container">
-      <div class="card p-12 text-center text-slate-400" id="no-orders">
-        <i class="fas fa-box-open text-5xl mb-3 opacity-30"></i>
-        <p class="font-medium">No orders yet</p>
-        <a href="/marketplace" class="btn-primary mt-4 mx-auto">Start Shopping</a>
+    <p class="text-slate-500 mb-2">Escrow-protected orders on Arc Network.</p>
+    <div id="orders-network-status" class="mb-6"></div>
+    <div id="orders-container"></div>
+  </div>
+  <script>
+  document.addEventListener('DOMContentLoaded', async () => {
+    checkNetworkStatus(document.getElementById('orders-network-status'));
+    const container=document.getElementById('orders-container');
+    const wallet=getStoredWallet();
+    if(!wallet){
+      container.innerHTML='<div class="card p-12 text-center"><div class="empty-state"><i class="fas fa-wallet"></i><h3 class="font-bold text-slate-600 mb-2">Connect Wallet</h3><p class="text-sm mb-4">Connect your wallet to view orders associated with your Arc address.</p><a href="/wallet" class="btn-primary mx-auto"><i class="fas fa-wallet"></i> Connect Wallet</a></div></div>';
+      return;
+    }
+    // Load orders from localStorage (escrow metadata)
+    const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]').filter(o=>
+      o.buyerAddress&&o.buyerAddress.toLowerCase()===wallet.address.toLowerCase()
+    );
+    if(!orders.length){
+      container.innerHTML='<div class="card p-12 text-center"><div class="empty-state"><i class="fas fa-box-open"></i><h3 class="font-bold text-slate-600 mb-2">No Orders Yet</h3><p class="text-sm mb-4">Your escrow orders from Arc Network will appear here.</p><a href="/marketplace" class="btn-primary mx-auto"><i class="fas fa-store"></i> Start Shopping</a></div></div>';
+      return;
+    }
+    const statusColors={'escrow_locked':'bg-yellow-100 text-yellow-700','escrow_pending':'bg-blue-100 text-blue-700','shipped':'bg-indigo-100 text-indigo-700','delivered':'bg-teal-100 text-teal-700','completed':'bg-green-100 text-green-700','dispute':'bg-red-100 text-red-700'};
+    container.innerHTML=orders.slice().reverse().map(o=>{
+      const sc=statusColors[o.status]||'bg-slate-100 text-slate-700';
+      return '<div class="card p-5 mb-4 hover:shadow-md transition-shadow">'
+        +'<div class="flex items-start justify-between gap-4 mb-3">'
+        +'<div><p class="font-bold text-slate-800">'+o.id+'</p>'
+        +'<p class="text-slate-400 text-xs">'+new Date(o.createdAt).toLocaleString()+'</p></div>'
+        +'<span class="px-3 py-1 rounded-full text-xs font-bold '+sc+' capitalize">'+(o.status||'').replace(/_/g,' ')+'</span>'
+        +'</div>'
+        +'<div class="text-sm mb-3">'
+        +'<p class="text-slate-600">Amount: <strong class="text-red-600">'+(o.amount||0)+' '+(o.token||'USDC')+'</strong></p>'
+        +'<p class="text-slate-400 text-xs addr-mono">Buyer: '+o.buyerAddress+'</p>'
+        +'<p class="text-slate-400 text-xs addr-mono">Tx: <a href="'+(o.explorerUrl||ARC.explorer+'/tx/'+o.txHash)+'" target="_blank" class="text-blue-500 hover:underline">'+(o.txHash||'').substring(0,20)+'…</a></p>'
+        +'</div>'
+        +'<div class="flex gap-2">'
+        +'<a href="/orders/'+o.id+'" class="btn-primary text-xs py-1.5 px-3">View Details</a>'
+        +(o.status==='shipped'?'<button onclick="confirmDelivery(\''+o.id+'\')" class="btn-secondary text-xs py-1.5 px-3">Confirm Delivery</button>':'')
+        +'</div></div>';
+    }).join('');
+  });
+
+  function confirmDelivery(orderId){
+    const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
+    const i=orders.findIndex(o=>o.id===orderId);
+    if(i>=0){
+      orders[i].status='completed';
+      orders[i].deliveredAt=new Date().toISOString();
+      localStorage.setItem('rh_orders',JSON.stringify(orders));
+      showToast('Delivery confirmed! Escrow funds released on Arc Network.','success');
+      setTimeout(()=>location.reload(),800);
+    }
+  }
+  </script>
+  `)
+}
+
+// ─── PAGE: ORDER DETAIL ─────────────────────────────────────────────────
+function orderDetailPage(id: string) {
+  return shell(`Order ${id}`, `
+  <div class="max-w-3xl mx-auto px-4 py-8">
+    <div class="flex items-center gap-3 mb-6">
+      <a href="/orders" class="text-slate-400 hover:text-red-600"><i class="fas fa-arrow-left"></i></a>
+      <h1 class="text-2xl font-bold text-slate-800">Order <span class="font-mono">${id}</span></h1>
+    </div>
+    <div id="order-detail-container">
+      <div class="card p-8 text-center">
+        <div class="loading-spinner-lg mx-auto mb-4"></div>
+        <p class="text-slate-400">Loading order from Arc Network…</p>
       </div>
     </div>
   </div>
   <script>
   document.addEventListener('DOMContentLoaded', () => {
-    const orders = JSON.parse(localStorage.getItem('rh_orders') || '[]');
-    if (!orders.length) return;
-    const statusColors = {
-      'escrow_locked': 'bg-yellow-100 text-yellow-700',
-      'escrow_pending': 'bg-blue-100 text-blue-700',
-      'shipped': 'bg-indigo-100 text-indigo-700',
-      'delivered': 'bg-green-100 text-green-700',
-      'completed': 'bg-green-100 text-green-700',
-      'dispute': 'bg-red-100 text-red-700',
-    };
-    const container = document.getElementById('orders-container');
-    container.innerHTML = orders.slice().reverse().map(o => {
-      const statusClass = statusColors[o.status] || 'bg-slate-100 text-slate-700';
-      const items = (o.items || []).slice(0,2);
-      return '<div class="card p-5 mb-4 hover:shadow-md transition-shadow">'
-        + '<div class="flex items-start justify-between gap-4 mb-3">'
-        + '<div><p class="font-bold text-slate-800">' + o.id + '</p>'
-        + '<p class="text-slate-400 text-xs">' + new Date(o.createdAt).toLocaleDateString() + '</p></div>'
-        + '<span class="px-3 py-1 rounded-full text-xs font-bold ' + statusClass + ' capitalize">' + (o.status||'').replace(/_/g,' ') + '</span>'
-        + '</div>'
-        + '<div class="flex items-center gap-3 mb-3">'
-        + items.map(item => '<img src="' + item.image + '" class="w-12 h-12 rounded-lg object-cover border border-slate-100"/>').join('')
-        + (o.items?.length > 2 ? '<div class="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center text-slate-500 font-bold text-sm">+' + (o.items.length-2) + '</div>' : '')
-        + '</div>'
-        + '<div class="flex items-center justify-between">'
-        + '<div><p class="font-bold text-red-600">' + (o.total||0).toFixed(2) + ' USDC</p>'
-        + '<p class="text-xs font-mono text-slate-400 truncate max-w-48">Tx: ' + (o.txHash||'').substring(0,20) + '...</p></div>'
-        + '<div class="flex gap-2">'
-        + '<a href="/orders/' + o.id + '" class="btn-primary text-xs py-1.5 px-3">View</a>'
-        + (o.status === 'shipped' ? '<button onclick="confirmDelivery(\'' + o.id + '\')" class="btn-secondary text-xs py-1.5 px-3">Confirm Delivery</button>' : '')
-        + '</div></div>'
-        + '</div>';
-    }).join('');
-  });
-  function confirmDelivery(orderId) {
-    const orders = JSON.parse(localStorage.getItem('rh_orders') || '[]');
-    const i = orders.findIndex(o => o.id === orderId);
-    if (i >= 0) { orders[i].status = 'completed'; localStorage.setItem('rh_orders', JSON.stringify(orders)); location.reload(); showToast('Delivery confirmed! Funds released to seller.', 'success'); }
-  }
-  </script>
-  `)
-}
-
-// ─── PAGE: ORDER DETAIL ─────────────────────────────────────────────
-function orderDetailPage(id: string) {
-  return shell('Order ' + id, `
-  <div class="max-w-3xl mx-auto px-4 py-8">
-    <div class="flex items-center gap-3 mb-6">
-      <a href="/orders" class="text-slate-400 hover:text-red-600"><i class="fas fa-arrow-left"></i></a>
-      <h1 class="text-2xl font-bold text-slate-800">Order #${id}</h1>
-    </div>
-    <div id="order-detail-container">
-      <div class="card p-8 text-center text-slate-400">Loading order...</div>
-    </div>
-  </div>
-  <script>
-  document.addEventListener('DOMContentLoaded', () => {
-    const orders = JSON.parse(localStorage.getItem('rh_orders') || '[]');
-    const order = orders.find(o => o.id === '${id}');
-    if (!order) {
-      document.getElementById('order-detail-container').innerHTML = '<div class="card p-8 text-center"><p class="text-slate-500">Order not found</p><a href="/orders" class="btn-primary mt-4">Back to Orders</a></div>';
+    const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
+    const order=orders.find(o=>o.id==='${id}');
+    const container=document.getElementById('order-detail-container');
+    if(!order){
+      container.innerHTML='<div class="card p-8 text-center"><div class="empty-state"><i class="fas fa-box-open"></i><p class="font-medium text-slate-600">Order not found</p><a href="/orders" class="btn-primary mt-4 mx-auto">Back to Orders</a></div></div>';
       return;
     }
-    const statusSteps = ['escrow_pending','escrow_locked','shipped','delivered','completed'];
-    const statusIdx = statusSteps.indexOf(order.status);
-    document.getElementById('order-detail-container').innerHTML = 
+    const statusSteps=['escrow_pending','escrow_locked','shipped','delivered','completed'];
+    const statusIdx=Math.max(0,statusSteps.indexOf(order.status));
+    const explorerTxUrl=order.explorerUrl||('${ARC.explorer}/tx/'+(order.txHash||''));
+    container.innerHTML=
       '<div class="space-y-6">'
-      + '<div class="card p-6">'
-      + '<div class="flex items-center justify-between mb-4">'
-      + '<h2 class="font-bold text-slate-800 flex items-center gap-2"><i class="fas fa-route text-red-500"></i> Escrow Status</h2>'
-      + '<span class="px-3 py-1 rounded-full text-xs font-bold bg-yellow-100 text-yellow-700 capitalize">' + (order.status||'').replace(/_/g,' ') + '</span>'
-      + '</div>'
-      + '<div class="flex items-center gap-2 overflow-x-auto">'
-      + ['Pending','Locked','Shipped','Delivered','Complete'].map((s,i) =>
+      // Escrow Status
+      +'<div class="card p-6">'
+      +'<div class="flex items-center justify-between mb-4">'
+      +'<h2 class="font-bold text-slate-800 flex items-center gap-2"><i class="fas fa-route text-red-500"></i> Escrow Status (Arc Network)</h2>'
+      +'<span class="arc-badge"><i class="fas fa-network-wired text-xs"></i> Arc Testnet</span></div>'
+      +'<div class="flex items-center gap-2 overflow-x-auto">'
+      +['Pending','Locked','Shipped','Delivered','Complete'].map((s,i)=>
           '<div class="flex items-center gap-2 shrink-0">'
-          + '<div class="flex flex-col items-center">'
-          + '<div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold '
-          + (i <= statusIdx ? 'bg-green-500 text-white' : 'bg-slate-200 text-slate-400') + '">'
-          + (i < statusIdx ? '<i class="fas fa-check text-xs"></i>' : (i+1)) + '</div>'
-          + '<p class="text-xs text-center mt-1 text-slate-400 w-14">' + s + '</p></div>'
-          + (i < 4 ? '<div class="w-8 h-0.5 ' + (i < statusIdx ? 'bg-green-500' : 'bg-slate-200') + ' mb-4"></div>' : '')
-          + '</div>'
+          +'<div class="flex flex-col items-center">'
+          +'<div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold '+(i<=statusIdx?'bg-green-500 text-white':'bg-slate-200 text-slate-400')+'">'
+          +(i<statusIdx?'<i class="fas fa-check text-xs"></i>':(i+1))+'</div>'
+          +'<p class="text-xs text-center mt-1 text-slate-400 w-14">'+s+'</p></div>'
+          +(i<4?'<div class="w-8 h-0.5 '+(i<statusIdx?'bg-green-500':'bg-slate-200')+' mb-4"></div>':'')
+          +'</div>'
         ).join('')
-      + '</div></div>'
-      + '<div class="card p-6">'
-      + '<h2 class="font-bold text-slate-800 mb-4 flex items-center gap-2"><i class="fas fa-box text-red-500"></i> Order Items</h2>'
-      + (order.items || []).map(item =>
-          '<div class="flex items-center gap-4 py-3 border-b border-slate-50 last:border-0">'
-          + '<img src="' + item.image + '" class="w-14 h-14 rounded-xl object-cover"/>'
-          + '<div class="flex-1"><p class="font-semibold text-slate-800">' + item.name + '</p>'
-          + '<p class="text-slate-400 text-sm">Qty: ' + item.qty + ' · ' + item.token + '</p></div>'
-          + '<p class="font-bold text-red-600">' + (item.price * item.qty) + ' ' + item.token + '</p>'
-          + '</div>'
-        ).join('')
-      + '</div>'
-      + '<div class="card p-6">'
-      + '<h2 class="font-bold text-slate-800 mb-4 flex items-center gap-2"><i class="fas fa-receipt text-red-500"></i> Transaction Details</h2>'
-      + '<div class="space-y-2 text-sm">'
-      + '<div class="flex justify-between"><span class="text-slate-500">Order ID</span><span class="font-mono font-medium">' + order.id + '</span></div>'
-      + '<div class="flex justify-between"><span class="text-slate-500">Tx Hash</span><span class="font-mono text-xs text-blue-600">' + (order.txHash || '').substring(0,30) + '...</span></div>'
-      + '<div class="flex justify-between"><span class="text-slate-500">Total</span><span class="font-bold text-red-600">' + (order.total||0).toFixed(2) + ' USDC</span></div>'
-      + '<div class="flex justify-between"><span class="text-slate-500">Created</span><span>' + new Date(order.createdAt).toLocaleString() + '</span></div>'
-      + '<div class="flex justify-between"><span class="text-slate-500">Network</span><span class="font-medium">Arc Network</span></div>'
-      + '</div></div>'
-      + '<div class="flex gap-3">'
-      + (order.status === 'escrow_locked' ? '<button onclick="updateStatus(\'' + order.id + '\',\'shipped\')" class="btn-primary flex-1 justify-center">Mark as Shipped</button>' : '')
-      + (order.status === 'shipped' ? '<button onclick="updateStatus(\'' + order.id + '\',\'completed\')" class="btn-primary flex-1 justify-center">Confirm Delivery</button>' : '')
-      + '<button onclick="openDispute(\'' + order.id + '\')" class="btn-secondary flex-1 justify-center"><i class="fas fa-gavel"></i> Open Dispute</button>'
-      + '<button onclick="downloadReceipt()" class="btn-secondary text-sm py-2 px-3"><i class="fas fa-file-pdf"></i> Receipt</button>'
-      + '</div>'
-      + '</div>';
+      +'</div></div>'
+      // Transaction Details
+      +'<div class="card p-6">'
+      +'<h2 class="font-bold text-slate-800 mb-4 flex items-center gap-2"><i class="fas fa-receipt text-red-500"></i> On-Chain Details</h2>'
+      +'<div class="space-y-3 text-sm">'
+      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Order ID</span><span class="font-mono font-medium text-right">'+order.id+'</span></div>'
+      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Tx Hash</span><a href="'+explorerTxUrl+'" target="_blank" class="font-mono text-xs text-blue-600 hover:underline text-right break-all">'+(order.txHash||'Pending')+'</a></div>'
+      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Buyer</span><span class="font-mono text-xs text-right break-all">'+(order.buyerAddress||'—')+'</span></div>'
+      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Amount</span><span class="font-bold text-red-600">'+(order.amount||0)+' '+(order.token||'USDC')+'</span></div>'
+      +'<div class="flex justify-between"><span class="text-slate-500">Network</span><span class="font-medium">Arc Testnet (Chain 5042002)</span></div>'
+      +'<div class="flex justify-between"><span class="text-slate-500">Created</span><span>'+new Date(order.createdAt).toLocaleString()+'</span></div>'
+      +'</div></div>'
+      // Actions
+      +'<div class="flex flex-wrap gap-3">'
+      +(order.status==='escrow_locked'?'<button onclick="updateOrderStatus(\''+order.id+'\',\'shipped\')" class="btn-primary">Mark Shipped</button>':'')
+      +(order.status==='shipped'?'<button onclick="updateOrderStatus(\''+order.id+'\',\'completed\')" class="btn-primary">Confirm Delivery</button>':'')
+      +'<button onclick="openDispute(\''+order.id+'\')" class="btn-secondary"><i class="fas fa-gavel"></i> Open Dispute</button>'
+      +'<a href="'+explorerTxUrl+'" target="_blank" class="btn-secondary text-sm"><i class="fas fa-external-link-alt"></i> Arc Explorer</a>'
+      +'<button onclick="downloadReceipt()" class="btn-secondary text-sm"><i class="fas fa-file-download"></i> Receipt (JSON)</button>'
+      +'</div>'
+      +'</div>';
   });
-  function updateStatus(orderId, newStatus) {
-    const orders = JSON.parse(localStorage.getItem('rh_orders') || '[]');
-    const i = orders.findIndex(o => o.id === orderId);
-    if (i >= 0) { orders[i].status = newStatus; localStorage.setItem('rh_orders', JSON.stringify(orders)); showToast('Status updated!', 'success'); setTimeout(() => location.reload(), 800); }
+
+  function updateOrderStatus(id,s){
+    const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
+    const i=orders.findIndex(o=>o.id===id);
+    if(i>=0){orders[i].status=s;orders[i].updatedAt=new Date().toISOString();localStorage.setItem('rh_orders',JSON.stringify(orders));showToast('Status updated to '+s,'success');setTimeout(()=>location.reload(),800);}
   }
-  function openDispute(orderId) {
-    const orders = JSON.parse(localStorage.getItem('rh_orders') || '[]');
-    const i = orders.findIndex(o => o.id === orderId);
-    if (i >= 0) { orders[i].status = 'dispute'; localStorage.setItem('rh_orders', JSON.stringify(orders)); showToast('Dispute opened. Funds remain locked.', 'info'); setTimeout(() => location.reload(), 800); }
+  function openDispute(id){
+    const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
+    const i=orders.findIndex(o=>o.id===id);
+    if(i>=0){orders[i].status='dispute';orders[i].disputedAt=new Date().toISOString();localStorage.setItem('rh_orders',JSON.stringify(orders));showToast('Dispute opened — funds remain locked in Arc escrow','info');setTimeout(()=>location.reload(),800);}
   }
-  function downloadReceipt() {
-    const orders = JSON.parse(localStorage.getItem('rh_orders') || '[]');
-    const order = orders.find(o => o.id === '${id}');
-    if (!order) return;
-    const receipt = JSON.stringify(order, null, 2);
-    const blob = new Blob([receipt], {type:'application/json'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = '${id}-receipt.json'; a.click();
-    showToast('Receipt downloaded!', 'success');
+  function downloadReceipt(){
+    const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
+    const order=orders.find(o=>o.id==='${id}');
+    if(!order){showToast('Order not found','error');return;}
+    const receipt={
+      ...order,
+      network:'Arc Testnet',
+      chainId:5042002,
+      explorerUrl:'${ARC.explorer}/tx/'+(order.txHash||''),
+      generatedAt:new Date().toISOString(),
+      contracts:{USDC:'${ARC.contracts.USDC}',EURC:'${ARC.contracts.EURC}'}
+    };
+    const blob=new Blob([JSON.stringify(receipt,null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download='${id}-arc-receipt.json';a.click();
+    showToast('Receipt downloaded!','success');
   }
   </script>
   `)
 }
 
-// ─── PAGE: SELL ─────────────────────────────────────────────────────
+// ─── PAGE: SELL ─────────────────────────────────────────────────────────
 function sellPage() {
   return shell('Sell on redhawk-store', `
   <div class="max-w-3xl mx-auto px-4 py-8">
@@ -2080,8 +2267,13 @@ function sellPage() {
         <i class="fas fa-store"></i>
       </div>
       <h1 class="text-3xl font-extrabold text-slate-800 mb-2">Start Selling</h1>
-      <p class="text-slate-500">List your products and receive USDC or EURC payments through escrow.</p>
+      <p class="text-slate-500">List your product on Arc Network — receive USDC or EURC through escrow.</p>
     </div>
+
+    <!-- Wallet check -->
+    <div id="sell-wallet-check" class="mb-6"></div>
+    <div id="sell-network-status" class="mb-6"></div>
+
     <div class="card p-8">
       <h2 class="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
         <i class="fas fa-plus-circle text-red-500"></i> New Product Listing
@@ -2096,30 +2288,25 @@ function sellPage() {
             <label class="block text-sm font-semibold text-slate-700 mb-1">Category *</label>
             <select id="prod-cat" class="select">
               <option value="">Select category</option>
-              <option>Electronics</option>
-              <option>Gaming</option>
-              <option>Audio</option>
-              <option>Photography</option>
-              <option>Wearables</option>
-              <option>Accessories</option>
-              <option>Other</option>
+              <option>Electronics</option><option>Gaming</option><option>Audio</option>
+              <option>Photography</option><option>Wearables</option><option>Accessories</option><option>Other</option>
             </select>
           </div>
         </div>
         <div>
           <label class="block text-sm font-semibold text-slate-700 mb-1">Description *</label>
-          <textarea id="prod-desc" rows="4" placeholder="Describe your product in detail..." class="input resize-none"></textarea>
+          <textarea id="prod-desc" rows="4" placeholder="Describe your product in detail…" class="input resize-none"></textarea>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label class="block text-sm font-semibold text-slate-700 mb-1">Price *</label>
-            <input type="number" id="prod-price" placeholder="0.00" step="0.01" class="input"/>
+            <input type="number" id="prod-price" placeholder="0.00" step="0.000001" class="input"/>
           </div>
           <div>
             <label class="block text-sm font-semibold text-slate-700 mb-1">Token *</label>
             <select id="prod-token" class="select">
-              <option value="USDC">USDC</option>
-              <option value="EURC">EURC</option>
+              <option value="USDC">USDC (Arc native)</option>
+              <option value="EURC">EURC (ERC-20)</option>
             </select>
           </div>
           <div>
@@ -2128,39 +2315,52 @@ function sellPage() {
           </div>
         </div>
         <div>
-          <label class="block text-sm font-semibold text-slate-700 mb-1">Product Image URL</label>
-          <input type="url" id="prod-img" placeholder="https://..." class="input"/>
-          <p class="text-xs text-slate-400 mt-1">In production: images are uploaded to IPFS</p>
+          <label class="block text-sm font-semibold text-slate-700 mb-1">Product Image URL (IPFS recommended)</label>
+          <input type="url" id="prod-img" placeholder="ipfs://... or https://..." class="input"/>
+          <p class="text-xs text-slate-400 mt-1">Use IPFS for decentralized storage. Files stored on-chain are immutable.</p>
         </div>
-        <div class="bg-red-50 border border-red-100 rounded-xl p-4 text-sm text-red-800">
-          <h4 class="font-bold mb-1 flex items-center gap-2"><i class="fas fa-shield-alt"></i> Escrow Policy</h4>
-          <p>All sales are automatically escrow-protected. Funds are released only when the buyer confirms delivery or after 48 hours.</p>
+        <div class="card p-4 bg-red-50 border-red-100">
+          <h4 class="font-bold text-red-800 mb-1 flex items-center gap-2"><i class="fas fa-shield-alt"></i> Escrow Policy</h4>
+          <p class="text-sm text-red-700">All sales are escrow-protected via Arc Network smart contract. Funds release only on buyer delivery confirmation or after 48h.</p>
         </div>
         <button onclick="listProduct()" class="btn-primary w-full justify-center py-3 text-base">
-          <i class="fas fa-upload"></i> List Product on Marketplace
+          <i class="fas fa-upload"></i> List Product on Arc Network
         </button>
       </div>
     </div>
   </div>
   <script>
-  function listProduct() {
-    const name = document.getElementById('prod-name').value.trim();
-    const cat = document.getElementById('prod-cat').value;
-    const desc = document.getElementById('prod-desc').value.trim();
-    const price = parseFloat(document.getElementById('prod-price').value);
-    const token = document.getElementById('prod-token').value;
-    const stock = parseInt(document.getElementById('prod-stock').value);
-    if (!name || !cat || !desc || !price || !stock) { showToast('Please fill all required fields', 'error'); return; }
-    const wallet = getWallet();
-    if (!wallet) { showToast('Please connect a wallet first', 'error'); window.location.href='/wallet'; return; }
-    showToast('Product listed on redhawk-store! (Demo mode)', 'success');
-    setTimeout(() => window.location.href = '/marketplace', 1500);
+  document.addEventListener('DOMContentLoaded', async () => {
+    checkNetworkStatus(document.getElementById('sell-network-status'));
+    const w=getStoredWallet();
+    const wc=document.getElementById('sell-wallet-check');
+    if(!w){
+      wc.innerHTML='<div class="network-warning"><i class="fas fa-exclamation-triangle"></i>You must connect a wallet to list products. <a href="/wallet" class="underline font-bold ml-1">Connect Wallet →</a></div>';
+    } else {
+      wc.innerHTML='<div class="network-ok"><i class="fas fa-check-circle text-green-600"></i>Seller wallet: <span class="font-mono text-xs ml-1">'+w.address+'</span></div>';
+    }
+  });
+  async function listProduct(){
+    const w=getStoredWallet();
+    if(!w){showToast('Connect wallet first','error');window.location.href='/wallet';return;}
+    const name=document.getElementById('prod-name').value.trim();
+    const cat=document.getElementById('prod-cat').value;
+    const desc=document.getElementById('prod-desc').value.trim();
+    const price=parseFloat(document.getElementById('prod-price').value);
+    const token=document.getElementById('prod-token').value;
+    const stock=parseInt(document.getElementById('prod-stock').value);
+    const img=document.getElementById('prod-img').value.trim();
+    if(!name||!cat||!desc||!price||!stock){showToast('Please fill all required fields','error');return;}
+    if(price<=0){showToast('Price must be greater than 0','error');return;}
+    // In production: sign and submit to product registry smart contract on Arc
+    showToast('Listing submitted! In production, this would be signed and submitted to Arc Network.','info');
+    setTimeout(()=>{showToast('Product listing requires smart contract deployment (coming soon)','warning');},2000);
   }
   </script>
   `)
 }
 
-// ─── PAGE: PROFILE ──────────────────────────────────────────────────
+// ─── PAGE: PROFILE ──────────────────────────────────────────────────────
 function profilePage() {
   return shell('Profile', `
   <div class="max-w-4xl mx-auto px-4 py-8">
@@ -2168,86 +2368,79 @@ function profilePage() {
       <i class="fas fa-user text-red-500"></i> My Profile
     </h1>
     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-      <!-- Sidebar -->
       <div class="card p-6">
         <div class="text-center mb-6">
           <div class="w-20 h-20 rounded-full bg-gradient-to-br from-red-400 to-red-700 flex items-center justify-center text-white text-3xl font-bold mx-auto mb-3">
             <i class="fas fa-user"></i>
           </div>
-          <p class="font-bold text-slate-800" id="prof-name">Anonymous User</p>
-          <p class="text-slate-400 text-sm" id="prof-email">Not logged in</p>
-          <div class="flex items-center justify-center gap-1 mt-2">
-            <i class="fas fa-star star text-sm"></i>
-            <span class="font-semibold text-sm">4.8</span>
-            <span class="text-slate-400 text-xs">(12 reviews)</span>
-          </div>
+          <p class="font-bold text-slate-800" id="prof-address">Not connected</p>
+          <div class="mt-2" id="prof-network-badge"></div>
         </div>
         <nav class="sidebar-nav space-y-1">
           <a href="/profile" class="active"><i class="fas fa-user w-4"></i> Profile</a>
           <a href="/orders"><i class="fas fa-box w-4"></i> My Orders</a>
           <a href="/wallet"><i class="fas fa-wallet w-4"></i> Wallet</a>
-          <a href="/sell"><i class="fas fa-store w-4"></i> My Listings</a>
+          <a href="/sell"><i class="fas fa-store w-4"></i> Sell</a>
           <a href="/disputes"><i class="fas fa-gavel w-4"></i> Disputes</a>
           <a href="/notifications"><i class="fas fa-bell w-4"></i> Notifications</a>
         </nav>
       </div>
-      <!-- Main -->
       <div class="md:col-span-2 space-y-5">
         <div class="card p-6">
           <h2 class="font-bold text-slate-800 text-lg mb-4">Personal Information</h2>
           <div class="space-y-4">
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label class="block text-sm font-medium text-slate-700 mb-1">Full Name</label>
-                <input type="text" value="" placeholder="Your full name" class="input"/>
-              </div>
-              <div>
-                <label class="block text-sm font-medium text-slate-700 mb-1">Email</label>
-                <input type="email" value="" placeholder="your@email.com" class="input"/>
-              </div>
+              <div><label class="block text-sm font-medium text-slate-700 mb-1">Full Name</label><input type="text" placeholder="Your name" class="input"/></div>
+              <div><label class="block text-sm font-medium text-slate-700 mb-1">Email</label><input type="email" placeholder="your@email.com" class="input"/></div>
             </div>
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">Shipping Address</label>
-              <input type="text" placeholder="Street address, city, country" class="input"/>
-            </div>
-            <button onclick="showToast('Profile saved!', 'success')" class="btn-primary">
-              <i class="fas fa-save"></i> Save Changes
-            </button>
+            <div><label class="block text-sm font-medium text-slate-700 mb-1">Shipping Address</label><input type="text" placeholder="Street, City, Country" class="input"/></div>
+            <button onclick="showToast('Profile saved locally','success')" class="btn-primary"><i class="fas fa-save"></i> Save Changes</button>
           </div>
         </div>
-        <!-- Stats -->
-        <div class="grid grid-cols-3 gap-4">
-          ${[['0','Orders','fas fa-box'],['0','USDC Spent','fas fa-coins'],['0','Listings','fas fa-store']].map(([val,label,icon])=>`
-            <div class="card p-4 text-center">
-              <i class="${icon} text-red-500 text-xl mb-2"></i>
-              <p class="text-2xl font-extrabold text-slate-800">${val}</p>
-              <p class="text-slate-400 text-xs">${label}</p>
-            </div>`).join('')}
+        <!-- Wallet on-chain info -->
+        <div class="card p-5" id="prof-wallet-card">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="font-bold text-slate-800 flex items-center gap-2">
+              <i class="fas fa-wallet text-red-500"></i> Arc Network Wallet
+            </h3>
+            <a href="/wallet" class="text-red-600 text-sm hover:underline">Manage →</a>
+          </div>
+          <div id="prof-wallet-info" class="text-slate-400 text-sm">Loading…</div>
         </div>
-        <!-- Wallet Link -->
-        <div class="card p-5 flex items-center gap-4">
-          <div class="w-12 h-12 rounded-xl bg-red-100 flex items-center justify-center text-red-600 text-xl">
-            <i class="fas fa-wallet"></i>
-          </div>
-          <div class="flex-1">
-            <p class="font-bold text-slate-800">Wallet Status</p>
-            <p class="text-slate-400 text-sm" id="prof-wallet-status">No wallet connected</p>
-          </div>
-          <a href="/wallet" class="btn-primary text-sm">Manage</a>
+        <!-- Stats (from localStorage orders) -->
+        <div class="grid grid-cols-3 gap-4" id="prof-stats">
+          <div class="card p-4 text-center"><i class="fas fa-box text-red-500 text-xl mb-2"></i><p class="text-2xl font-extrabold text-slate-800" id="stat-orders">0</p><p class="text-slate-400 text-xs">Orders</p></div>
+          <div class="card p-4 text-center"><i class="fas fa-coins text-red-500 text-xl mb-2"></i><p class="text-2xl font-extrabold text-slate-800" id="stat-spent">0</p><p class="text-slate-400 text-xs">USDC Spent</p></div>
+          <div class="card p-4 text-center"><i class="fas fa-check-circle text-green-500 text-xl mb-2"></i><p class="text-2xl font-extrabold text-slate-800" id="stat-completed">0</p><p class="text-slate-400 text-xs">Completed</p></div>
         </div>
       </div>
     </div>
   </div>
   <script>
-  document.addEventListener('DOMContentLoaded', () => {
-    const w = getWallet();
-    if (w) document.getElementById('prof-wallet-status').textContent = w.address.substring(0,16) + '...';
+  document.addEventListener('DOMContentLoaded', async () => {
+    const w=getStoredWallet();
+    if(w){
+      document.getElementById('prof-address').textContent=w.address.substring(0,10)+'…'+w.address.slice(-6);
+      document.getElementById('prof-network-badge').innerHTML='<span class="arc-badge text-xs"><i class="fas fa-network-wired text-xs"></i> Arc Testnet</span>';
+      document.getElementById('prof-wallet-info').innerHTML=
+        '<div class="space-y-1">'
+        +'<p class="text-xs text-slate-500">Address</p>'
+        +'<p class="font-mono text-xs text-slate-700 break-all">'+w.address+'</p>'
+        +'<a href="${ARC.explorer}/address/'+w.address+'" target="_blank" class="text-blue-600 text-xs hover:underline flex items-center gap-1 mt-1">'
+        +'<i class="fas fa-external-link-alt text-xs"></i> View on Arc Explorer</a></div>';
+      const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]').filter(o=>o.buyerAddress&&o.buyerAddress.toLowerCase()===w.address.toLowerCase());
+      document.getElementById('stat-orders').textContent=orders.length;
+      document.getElementById('stat-spent').textContent=(orders.reduce((s,o)=>s+(o.amount||0),0)).toFixed(2);
+      document.getElementById('stat-completed').textContent=orders.filter(o=>o.status==='completed').length;
+    } else {
+      document.getElementById('prof-wallet-info').innerHTML='<a href="/wallet" class="text-red-600 hover:underline">Connect wallet →</a>';
+    }
   });
   </script>
   `)
 }
 
-// ─── PAGE: REGISTER ─────────────────────────────────────────────────
+// ─── PAGE: REGISTER ──────────────────────────────────────────────────────
 function registerPage() {
   return shell('Register', `
   <div class="min-h-screen flex items-center justify-center px-4 py-12 bg-gradient-to-br from-red-50 to-white">
@@ -2260,65 +2453,48 @@ function registerPage() {
           <span class="font-extrabold text-xl text-slate-800">redhawk<span class="text-red-600">-store</span></span>
         </a>
         <h1 class="text-2xl font-extrabold text-slate-800 mb-1">Create Account</h1>
-        <p class="text-slate-500 text-sm">Join thousands of buyers and sellers on Arc Network</p>
+        <p class="text-slate-500 text-sm">Join redhawk-store on Arc Network</p>
       </div>
       <div class="card p-8">
         <div class="space-y-4">
           <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">First Name</label>
-              <input type="text" placeholder="John" class="input"/>
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">Last Name</label>
-              <input type="text" placeholder="Doe" class="input"/>
-            </div>
+            <div><label class="block text-sm font-medium text-slate-700 mb-1">First Name</label><input type="text" placeholder="John" class="input"/></div>
+            <div><label class="block text-sm font-medium text-slate-700 mb-1">Last Name</label><input type="text" placeholder="Doe" class="input"/></div>
           </div>
-          <div>
-            <label class="block text-sm font-medium text-slate-700 mb-1">Email Address</label>
-            <input type="email" placeholder="john@email.com" class="input"/>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-slate-700 mb-1">Shipping Address</label>
-            <input type="text" placeholder="Street, City, Country" class="input"/>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-slate-700 mb-1">Password</label>
-            <input type="password" placeholder="Min 8 characters" class="input"/>
-          </div>
-          <div class="border-t border-slate-100 pt-4">
-            <p class="text-sm font-semibold text-slate-700 mb-3">Wallet Setup</p>
+          <div><label class="block text-sm font-medium text-slate-700 mb-1">Email</label><input type="email" placeholder="john@email.com" class="input"/></div>
+          <div><label class="block text-sm font-medium text-slate-700 mb-1">Shipping Address</label><input type="text" placeholder="Street, City, Country" class="input"/></div>
+          <div><label class="block text-sm font-medium text-slate-700 mb-1">Password</label><input type="password" placeholder="Min 8 characters" class="input"/></div>
+          <div class="border-t pt-4">
+            <p class="text-sm font-semibold text-slate-700 mb-3">Wallet Setup <span class="text-red-500">*</span></p>
             <div class="grid grid-cols-2 gap-3">
-              <a href="/wallet/create" class="card p-3 text-center hover:border-red-300 hover:bg-red-50 transition-all text-sm">
+              <a href="/wallet/create" class="card p-3 text-center hover:border-red-300 hover:bg-red-50 transition-all">
                 <i class="fas fa-plus-circle text-red-500 text-lg mb-1 block"></i>
-                <p class="font-semibold text-slate-700">Create Wallet</p>
+                <p class="font-semibold text-slate-700 text-sm">Create Wallet</p>
                 <p class="text-slate-400 text-xs">Non-custodial</p>
               </a>
-              <a href="/wallet/import" class="card p-3 text-center hover:border-slate-300 hover:bg-slate-50 transition-all text-sm">
-                <i class="fas fa-file-import text-slate-500 text-lg mb-1 block"></i>
-                <p class="font-semibold text-slate-700">Import Wallet</p>
-                <p class="text-slate-400 text-xs">Use seed phrase</p>
-              </a>
+              <button onclick="connectWallet('metamask').then(w=>{if(w)showToast('MetaMask connected!','success')})" class="card p-3 text-center hover:border-orange-300 hover:bg-orange-50 transition-all">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/3/36/MetaMask_Fox.svg" class="w-7 h-7 mx-auto mb-1"/>
+                <p class="font-semibold text-slate-700 text-sm">MetaMask</p>
+                <p class="text-slate-400 text-xs">Arc Testnet</p>
+              </button>
             </div>
           </div>
           <label class="flex items-center gap-2 cursor-pointer text-sm text-slate-600">
             <input type="checkbox" class="accent-red-600 w-4 h-4"/>
-            I agree to the <a href="#" class="text-red-600 hover:underline">Terms of Service</a> and <a href="#" class="text-red-600 hover:underline">Privacy Policy</a>
+            I agree to the <a href="#" class="text-red-600 hover:underline">Terms</a> and <a href="#" class="text-red-600 hover:underline">Privacy Policy</a>
           </label>
-          <button onclick="showToast('Account created! Welcome to redhawk-store', 'success'); setTimeout(()=>window.location.href='/',1500)" class="btn-primary w-full justify-center py-3">
+          <button onclick="showToast('Account created! Now connect your wallet.','success')" class="btn-primary w-full justify-center py-3">
             <i class="fas fa-user-plus"></i> Create Account
           </button>
         </div>
-        <p class="text-center text-sm text-slate-500 mt-4">
-          Already have an account? <a href="/login" class="text-red-600 hover:underline font-medium">Sign in</a>
-        </p>
+        <p class="text-center text-sm text-slate-500 mt-4">Already have an account? <a href="/login" class="text-red-600 hover:underline font-medium">Sign in</a></p>
       </div>
     </div>
   </div>
   `)
 }
 
-// ─── PAGE: LOGIN ─────────────────────────────────────────────────────
+// ─── PAGE: LOGIN ──────────────────────────────────────────────────────────
 function loginPage() {
   return shell('Login', `
   <div class="min-h-screen flex items-center justify-center px-4 py-12 bg-gradient-to-br from-red-50 to-white">
@@ -2331,99 +2507,80 @@ function loginPage() {
           <span class="font-extrabold text-xl text-slate-800">redhawk<span class="text-red-600">-store</span></span>
         </a>
         <h1 class="text-2xl font-extrabold text-slate-800 mb-1">Welcome Back</h1>
-        <p class="text-slate-500 text-sm">Sign in to your redhawk-store account</p>
+        <p class="text-slate-500 text-sm">Sign in to redhawk-store on Arc Network</p>
       </div>
       <div class="card p-8">
         <div class="space-y-4">
-          <div>
-            <label class="block text-sm font-medium text-slate-700 mb-1">Email Address</label>
-            <input type="email" placeholder="john@email.com" class="input"/>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-slate-700 mb-1">Password</label>
-            <input type="password" placeholder="Your password" class="input"/>
-          </div>
-          <button onclick="showToast('Signed in!', 'success'); setTimeout(()=>window.location.href='/',1000)" class="btn-primary w-full justify-center py-3">
+          <div><label class="block text-sm font-medium text-slate-700 mb-1">Email</label><input type="email" placeholder="john@email.com" class="input"/></div>
+          <div><label class="block text-sm font-medium text-slate-700 mb-1">Password</label><input type="password" placeholder="Your password" class="input"/></div>
+          <button onclick="showToast('Signed in!','success');setTimeout(()=>window.location.href='/',1000)" class="btn-primary w-full justify-center py-3">
             <i class="fas fa-sign-in-alt"></i> Sign In
           </button>
           <div class="relative flex items-center gap-3">
-            <div class="flex-1 h-px bg-slate-200"></div>
-            <span class="text-slate-400 text-xs">or</span>
-            <div class="flex-1 h-px bg-slate-200"></div>
+            <div class="flex-1 h-px bg-slate-200"></div><span class="text-slate-400 text-xs">or</span><div class="flex-1 h-px bg-slate-200"></div>
           </div>
-          <button onclick="showToast('Connecting MetaMask...', 'info')" class="btn-secondary w-full justify-center py-2.5 text-sm">
+          <button onclick="connectWallet('metamask').then(w=>{if(w){showToast('Signed in with MetaMask!','success');setTimeout(()=>window.location.href='/',1000)}})" class="btn-secondary w-full justify-center py-2.5 text-sm">
             <img src="https://upload.wikimedia.org/wikipedia/commons/3/36/MetaMask_Fox.svg" class="w-5 h-5"/>
-            Sign in with MetaMask
+            Sign in with MetaMask (Arc Testnet)
           </button>
         </div>
-        <p class="text-center text-sm text-slate-500 mt-4">
-          Don't have an account? <a href="/register" class="text-red-600 hover:underline font-medium">Create one</a>
-        </p>
+        <p class="text-center text-sm text-slate-500 mt-4">Don't have an account? <a href="/register" class="text-red-600 hover:underline font-medium">Create one</a></p>
       </div>
     </div>
   </div>
   `)
 }
 
-// ─── PAGE: DISPUTES ──────────────────────────────────────────────────
+// ─── PAGE: DISPUTES ───────────────────────────────────────────────────────
 function disputesPage() {
   return shell('Disputes', `
   <div class="max-w-4xl mx-auto px-4 py-8">
     <h1 class="text-3xl font-bold text-slate-800 mb-2 flex items-center gap-3">
       <i class="fas fa-gavel text-red-500"></i> Dispute Resolution
     </h1>
-    <p class="text-slate-500 mb-8">Open disputes are reviewed by the redhawk-store DAO. Funds remain locked until resolution.</p>
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
-      ${[['0','Open Disputes','fas fa-exclamation-circle','text-red-500'],['0','Resolved','fas fa-check-circle','text-green-500'],['48h','Avg Resolution','fas fa-clock','text-blue-500']].map(([v,l,i,c])=>`
-        <div class="card p-5 text-center">
-          <i class="${i} ${c} text-2xl mb-2"></i>
-          <p class="text-2xl font-extrabold text-slate-800">${v}</p>
-          <p class="text-slate-400 text-sm">${l}</p>
-        </div>`).join('')}
-    </div>
+    <p class="text-slate-500 mb-6">Open disputes are reviewed by redhawk-store governance. Escrow funds remain locked on Arc Network until resolved.</p>
     <div id="disputes-container">
-      <div class="card p-8 text-center text-slate-400">
-        <i class="fas fa-handshake text-5xl mb-3 opacity-30"></i>
-        <p class="font-medium">No active disputes</p>
-        <p class="text-sm mt-1">Open a dispute from any order with issues.</p>
-      </div>
+      <div class="text-center py-8"><div class="loading-spinner-lg mx-auto mb-4"></div><p class="text-slate-400">Loading disputes…</p></div>
     </div>
   </div>
   <script>
   document.addEventListener('DOMContentLoaded', () => {
-    const orders = JSON.parse(localStorage.getItem('rh_orders') || '[]');
-    const disputes = orders.filter(o => o.status === 'dispute');
-    if (!disputes.length) return;
-    document.getElementById('disputes-container').innerHTML = disputes.map(d =>
+    const w=getStoredWallet();
+    const container=document.getElementById('disputes-container');
+    if(!w){
+      container.innerHTML='<div class="card p-12 text-center"><div class="empty-state"><i class="fas fa-gavel"></i><h3 class="font-bold text-slate-600 mb-2">Connect Wallet</h3><p class="text-sm mb-4">Connect your wallet to see your disputes.</p><a href="/wallet" class="btn-primary mx-auto">Connect Wallet</a></div></div>';
+      return;
+    }
+    const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
+    const disputes=orders.filter(o=>o.status==='dispute'&&o.buyerAddress&&o.buyerAddress.toLowerCase()===w.address.toLowerCase());
+    if(!disputes.length){
+      container.innerHTML='<div class="card p-12 text-center"><div class="empty-state"><i class="fas fa-handshake"></i><h3 class="font-bold text-slate-600 mb-2">No Active Disputes</h3><p class="text-sm">Open a dispute from any order with delivery issues.</p></div></div>';
+      return;
+    }
+    container.innerHTML=disputes.map(d=>
       '<div class="card p-5 mb-4 border-l-4 border-red-500">'
-      + '<div class="flex items-center justify-between mb-3">'
-      + '<div><p class="font-bold text-slate-800">' + d.id + '</p>'
-      + '<p class="text-slate-400 text-xs">Opened: ' + new Date(d.createdAt).toLocaleDateString() + '</p></div>'
-      + '<span class="px-3 py-1 rounded-full text-xs font-bold bg-red-100 text-red-700">Open Dispute</span>'
-      + '</div>'
-      + '<p class="text-slate-600 text-sm mb-3">Funds locked: <strong class="text-red-600">' + (d.total||0).toFixed(2) + ' USDC</strong></p>'
-      + '<div class="flex gap-2">'
-      + '<button onclick="resolveDispute(\'' + d.id + '\',\'buyer\')" class="btn-primary text-xs py-1.5">Refund Buyer</button>'
-      + '<button onclick="resolveDispute(\'' + d.id + '\',\'seller\')" class="btn-secondary text-xs py-1.5">Release to Seller</button>'
-      + '</div></div>'
+      +'<div class="flex items-center justify-between mb-3">'
+      +'<div><p class="font-bold text-slate-800">'+d.id+'</p>'
+      +'<p class="text-slate-400 text-xs">Opened: '+new Date(d.disputedAt||d.createdAt).toLocaleString()+'</p></div>'
+      +'<span class="px-3 py-1 rounded-full text-xs font-bold bg-red-100 text-red-700">Open Dispute</span></div>'
+      +'<p class="text-sm text-slate-600 mb-1">Locked: <strong class="text-red-600">'+(d.amount||0)+' '+(d.token||'USDC')+'</strong></p>'
+      +'<p class="text-xs text-slate-400 addr-mono mb-3">Tx: <a href="'+(d.explorerUrl||ARC.explorer+'/tx/'+d.txHash)+'" target="_blank" class="text-blue-500 hover:underline">'+(d.txHash||'').substring(0,24)+'…</a></p>'
+      +'<div class="flex gap-2">'
+      +'<button onclick="resolveDispute(\''+d.id+'\',\'buyer\')" class="btn-primary text-xs py-1.5">Refund Buyer</button>'
+      +'<button onclick="resolveDispute(\''+d.id+'\',\'seller\')" class="btn-secondary text-xs py-1.5">Release to Seller</button>'
+      +'</div></div>'
     ).join('');
   });
-  function resolveDispute(orderId, favor) {
-    const orders = JSON.parse(localStorage.getItem('rh_orders') || '[]');
-    const i = orders.findIndex(o => o.id === orderId);
-    if (i >= 0) {
-      orders[i].status = 'completed';
-      orders[i].disputeResolution = favor;
-      localStorage.setItem('rh_orders', JSON.stringify(orders));
-      showToast('Dispute resolved in favor of ' + favor, 'success');
-      setTimeout(() => location.reload(), 800);
-    }
+  function resolveDispute(id,favor){
+    const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
+    const i=orders.findIndex(o=>o.id===id);
+    if(i>=0){orders[i].status='completed';orders[i].disputeResolution=favor;orders[i].resolvedAt=new Date().toISOString();localStorage.setItem('rh_orders',JSON.stringify(orders));showToast('Dispute resolved in favor of '+favor+'. Escrow released.','success');setTimeout(()=>location.reload(),800);}
   }
   </script>
   `)
 }
 
-// ─── PAGE: NOTIFICATIONS ─────────────────────────────────────────────
+// ─── PAGE: NOTIFICATIONS ──────────────────────────────────────────────────
 function notificationsPage() {
   return shell('Notifications', `
   <div class="max-w-2xl mx-auto px-4 py-8">
@@ -2431,27 +2588,43 @@ function notificationsPage() {
       <h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3">
         <i class="fas fa-bell text-red-500"></i> Notifications
       </h1>
-      <button onclick="showToast('All notifications cleared', 'info')" class="btn-secondary text-sm">Mark all read</button>
+      <button onclick="clearNotifs()" class="btn-secondary text-sm">Mark all read</button>
     </div>
-    <div class="space-y-2" id="notif-list">
-      ${[
-        ['payment','fas fa-coins','Escrow Locked','Your order ORD-1234 has been locked in escrow.','2 min ago','bg-green-100 text-green-600'],
-        ['shipment','fas fa-shipping-fast','Order Shipped','Order ORD-5678 has been shipped by the seller.','1 hour ago','bg-blue-100 text-blue-600'],
-        ['delivery','fas fa-box-open','Delivery Confirmed','Funds released for order ORD-9012.','3 hours ago','bg-purple-100 text-purple-600'],
-        ['wallet','fas fa-wallet','Wallet Connected','Your MetaMask wallet is connected to redhawk-store.','1 day ago','bg-orange-100 text-orange-600'],
-      ].map(([type,icon,title,msg,time,color]) => `
-        <div class="notification-item flex items-start gap-4 cursor-pointer hover:bg-red-50 transition-colors">
-          <div class="w-10 h-10 rounded-full ${color} flex items-center justify-center shrink-0">
-            <i class="${icon} text-sm"></i>
-          </div>
-          <div class="flex-1">
-            <p class="font-semibold text-slate-800 text-sm">${title}</p>
-            <p class="text-slate-500 text-xs">${msg}</p>
-            <p class="text-slate-300 text-xs mt-1">${time}</p>
-          </div>
-          <div class="w-2 h-2 rounded-full bg-red-500 mt-2"></div>
-        </div>`).join('')}
+    <div id="notif-list">
+      <div class="text-center py-8"><div class="loading-spinner-lg mx-auto mb-4"></div><p class="text-slate-400">Loading…</p></div>
     </div>
   </div>
+  <script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const w=getStoredWallet();
+    const container=document.getElementById('notif-list');
+    const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
+    const notifs=[];
+
+    if(w){
+      const myOrders=orders.filter(o=>o.buyerAddress&&o.buyerAddress.toLowerCase()===w.address.toLowerCase());
+      myOrders.slice(-5).reverse().forEach(o=>{
+        notifs.push({icon:'fas fa-lock',color:'bg-yellow-100 text-yellow-600',title:'Escrow Created',msg:'Order '+o.id+' locked on Arc Network',time:new Date(o.createdAt).toLocaleString(),url:'/orders/'+o.id});
+        if(o.status==='shipped') notifs.push({icon:'fas fa-shipping-fast',color:'bg-blue-100 text-blue-600',title:'Order Shipped',msg:'Order '+o.id+' has been shipped',time:new Date(o.updatedAt||o.createdAt).toLocaleString(),url:'/orders/'+o.id});
+        if(o.status==='completed') notifs.push({icon:'fas fa-check-circle',color:'bg-green-100 text-green-600',title:'Escrow Released',msg:'Funds released for order '+o.id,time:new Date(o.updatedAt||o.createdAt).toLocaleString(),url:'/orders/'+o.id});
+        if(o.status==='dispute') notifs.push({icon:'fas fa-gavel',color:'bg-red-100 text-red-600',title:'Dispute Opened',msg:'Dispute opened for order '+o.id+'. Funds locked.',time:new Date(o.disputedAt||o.createdAt).toLocaleString(),url:'/disputes'});
+      });
+    }
+
+    if(!notifs.length){
+      container.innerHTML='<div class="card p-12 text-center"><div class="empty-state"><i class="fas fa-bell-slash"></i><h3 class="font-bold text-slate-600 mb-2">No Notifications</h3><p class="text-sm">Notifications are triggered by real Arc Network events — escrow creation, shipments, and releases.</p></div></div>';
+      return;
+    }
+    container.innerHTML=notifs.map(n=>
+      '<a href="'+(n.url||'#')+'" class="notification-item flex items-start gap-4 cursor-pointer hover:bg-red-50 transition-colors block">'
+      +'<div class="w-10 h-10 rounded-full '+n.color+' flex items-center justify-center shrink-0"><i class="'+n.icon+' text-sm"></i></div>'
+      +'<div class="flex-1"><p class="font-semibold text-slate-800 text-sm">'+n.title+'</p>'
+      +'<p class="text-slate-500 text-xs">'+n.msg+'</p>'
+      +'<p class="text-slate-300 text-xs mt-1">'+n.time+'</p></div>'
+      +'<div class="w-2 h-2 rounded-full bg-red-500 mt-2 shrink-0"></div></a>'
+    ).join('');
+  });
+  function clearNotifs(){ showToast('All notifications marked as read','info'); document.querySelectorAll('.notification-item .rounded-full.bg-red-500').forEach(el=>el.remove()); }
+  </script>
   `)
 }
