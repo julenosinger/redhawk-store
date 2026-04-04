@@ -190,7 +190,12 @@ function shell(title: string, body: string, extraHead = '') {
     .toast.error{background:#dc2626}
     .toast.info{background:#0ea5e9}
     .toast.warning{background:#d97706}
-    nav{background:#fff;border-bottom:1px solid #f1f5f9;position:sticky;top:0;z-index:100;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+    #testnet-banner{background:#fee2e2;border-bottom:1px solid #fca5a5;color:#7f1d1d;font-size:13px;font-weight:500;display:flex;align-items:center;justify-content:center;padding:8px 48px 8px 16px;position:sticky;top:0;z-index:200;min-height:36px;line-height:1.4;text-align:center}
+    #testnet-banner .banner-text{flex:1;text-align:center}
+    #testnet-banner .banner-close{position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;color:#991b1b;cursor:pointer;width:24px;height:24px;display:flex;align-items:center;justify-content:center;border-radius:4px;font-size:16px;line-height:1;transition:background .15s,color .15s;padding:0}
+    #testnet-banner .banner-close:hover{background:#fca5a5;color:#450a0a}
+    nav{background:#fff;border-bottom:1px solid #f1f5f9;position:sticky;top:36px;z-index:100;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+    body.banner-hidden nav{top:0}
     footer{background:#1e293b;color:#94a3b8;padding:48px 0 24px}
     .hero-gradient{background:linear-gradient(135deg,#fff1f1 0%,#fef2f2 30%,#fff 60%,#f8fafc 100%)}
     .loading-spinner{display:inline-block;width:20px;height:20px;border:2px solid #f3f3f3;border-top:2px solid #dc2626;border-radius:50%;animation:spin 1s linear infinite}
@@ -223,6 +228,27 @@ function shell(title: string, body: string, extraHead = '') {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
 </head>
 <body>
+  <!-- Testnet Banner -->
+  <div id="testnet-banner" role="alert" aria-label="Testnet notice">
+    <span class="banner-text">⚠️ This app is running on <strong>TESTNET</strong>. All transactions are for testing purposes only.</span>
+    <button class="banner-close" onclick="dismissTestnetBanner()" aria-label="Dismiss testnet banner" title="Dismiss">&#x2715;</button>
+  </div>
+  <script>
+    // Testnet banner dismiss — runs before DOMContentLoaded for zero flicker
+    (function(){
+      if(localStorage.getItem('hideTestnetBanner')==='true'){
+        var b=document.getElementById('testnet-banner');
+        if(b){b.style.display='none';}
+        document.body.classList.add('banner-hidden');
+      }
+    })();
+    function dismissTestnetBanner(){
+      var b=document.getElementById('testnet-banner');
+      if(b){b.style.display='none';}
+      document.body.classList.add('banner-hidden');
+      localStorage.setItem('hideTestnetBanner','true');
+    }
+  </script>
   ${navbar()}
   ${body}
   ${chatWidget()}
