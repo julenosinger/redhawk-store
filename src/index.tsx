@@ -118,6 +118,10 @@ app.get('/register', (c) => c.html(registerPage()))
 app.get('/login', (c) => c.html(loginPage()))
 app.get('/disputes', (c) => c.html(disputesPage()))
 app.get('/notifications', (c) => c.html(notificationsPage()))
+app.get('/terms', (c) => c.html(termsPage()))
+app.get('/privacy', (c) => c.html(privacyPage()))
+app.get('/disclaimer', (c) => c.html(disclaimerPage()))
+app.get('/about', (c) => c.html(aboutPage()))
 
 export default app
 
@@ -214,6 +218,13 @@ function shell(title: string, body: string, extraHead = '') {
     .empty-state{text-align:center;padding:48px 24px;color:#94a3b8}
     .empty-state i{font-size:48px;margin-bottom:16px;opacity:.3;display:block}
     .demo-disclaimer{background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 16px;font-size:12px;color:#92400e;display:flex;align-items:center;gap:8px;line-height:1.4}
+    .trust-box{background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:12px 16px;font-size:12px;color:#14532d;display:flex;align-items:flex-start;gap:8px;line-height:1.5}
+    .dev-domain-bar{background:#fef9c3;border-bottom:1px solid #fde047;color:#713f12;font-size:12px;padding:6px 16px;text-align:center;display:none}
+    .legal-page h1{font-size:1.75rem;font-weight:800;color:#1e293b;margin-bottom:.5rem}
+    .legal-page h2{font-size:1.1rem;font-weight:700;color:#1e293b;margin:1.5rem 0 .5rem}
+    .legal-page p{color:#475569;line-height:1.7;margin-bottom:.75rem;font-size:.9rem}
+    .legal-page ul{color:#475569;line-height:1.7;margin-bottom:.75rem;font-size:.9rem;padding-left:1.25rem;list-style:disc}
+    .tx-confirm-modal{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;display:flex;align-items:center;justify-content:center;padding:16px}
     .arc-badge{background:linear-gradient(135deg,#1e40af,#1d4ed8);color:#fff;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:600;display:inline-flex;align-items:center;gap:4px}
     .network-warning{background:#fef3c7;border:1px solid #fcd34d;border-radius:12px;padding:12px 16px;font-size:13px;color:#92400e;display:flex;align-items:center;gap:8px}
     .network-ok{background:#f0fdf4;border:1px solid #86efac;border-radius:12px;padding:12px 16px;font-size:13px;color:#166534;display:flex;align-items:center;gap:8px}
@@ -228,6 +239,18 @@ function shell(title: string, body: string, extraHead = '') {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
 </head>
 <body>
+  <!-- Dev Domain Bar -->
+  <div id="dev-domain-bar" class="dev-domain-bar">
+    <i class="fas fa-flask" style="margin-right:6px"></i>
+    You are accessing a <strong>development environment</strong>. This is not a production deployment.
+  </div>
+  <script>
+    (function(){
+      var h=location.hostname;
+      var isDevDomain=(h.includes('localhost')||h.includes('127.0.0.1')||h.includes('.sandbox.')||h.includes('.novita.')||h.includes('.e2b.')||h.includes('ngrok')||h.includes('preview'));
+      if(isDevDomain){var bar=document.getElementById('dev-domain-bar');if(bar)bar.style.display='block';}
+    })();
+  </script>
   <!-- Testnet Banner -->
   <div id="testnet-banner" role="alert" aria-label="Testnet notice">
     <span class="banner-text">⚠️ This app is running on <strong>TESTNET</strong>. All transactions are for testing purposes only.</span>
@@ -566,6 +589,37 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
+// ─ Transaction Confirmation Modal ─────────────────────────────
+function showTxConfirmModal({ action, amount, token, network, note }) {
+  return new Promise((resolve) => {
+    // Remove any existing modal
+    document.getElementById('tx-confirm-modal-root')?.remove();
+    const el = document.createElement('div');
+    el.id = 'tx-confirm-modal-root';
+    el.className = 'tx-confirm-modal';
+    el.innerHTML = '<div class="modal" style="max-width:440px">'
+      + '<div class="flex items-center gap-3 mb-5">'
+      + '<div class="w-12 h-12 rounded-full bg-yellow-100 flex items-center justify-center text-yellow-600 text-xl shrink-0"><i class="fas fa-shield-alt"></i></div>'
+      + '<div><h3 class="text-lg font-extrabold text-slate-800">Blockchain Transaction</h3>'
+      + '<p class="text-slate-400 text-xs mt-0.5">Review before signing</p></div></div>'
+      + '<div class="bg-slate-50 rounded-xl p-4 mb-4 space-y-2 text-sm">'
+      + '<div class="flex justify-between"><span class="text-slate-500">Action</span><span class="font-semibold text-slate-800">' + action + '</span></div>'
+      + '<div class="flex justify-between"><span class="text-slate-500">Amount</span><span class="font-bold text-red-600">' + amount + ' ' + token + '</span></div>'
+      + '<div class="flex justify-between"><span class="text-slate-500">Network</span><span class="font-medium text-slate-700">' + network + '</span></div>'
+      + '</div>'
+      + '<div class="trust-box mb-5"><i class="fas fa-info-circle" style="color:#16a34a;flex-shrink:0"></i>'
+      + '<span class="text-xs">' + note + '<br/>You are about to sign a blockchain transaction using your connected wallet. <strong>We never sign on your behalf.</strong></span></div>'
+      + '<div class="flex gap-3">'
+      + '<button id="tx-cancel-btn" class="btn-secondary flex-1 justify-center"><i class="fas fa-times"></i> Cancel</button>'
+      + '<button id="tx-confirm-btn" class="btn-primary flex-1 justify-center"><i class="fas fa-lock"></i> Sign & Submit</button>'
+      + '</div></div>';
+    document.body.appendChild(el);
+    document.getElementById('tx-cancel-btn').onclick = () => { el.remove(); resolve(false); };
+    document.getElementById('tx-confirm-btn').onclick = () => { el.remove(); resolve(true); };
+    el.onclick = (e) => { if(e.target===el){ el.remove(); resolve(false); } };
+  });
+}
+
 // ─ Chat toggle ────────────────────────────────────────────────
 function toggleChat() {
   document.getElementById('chat-panel').classList.toggle('hidden');
@@ -744,11 +798,40 @@ function footer() {
           </ul>
         </div>
       </div>
-      <div class="pt-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
-        <p>© 2024 redhawk-store. Built on Arc Network (Circle's stablecoin-native L1).</p>
-        <div class="flex items-center gap-3">
+
+      <!-- Legal + Trust row -->
+      <div class="py-5 border-b border-slate-700">
+        <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div class="text-xs text-slate-500 space-y-1 max-w-xl">
+            <p><i class="fas fa-exclamation-circle text-yellow-500 mr-1"></i><strong class="text-slate-400">Testnet disclaimer:</strong> This is a testnet application. No real funds are used. All transactions are for testing purposes only.</p>
+            <p><i class="fas fa-info-circle text-blue-400 mr-1"></i><strong class="text-slate-400">Demo notice:</strong> This marketplace is for demonstration purposes only. All listed products are illustrative.</p>
+            <p><i class="fas fa-shield-alt text-green-400 mr-1"></i><strong class="text-slate-400">Security:</strong> We never access your private keys. Transactions are signed locally in your wallet.</p>
+          </div>
+          <div class="flex flex-wrap gap-3 text-xs shrink-0">
+            <a href="/terms" class="text-slate-400 hover:text-white transition-colors">Terms of Service</a>
+            <span class="text-slate-600">·</span>
+            <a href="/privacy" class="text-slate-400 hover:text-white transition-colors">Privacy Policy</a>
+            <span class="text-slate-600">·</span>
+            <a href="/disclaimer" class="text-slate-400 hover:text-white transition-colors">Disclaimer</a>
+            <span class="text-slate-600">·</span>
+            <a href="/about" class="text-slate-400 hover:text-white transition-colors">About</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="pt-5 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+        <p class="text-slate-500">© 2024 redhawk-store. Built on Arc Network (Circle's stablecoin-native L1). Open-source demo project.</p>
+        <div class="flex items-center gap-3 flex-wrap justify-center">
+          <a href="https://github.com/julenosinger/redhawk-store" target="_blank" class="flex items-center gap-1 text-slate-400 hover:text-white">
+            <i class="fab fa-github text-sm"></i> GitHub
+          </a>
+          <span class="text-slate-600">·</span>
+          <a href="https://testnet.arcscan.app/address/${ARC.contracts.FxEscrow}" target="_blank" class="flex items-center gap-1 text-slate-400 hover:text-red-400">
+            <i class="fas fa-file-contract text-xs"></i> Escrow Contract
+          </a>
+          <span class="text-slate-600">·</span>
           <a href="https://testnet.arcscan.app" target="_blank" class="flex items-center gap-1 text-slate-400 hover:text-red-400">
-            <i class="fas fa-external-link-alt text-xs"></i> Arc Explorer
+            <i class="fas fa-external-link-alt text-xs"></i> Explorer
           </a>
           <span class="text-slate-600">·</span>
           <a href="https://faucet.circle.com" target="_blank" class="flex items-center gap-1 text-slate-400 hover:text-green-400">
@@ -799,6 +882,11 @@ function homePage() {
           <a href="/wallet" class="btn-secondary text-base px-6 py-3">
             <i class="fas fa-wallet"></i> Connect Wallet
           </a>
+        </div>
+        <!-- Wallet transparency micro-notice -->
+        <div class="trust-box text-xs max-w-md mb-4">
+          <i class="fas fa-shield-alt" style="color:#16a34a;flex-shrink:0;margin-top:1px"></i>
+          <span><strong>We never access your private keys.</strong> All transactions are signed locally in your wallet.</span>
         </div>
         <!-- Real-time network status -->
         <div id="home-network-status" class="text-xs text-slate-400">
@@ -902,6 +990,48 @@ function homePage() {
             <h3 class="font-bold text-slate-800 mb-2">${title}</h3>
             <p class="text-slate-500 text-sm">${desc}</p>
           </div>`).join('')}
+      </div>
+    </div>
+  </section>
+
+  <!-- About Section -->
+  <section class="max-w-7xl mx-auto px-4 py-12">
+    <div class="card p-8 bg-gradient-to-br from-slate-50 to-white">
+      <div class="flex flex-col md:flex-row gap-8 items-start">
+        <div class="flex-1">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-red-500 to-red-800 flex items-center justify-center shadow">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="white" opacity=".9"/></svg>
+            </div>
+            <h2 class="text-2xl font-extrabold text-slate-800">About redhawk-store</h2>
+          </div>
+          <p class="text-slate-600 text-sm leading-relaxed mb-4">
+            <strong>redhawk-store</strong> is a decentralized marketplace powered by <strong>Arc Network</strong> — Circle's stablecoin-native Layer 1 blockchain. It uses escrow smart contracts to protect every transaction: funds are locked on-chain until the buyer confirms delivery, then automatically released to the seller.
+          </p>
+          <p class="text-slate-600 text-sm leading-relaxed mb-4">
+            All payments are made exclusively in <strong>USDC</strong> (native on Arc) or <strong>EURC</strong> — no fiat, no credit cards, no custodians. The internal wallet is generated entirely client-side using BIP39 standards; private keys never leave your browser.
+          </p>
+          <div class="demo-disclaimer mt-2">
+            <i class="fas fa-flask" style="color:#d97706;flex-shrink:0"></i>
+            <span>This is an open-source <strong>testnet demo</strong>. No real funds are involved. Smart contracts run on Arc Testnet (Chain ID: 5042002).</span>
+          </div>
+        </div>
+        <div class="w-full md:w-64 space-y-3 shrink-0">
+          <div class="card p-4 text-sm">
+            <p class="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Trust Signals</p>
+            <ul class="space-y-2">
+              <li class="flex items-center gap-2 text-slate-700"><i class="fas fa-lock text-green-500 w-4"></i> Non-custodial wallet</li>
+              <li class="flex items-center gap-2 text-slate-700"><i class="fas fa-file-contract text-blue-500 w-4"></i> Open escrow contracts</li>
+              <li class="flex items-center gap-2 text-slate-700"><i class="fab fa-github text-slate-600 w-4"></i> <a href="https://github.com/julenosinger/redhawk-store" target="_blank" class="text-blue-600 hover:underline">Open-source on GitHub</a></li>
+              <li class="flex items-center gap-2 text-slate-700"><i class="fas fa-network-wired text-indigo-500 w-4"></i> Arc Testnet · Chain 5042002</li>
+              <li class="flex items-center gap-2 text-slate-700"><i class="fas fa-shield-alt text-red-500 w-4"></i> Zero key custody</li>
+            </ul>
+          </div>
+          <div class="flex gap-2">
+            <a href="/about" class="btn-secondary text-xs py-2 flex-1 justify-center"><i class="fas fa-info-circle"></i> Learn More</a>
+            <a href="/terms" class="btn-secondary text-xs py-2 flex-1 justify-center"><i class="fas fa-file-alt"></i> Terms</a>
+          </div>
+        </div>
       </div>
     </div>
   </section>
@@ -1368,8 +1498,18 @@ function checkoutPage() {
     }
     const cart=getCart();
     if(!cart.length){showToast('Cart is empty','error');return;}
+    // Transaction confirmation dialog
     const total=cart.reduce((s,i)=>s+i.price*i.qty,0);
     const token=document.querySelector('input[name="token"]:checked')?.value||'USDC';
+    // Show custom TX confirmation modal instead of browser confirm()
+    const confirmResult = await showTxConfirmModal({
+      action: 'Lock funds in escrow',
+      amount: total.toFixed(2),
+      token: token,
+      network: 'Arc Testnet (Chain ID: 5042002)',
+      note: 'This is a TESTNET transaction — no real funds are used.'
+    });
+    if(!confirmResult){showToast('Transaction cancelled','info');return;}
     const orderId='ORD-'+Date.now();
     // In production this would call the escrow smart contract
     // For now: simulate tx hash structure (real tx would come from wallet)
@@ -1457,6 +1597,11 @@ function walletPage() {
           <strong>New to Arc?</strong> Get free test USDC & EURC at
           <a href="https://faucet.circle.com" target="_blank" class="underline font-bold">faucet.circle.com</a>
         </div>
+        <!-- Wallet transparency notice -->
+        <div class="trust-box mt-4">
+          <i class="fas fa-shield-alt" style="color:#16a34a;flex-shrink:0;margin-top:1px"></i>
+          <span><strong>Your keys, your funds.</strong> redhawk-store never accesses your private keys. All transactions are signed locally in your wallet and broadcast directly to Arc Network. We have zero custody over your assets.</span>
+        </div>
       </div>
     </div>
 
@@ -1512,12 +1657,18 @@ function walletPage() {
       </div>
 
       <!-- Actions -->
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
         ${[['fas fa-paper-plane','Send','openSendModal()'],['fas fa-qrcode','Receive','openReceiveModal()'],['fas fa-external-link-alt','Explorer','openExplorer()'],['fas fa-history','Orders','window.location.href=\'/orders\'']].map(([icon,label,action])=>`
           <button onclick="${action}" class="card p-4 flex flex-col items-center gap-2 hover:border-red-300 hover:bg-red-50 transition-all">
             <div class="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center text-red-600"><i class="${icon}"></i></div>
             <p class="text-sm font-semibold text-slate-700">${label}</p>
           </button>`).join('')}
+      </div>
+
+      <!-- Wallet transparency notice (dashboard) -->
+      <div class="trust-box mb-6">
+        <i class="fas fa-shield-alt" style="color:#16a34a;flex-shrink:0;margin-top:1px"></i>
+        <span><strong>Your keys, your funds.</strong> redhawk-store never accesses your private keys. All transactions are signed locally in your wallet and broadcast directly to Arc Network. We have zero custody over your assets. <a href="/privacy" class="underline text-green-800 font-medium">Privacy Policy</a></span>
       </div>
 
       <!-- Real Tx History -->
@@ -2480,7 +2631,7 @@ function registerPage() {
           </div>
           <label class="flex items-center gap-2 cursor-pointer text-sm text-slate-600">
             <input type="checkbox" class="accent-red-600 w-4 h-4"/>
-            I agree to the <a href="#" class="text-red-600 hover:underline">Terms</a> and <a href="#" class="text-red-600 hover:underline">Privacy Policy</a>
+            I agree to the <a href="/terms" class="text-red-600 hover:underline">Terms of Service</a> and <a href="/privacy" class="text-red-600 hover:underline">Privacy Policy</a>
           </label>
           <button onclick="showToast('Account created! Now connect your wallet.','success')" class="btn-primary w-full justify-center py-3">
             <i class="fas fa-user-plus"></i> Create Account
@@ -2625,5 +2776,270 @@ function notificationsPage() {
   });
   function clearNotifs(){ showToast('All notifications marked as read','info'); document.querySelectorAll('.notification-item .rounded-full.bg-red-500').forEach(el=>el.remove()); }
   </script>
+  `)
+}
+
+// ─── PAGE: TERMS OF SERVICE ──────────────────────────────────────────────
+function termsPage() {
+  return shell('Terms of Service', `
+  <div class="max-w-3xl mx-auto px-4 py-12 legal-page">
+    <div class="card p-8">
+      <div class="flex items-center gap-3 mb-6">
+        <div class="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center text-red-600"><i class="fas fa-file-alt"></i></div>
+        <div>
+          <h1>Terms of Service</h1>
+          <p class="text-slate-400 text-sm">Last updated: January 2024 · redhawk-store</p>
+        </div>
+      </div>
+
+      <div class="demo-disclaimer mb-6">
+        <i class="fas fa-exclamation-circle" style="color:#d97706;flex-shrink:0"></i>
+        <span><strong>Important:</strong> redhawk-store is a testnet demonstration project. No real funds, products, or legal obligations are involved.</span>
+      </div>
+
+      <h2>1. Acceptance of Terms</h2>
+      <p>By accessing or using redhawk-store ("the Platform"), you agree to be bound by these Terms of Service. If you do not agree, please do not use the Platform.</p>
+
+      <h2>2. Nature of the Platform</h2>
+      <p>redhawk-store is an open-source, decentralized marketplace demonstration running on the Arc Network testnet. It is provided for educational and testing purposes only. No real monetary transactions occur. All products listed are illustrative and not real.</p>
+
+      <h2>3. Testnet Environment</h2>
+      <p>All transactions on redhawk-store are executed on Arc Testnet (Chain ID: 5042002). Testnet tokens (USDC, EURC) have no real monetary value. We are not responsible for any loss of testnet assets.</p>
+
+      <h2>4. Wallet & Private Keys</h2>
+      <p>redhawk-store operates as a non-custodial platform. We do not store, collect, or have access to your private keys, seed phrases, or wallet credentials. You are solely responsible for the security of your wallet. Private keys are generated and stored exclusively in your browser.</p>
+
+      <h2>5. No Financial Advice</h2>
+      <p>Nothing on this Platform constitutes financial, investment, legal, or tax advice. All content is for informational and demonstration purposes only.</p>
+
+      <h2>6. Prohibited Use</h2>
+      <ul>
+        <li>Using the Platform for any illegal purpose</li>
+        <li>Attempting to exploit or manipulate smart contracts</li>
+        <li>Impersonating any person or entity</li>
+        <li>Introducing malware or harmful code</li>
+      </ul>
+
+      <h2>7. Disclaimer of Warranties</h2>
+      <p>The Platform is provided "as is" without warranties of any kind. We do not guarantee uninterrupted access, accuracy of data, or fitness for a particular purpose.</p>
+
+      <h2>8. Limitation of Liability</h2>
+      <p>To the maximum extent permitted by law, redhawk-store and its contributors shall not be liable for any indirect, incidental, special, or consequential damages arising from your use of the Platform.</p>
+
+      <h2>9. Changes to Terms</h2>
+      <p>We reserve the right to modify these Terms at any time. Continued use of the Platform after changes constitutes acceptance of the new Terms.</p>
+
+      <h2>10. Contact</h2>
+      <p>For questions about these Terms, please open an issue on our <a href="https://github.com/julenosinger/redhawk-store" target="_blank" class="text-red-600 hover:underline">GitHub repository</a>.</p>
+
+      <div class="flex gap-3 mt-8">
+        <a href="/privacy" class="btn-secondary text-sm"><i class="fas fa-lock"></i> Privacy Policy</a>
+        <a href="/disclaimer" class="btn-secondary text-sm"><i class="fas fa-exclamation-triangle"></i> Disclaimer</a>
+        <a href="/" class="btn-primary text-sm"><i class="fas fa-home"></i> Back to Home</a>
+      </div>
+    </div>
+  </div>
+  `)
+}
+
+// ─── PAGE: PRIVACY POLICY ────────────────────────────────────────────────
+function privacyPage() {
+  return shell('Privacy Policy', `
+  <div class="max-w-3xl mx-auto px-4 py-12 legal-page">
+    <div class="card p-8">
+      <div class="flex items-center gap-3 mb-6">
+        <div class="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center text-red-600"><i class="fas fa-lock"></i></div>
+        <div>
+          <h1>Privacy Policy</h1>
+          <p class="text-slate-400 text-sm">Last updated: January 2024 · redhawk-store</p>
+        </div>
+      </div>
+
+      <div class="trust-box mb-6">
+        <i class="fas fa-shield-alt" style="color:#16a34a;flex-shrink:0"></i>
+        <span><strong>Privacy first:</strong> redhawk-store does not collect personal data. Your wallet keys never leave your browser. We have no backend user database.</span>
+      </div>
+
+      <h2>1. Information We Do NOT Collect</h2>
+      <ul>
+        <li>Private keys or seed phrases (these stay in your browser only)</li>
+        <li>Personal identification information (name, email, address)</li>
+        <li>Financial data or payment information</li>
+        <li>Browsing history or tracking cookies</li>
+      </ul>
+
+      <h2>2. Information Stored Locally</h2>
+      <p>The following data is stored exclusively in your browser's localStorage and never transmitted to our servers:</p>
+      <ul>
+        <li>Encrypted wallet data (address only — private key encrypted with your password)</li>
+        <li>Shopping cart contents</li>
+        <li>Order metadata (transaction hashes, escrow status)</li>
+        <li>UI preferences (e.g., banner dismissed state)</li>
+      </ul>
+
+      <h2>3. Blockchain Data</h2>
+      <p>When you connect a wallet or execute transactions, your public wallet address and transaction data are visible on the Arc Network blockchain. Blockchain data is public by nature and cannot be deleted.</p>
+
+      <h2>4. Third-Party Services</h2>
+      <p>redhawk-store may interact with the following third-party services:</p>
+      <ul>
+        <li><strong>Arc Network RPC</strong> (rpc.testnet.arc.network) — for blockchain queries</li>
+        <li><strong>Arc Explorer</strong> (testnet.arcscan.app) — public blockchain explorer</li>
+        <li><strong>Circle Faucet</strong> (faucet.circle.com) — for testnet tokens</li>
+        <li><strong>CDN resources</strong> (Tailwind, FontAwesome, ethers.js) — loaded from public CDNs</li>
+      </ul>
+
+      <h2>5. No Tracking</h2>
+      <p>We do not use analytics tools, advertising pixels, or any form of user tracking.</p>
+
+      <h2>6. Security</h2>
+      <p>Wallet private keys are encrypted client-side using your chosen password before being stored in localStorage. We recommend using a strong, unique password. Never share your seed phrase or private key with anyone.</p>
+
+      <h2>7. Children's Privacy</h2>
+      <p>redhawk-store is not directed at children under 13. We do not knowingly collect information from children.</p>
+
+      <h2>8. Contact</h2>
+      <p>For privacy-related questions, please open an issue on our <a href="https://github.com/julenosinger/redhawk-store" target="_blank" class="text-red-600 hover:underline">GitHub repository</a>.</p>
+
+      <div class="flex gap-3 mt-8">
+        <a href="/terms" class="btn-secondary text-sm"><i class="fas fa-file-alt"></i> Terms of Service</a>
+        <a href="/disclaimer" class="btn-secondary text-sm"><i class="fas fa-exclamation-triangle"></i> Disclaimer</a>
+        <a href="/" class="btn-primary text-sm"><i class="fas fa-home"></i> Back to Home</a>
+      </div>
+    </div>
+  </div>
+  `)
+}
+
+// ─── PAGE: DISCLAIMER ────────────────────────────────────────────────────
+function disclaimerPage() {
+  return shell('Disclaimer', `
+  <div class="max-w-3xl mx-auto px-4 py-12 legal-page">
+    <div class="card p-8">
+      <div class="flex items-center gap-3 mb-6">
+        <div class="w-10 h-10 rounded-xl bg-yellow-100 flex items-center justify-center text-yellow-600"><i class="fas fa-exclamation-triangle"></i></div>
+        <div>
+          <h1>Disclaimer</h1>
+          <p class="text-slate-400 text-sm">Last updated: January 2024 · redhawk-store</p>
+        </div>
+      </div>
+
+      <div class="demo-disclaimer mb-6">
+        <i class="fas fa-flask" style="color:#d97706;flex-shrink:0"></i>
+        <span><strong>Testnet only:</strong> This application runs exclusively on Arc Testnet. No real money, products, or services are involved.</span>
+      </div>
+
+      <h2>General Disclaimer</h2>
+      <p>redhawk-store is an open-source, experimental decentralized application (dApp) built for demonstration and educational purposes. It is not a licensed financial service, marketplace, exchange, or business entity.</p>
+
+      <h2>No Real Products</h2>
+      <p>All products displayed on redhawk-store are entirely illustrative. They do not represent real items available for purchase. No physical or digital goods are sold through this platform.</p>
+
+      <h2>No Real Funds</h2>
+      <p>All tokens used on redhawk-store (USDC, EURC) are testnet tokens with zero monetary value. They cannot be exchanged for real currency. Arc Testnet tokens are only for testing purposes.</p>
+
+      <h2>Smart Contract Risk</h2>
+      <p>Smart contracts used in redhawk-store are deployed on testnet and have not undergone formal security audits. Do not interact with them using mainnet wallets or real funds.</p>
+
+      <h2>No Financial Advice</h2>
+      <p>Nothing on this platform constitutes financial, investment, legal, or tax advice. The platform does not recommend any investment strategy or financial product.</p>
+
+      <h2>Wallet Security</h2>
+      <p>You are solely responsible for the security of your wallet and any credentials you use. redhawk-store does not have access to your private keys, but your browser-stored wallet is only as secure as your device and password.</p>
+
+      <h2>Availability</h2>
+      <p>This platform may be modified, suspended, or discontinued at any time without notice. It is provided on a best-effort basis with no uptime guarantees.</p>
+
+      <h2>External Links</h2>
+      <p>Links to external sites (Arc Docs, Circle Faucet, GitHub) are provided for convenience. We are not responsible for the content or privacy practices of third-party websites.</p>
+
+      <div class="flex gap-3 mt-8">
+        <a href="/terms" class="btn-secondary text-sm"><i class="fas fa-file-alt"></i> Terms of Service</a>
+        <a href="/privacy" class="btn-secondary text-sm"><i class="fas fa-lock"></i> Privacy Policy</a>
+        <a href="/" class="btn-primary text-sm"><i class="fas fa-home"></i> Back to Home</a>
+      </div>
+    </div>
+  </div>
+  `)
+}
+
+// ─── PAGE: ABOUT ─────────────────────────────────────────────────────────
+function aboutPage() {
+  return shell('About', `
+  <div class="max-w-3xl mx-auto px-4 py-12 legal-page">
+    <div class="card p-8">
+      <div class="flex items-center gap-3 mb-6">
+        <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-red-500 to-red-800 flex items-center justify-center shadow">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="white" opacity=".9"/></svg>
+        </div>
+        <div>
+          <h1>About redhawk-store</h1>
+          <p class="text-slate-400 text-sm">Decentralized marketplace on Arc Network</p>
+        </div>
+      </div>
+
+      <div class="demo-disclaimer mb-6">
+        <i class="fas fa-flask" style="color:#d97706;flex-shrink:0"></i>
+        <span><strong>Demo project:</strong> redhawk-store is an open-source testnet demonstration. Not a real commercial marketplace.</span>
+      </div>
+
+      <h2>What is redhawk-store?</h2>
+      <p>redhawk-store is a decentralized marketplace powered by <strong>Arc Network</strong> — Circle's stablecoin-native Layer 1 blockchain. It uses escrow smart contracts to protect every transaction: buyer funds are locked on-chain until delivery is confirmed, then automatically released to the seller.</p>
+
+      <h2>Technology Stack</h2>
+      <ul>
+        <li><strong>Blockchain:</strong> Arc Network Testnet (Chain ID: 5042002, EVM-compatible)</li>
+        <li><strong>Payments:</strong> USDC (native on Arc) and EURC (ERC-20)</li>
+        <li><strong>Escrow:</strong> FxEscrow smart contract (${ARC.contracts.FxEscrow})</li>
+        <li><strong>Wallet:</strong> Non-custodial, BIP39 seed phrase, client-side key generation (ethers.js)</li>
+        <li><strong>Frontend:</strong> Hono.js on Cloudflare Workers, Tailwind CSS</li>
+        <li><strong>Storage:</strong> IPFS for product images and shipment proofs</li>
+      </ul>
+
+      <h2>Security Principles</h2>
+      <ul>
+        <li>Private keys are generated client-side and never transmitted to any server</li>
+        <li>Wallet data stored locally in browser, encrypted with user password</li>
+        <li>Zero-custody architecture — we cannot access user funds</li>
+        <li>All transactions require explicit user confirmation before signing</li>
+        <li>No auto-connection or silent signature requests</li>
+      </ul>
+
+      <h2>Arc Network</h2>
+      <p>Arc is an Economic OS for the internet built by Circle, providing enterprise-grade infrastructure for on-chain payments. It uses USDC as its native gas token, offering sub-second finality and predictable fees.</p>
+
+      <h2>Open Source</h2>
+      <p>redhawk-store is open source. You can inspect, fork, and contribute to the codebase on GitHub:</p>
+      <p>
+        <a href="https://github.com/julenosinger/redhawk-store" target="_blank" class="inline-flex items-center gap-2 text-red-600 hover:underline font-medium">
+          <i class="fab fa-github"></i> github.com/julenosinger/redhawk-store
+        </a>
+      </p>
+
+      <h2>Smart Contracts (Arc Testnet)</h2>
+      <ul>
+        <li><strong>USDC:</strong> <code class="text-xs bg-slate-100 px-1 py-0.5 rounded font-mono">${ARC.contracts.USDC}</code></li>
+        <li><strong>EURC:</strong> <code class="text-xs bg-slate-100 px-1 py-0.5 rounded font-mono">${ARC.contracts.EURC}</code></li>
+        <li><strong>FxEscrow:</strong> <code class="text-xs bg-slate-100 px-1 py-0.5 rounded font-mono">${ARC.contracts.FxEscrow}</code></li>
+        <li><strong>Permit2:</strong> <code class="text-xs bg-slate-100 px-1 py-0.5 rounded font-mono">${ARC.contracts.Permit2}</code></li>
+      </ul>
+
+      <h2>Useful Links</h2>
+      <ul>
+        <li><a href="https://docs.arc.network" target="_blank" class="text-red-600 hover:underline">Arc Network Documentation</a></li>
+        <li><a href="https://testnet.arcscan.app" target="_blank" class="text-red-600 hover:underline">Arc Testnet Explorer</a></li>
+        <li><a href="https://faucet.circle.com" target="_blank" class="text-red-600 hover:underline">Circle Testnet Faucet (free USDC/EURC)</a></li>
+        <li><a href="https://arc.network" target="_blank" class="text-red-600 hover:underline">arc.network</a></li>
+      </ul>
+
+      <div class="flex flex-wrap gap-3 mt-8">
+        <a href="https://github.com/julenosinger/redhawk-store" target="_blank" class="btn-primary text-sm"><i class="fab fa-github"></i> GitHub</a>
+        <a href="/terms" class="btn-secondary text-sm"><i class="fas fa-file-alt"></i> Terms</a>
+        <a href="/privacy" class="btn-secondary text-sm"><i class="fas fa-lock"></i> Privacy</a>
+        <a href="/disclaimer" class="btn-secondary text-sm"><i class="fas fa-exclamation-triangle"></i> Disclaimer</a>
+        <a href="/" class="btn-secondary text-sm"><i class="fas fa-home"></i> Home</a>
+      </div>
+    </div>
+  </div>
   `)
 }
