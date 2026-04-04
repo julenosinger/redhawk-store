@@ -219,7 +219,6 @@ function shell(title: string, body: string, extraHead = '') {
     .empty-state i{font-size:48px;margin-bottom:16px;opacity:.3;display:block}
     .demo-disclaimer{background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 16px;font-size:12px;color:#92400e;display:flex;align-items:center;gap:8px;line-height:1.4}
     .trust-box{background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:12px 16px;font-size:12px;color:#14532d;display:flex;align-items:flex-start;gap:8px;line-height:1.5}
-    .dev-domain-bar{background:#fef9c3;border-bottom:1px solid #fde047;color:#713f12;font-size:12px;padding:6px 16px;text-align:center;display:none}
     .legal-page h1{font-size:1.75rem;font-weight:800;color:#1e293b;margin-bottom:.5rem}
     .legal-page h2{font-size:1.1rem;font-weight:700;color:#1e293b;margin:1.5rem 0 .5rem}
     .legal-page p{color:#475569;line-height:1.7;margin-bottom:.75rem;font-size:.9rem}
@@ -239,18 +238,6 @@ function shell(title: string, body: string, extraHead = '') {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
 </head>
 <body>
-  <!-- Dev Domain Bar -->
-  <div id="dev-domain-bar" class="dev-domain-bar">
-    <i class="fas fa-flask" style="margin-right:6px"></i>
-    You are accessing a <strong>development environment</strong>. This is not a production deployment.
-  </div>
-  <script>
-    (function(){
-      var h=location.hostname;
-      var isDevDomain=(h.includes('localhost')||h.includes('127.0.0.1')||h.includes('.sandbox.')||h.includes('.novita.')||h.includes('.e2b.')||h.includes('ngrok')||h.includes('preview'));
-      if(isDevDomain){var bar=document.getElementById('dev-domain-bar');if(bar)bar.style.display='block';}
-    })();
-  </script>
   <!-- Testnet Banner -->
   <div id="testnet-banner" role="alert" aria-label="Testnet notice">
     <span class="banner-text">⚠️ This app is running on <strong>TESTNET</strong>. All transactions are for testing purposes only.</span>
