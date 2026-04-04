@@ -44,7 +44,8 @@ app.post('/api/ai-search', async (c) => {
   const results = MOCK_PRODUCTS.filter(p =>
     p.name.toLowerCase().includes(q) ||
     p.category.toLowerCase().includes(q) ||
-    p.description.toLowerCase().includes(q)
+    p.description.toLowerCase().includes(q) ||
+    p.tags.some((t: string) => t.toLowerCase().includes(q))
   ).slice(0, 6)
   return c.json({
     results,
