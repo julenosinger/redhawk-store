@@ -2451,10 +2451,68 @@ function sellPage() {
             <input type="number" id="prod-stock" placeholder="1" min="1" class="input"/>
           </div>
         </div>
+        <!-- Image Upload -->
         <div>
-          <label class="block text-sm font-semibold text-slate-700 mb-1">Product Image URL (IPFS recommended)</label>
-          <input type="url" id="prod-img" placeholder="ipfs://... or https://..." class="input"/>
-          <p class="text-xs text-slate-400 mt-1">Use IPFS for decentralized storage. Files stored on-chain are immutable.</p>
+          <label class="block text-sm font-semibold text-slate-700 mb-2">Product Image</label>
+          <!-- Tabs -->
+          <div class="flex gap-1 mb-3 bg-slate-100 rounded-lg p-1 w-fit">
+            <button type="button" id="tab-upload" onclick="switchImgTab('upload')"
+              class="px-4 py-1.5 rounded-md text-xs font-semibold transition-all bg-white text-slate-800 shadow-sm">
+              <i class="fas fa-upload mr-1"></i> Upload Photo
+            </button>
+            <button type="button" id="tab-url" onclick="switchImgTab('url')"
+              class="px-4 py-1.5 rounded-md text-xs font-semibold transition-all text-slate-500 hover:text-slate-700">
+              <i class="fas fa-link mr-1"></i> URL / IPFS
+            </button>
+          </div>
+
+          <!-- Upload panel -->
+          <div id="img-panel-upload">
+            <div id="img-drop-zone"
+              class="border-2 border-dashed border-slate-300 rounded-xl p-6 text-center cursor-pointer hover:border-red-400 hover:bg-red-50/30 transition-all"
+              onclick="document.getElementById('img-file-input').click()"
+              ondragover="event.preventDefault();this.classList.add('border-red-400','bg-red-50')"
+              ondragleave="this.classList.remove('border-red-400','bg-red-50')"
+              ondrop="handleImgDrop(event)">
+              <div id="img-drop-content">
+                <i class="fas fa-cloud-upload-alt text-3xl text-slate-300 mb-2 block"></i>
+                <p class="text-sm font-medium text-slate-500">Drag & drop or <span class="text-red-600 font-semibold">click to browse</span></p>
+                <p class="text-xs text-slate-400 mt-1">JPG, PNG, GIF, WEBP — max 5 MB</p>
+              </div>
+            </div>
+            <input type="file" id="img-file-input" accept="image/jpeg,image/png,image/gif,image/webp"
+              class="hidden" onchange="handleImgFile(this)"/>
+            <!-- Preview -->
+            <div id="img-preview-wrap" class="hidden mt-3 flex items-center gap-4">
+              <img id="img-preview" src="" alt="Preview" class="w-20 h-20 rounded-xl object-cover border border-slate-200 shadow-sm"/>
+              <div class="flex-1 min-w-0">
+                <p id="img-file-name" class="text-xs font-semibold text-slate-700 truncate"></p>
+                <p id="img-file-size" class="text-xs text-slate-400"></p>
+                <button type="button" onclick="clearImgUpload()"
+                  class="mt-1 text-xs text-red-500 hover:text-red-700 flex items-center gap-1">
+                  <i class="fas fa-trash-alt text-xs"></i> Remove
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- URL / IPFS panel -->
+          <div id="img-panel-url" class="hidden">
+            <input type="url" id="prod-img" placeholder="https://... or ipfs://..." class="input mb-2"/>
+            <div id="img-url-preview-wrap" class="hidden mt-2 flex items-center gap-3">
+              <img id="img-url-preview" src="" alt="Preview"
+                class="w-16 h-16 rounded-xl object-cover border border-slate-200 shadow-sm"
+                onerror="this.parentElement.classList.add('hidden')"/>
+              <p class="text-xs text-slate-400">Preview</p>
+            </div>
+            <p class="text-xs text-slate-400 mt-1">
+              <i class="fas fa-info-circle mr-1"></i>
+              Use IPFS for decentralized, immutable storage. Paste an <code class="bg-slate-100 px-1 rounded">ipfs://</code> or <code class="bg-slate-100 px-1 rounded">https://</code> URL.
+            </p>
+          </div>
+
+          <!-- Hidden field that always holds the final image value sent to listProduct() -->
+          <input type="hidden" id="prod-img-final"/>
         </div>
         <div class="card p-4 bg-red-50 border-red-100">
           <h4 class="font-bold text-red-800 mb-1 flex items-center gap-2"><i class="fas fa-shield-alt"></i> Escrow Policy</h4>
@@ -2476,6 +2534,23 @@ function sellPage() {
     } else {
       wc.innerHTML='<div class="network-ok"><i class="fas fa-check-circle text-green-600"></i>Seller wallet: <span class="font-mono text-xs ml-1">'+w.address+'</span></div>';
     }
+    // URL field live preview
+    const urlInput = document.getElementById('prod-img');
+    if (urlInput) {
+      urlInput.addEventListener('input', function() {
+        const val = this.value.trim();
+        document.getElementById('prod-img-final').value = val;
+        const wrap = document.getElementById('img-url-preview-wrap');
+        const previewEl = document.getElementById('img-url-preview');
+        if (val && (val.startsWith('http') || val.startsWith('ipfs'))) {
+          const src = val.startsWith('ipfs://') ? val.replace('ipfs://', 'https://ipfs.io/ipfs/') : val;
+          previewEl.src = src;
+          wrap.classList.remove('hidden');
+        } else {
+          wrap.classList.add('hidden');
+        }
+      });
+    }
   });
   async function listProduct(){
     const w=getStoredWallet();
@@ -2486,13 +2561,72 @@ function sellPage() {
     const price=parseFloat(document.getElementById('prod-price').value);
     const token=document.getElementById('prod-token').value;
     const stock=parseInt(document.getElementById('prod-stock').value);
-    const img=document.getElementById('prod-img').value.trim();
+    const img=document.getElementById('prod-img-final').value.trim();
     if(!name||!cat||!desc||!price||!stock){showToast('Please fill all required fields','error');return;}
     if(price<=0){showToast('Price must be greater than 0','error');return;}
-    // In production: sign and submit to product registry smart contract on Arc
     showToast('Listing submitted! In production, this would be signed and submitted to Arc Network.','info');
     setTimeout(()=>{showToast('Product listing requires smart contract deployment (coming soon)','warning');},2000);
   }
+
+  // ── Image tab switcher ──────────────────────────────────────
+  function switchImgTab(tab) {
+    const isUpload = tab === 'upload';
+    document.getElementById('img-panel-upload').classList.toggle('hidden', !isUpload);
+    document.getElementById('img-panel-url').classList.toggle('hidden', isUpload);
+    const tu = document.getElementById('tab-upload');
+    const tl = document.getElementById('tab-url');
+    if (isUpload) {
+      tu.className = 'px-4 py-1.5 rounded-md text-xs font-semibold transition-all bg-white text-slate-800 shadow-sm';
+      tl.className = 'px-4 py-1.5 rounded-md text-xs font-semibold transition-all text-slate-500 hover:text-slate-700';
+    } else {
+      tl.className = 'px-4 py-1.5 rounded-md text-xs font-semibold transition-all bg-white text-slate-800 shadow-sm';
+      tu.className = 'px-4 py-1.5 rounded-md text-xs font-semibold transition-all text-slate-500 hover:text-slate-700';
+    }
+    // clear the hidden field when switching tabs
+    document.getElementById('prod-img-final').value = '';
+  }
+
+  // ── File upload handler ─────────────────────────────────────
+  function handleImgFile(input) {
+    const file = input.files[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { showToast('Image must be smaller than 5 MB', 'error'); input.value=''; return; }
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      const dataUrl = e.target.result;
+      document.getElementById('img-preview').src = dataUrl;
+      document.getElementById('img-file-name').textContent = file.name;
+      document.getElementById('img-file-size').textContent = (file.size/1024).toFixed(1) + ' KB';
+      document.getElementById('img-preview-wrap').classList.remove('hidden');
+      document.getElementById('img-drop-content').classList.add('hidden');
+      document.getElementById('prod-img-final').value = dataUrl;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // ── Drag & drop ─────────────────────────────────────────────
+  function handleImgDrop(e) {
+    e.preventDefault();
+    document.getElementById('img-drop-zone').classList.remove('border-red-400','bg-red-50');
+    const file = e.dataTransfer.files[0];
+    if (!file || !file.type.startsWith('image/')) { showToast('Please drop an image file', 'error'); return; }
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    const input = document.getElementById('img-file-input');
+    input.files = dt.files;
+    handleImgFile(input);
+  }
+
+  // ── Clear upload ────────────────────────────────────────────
+  function clearImgUpload() {
+    document.getElementById('img-file-input').value = '';
+    document.getElementById('img-preview').src = '';
+    document.getElementById('img-preview-wrap').classList.add('hidden');
+    document.getElementById('img-drop-content').classList.remove('hidden');
+    document.getElementById('prod-img-final').value = '';
+  }
+
+  // ── URL field live preview is initialized inside DOMContentLoaded above ──
   </script>
   `)
 }
