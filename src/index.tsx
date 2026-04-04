@@ -406,24 +406,122 @@ function showToast(msg, type='info') {
   setTimeout(() => { t.className = 'toast ' + type }, 4000);
 }
 
-// ─ Cart (localStorage) ─────────────────────────────────────────
-function getCart() { try { return JSON.parse(localStorage.getItem('rh_cart') || '[]') } catch { return [] } }
-function saveCart(c) { localStorage.setItem('rh_cart', JSON.stringify(c)) }
-function addToCart(product) {
-  const cart = getCart();
-  const idx = cart.findIndex(i => i.id === product.id);
-  if (idx >= 0) cart[idx].qty++;
-  else cart.push({...product, qty:1});
-  saveCart(cart);
-  updateCartBadge();
-  showToast('Added to cart!', 'success');
-}
-function updateCartBadge() {
-  const cart = getCart();
-  const total = cart.reduce((s,i) => s+i.qty, 0);
-  const el = document.getElementById('cart-badge');
-  if (el) { el.textContent = total; el.style.display = total > 0 ? 'flex' : 'none'; }
-}
+// ─────────────────────────────────────────────────────────────────
+//  CartStore  — single source of truth, key = "cart"
+//  Structure per item: { id, title, price, currency, quantity, image }
+// ─────────────────────────────────────────────────────────────────
+const CART_KEY = 'cart';
+
+const CartStore = {
+  /** Read cart from localStorage — always fresh */
+  getCart() {
+    try { return JSON.parse(localStorage.getItem(CART_KEY) || '[]'); }
+    catch { return []; }
+  },
+
+  /** Persist cart to localStorage and sync all UI */
+  _save(cart) {
+    localStorage.setItem(CART_KEY, JSON.stringify(cart));
+    CartStore._syncBadge(cart);
+  },
+
+  /** Add or increment an item.
+   *  Accepts any shape: normalises to { id, title, price, currency, quantity, image } */
+  addToCart(product) {
+    const cart = CartStore.getCart();
+    // Normalise field names (support both old and new shapes)
+    const id       = product.id;
+    const title    = product.title || product.name || 'Product';
+    const price    = parseFloat(product.price) || 0;
+    const currency = product.currency || product.token || 'USDC';
+    const image    = product.image || '';
+    const idx      = cart.findIndex(i => i.id === id);
+    if (idx >= 0) {
+      cart[idx].quantity = (cart[idx].quantity || 1) + 1;
+    } else {
+      cart.push({ id, title, price, currency, quantity: 1, image });
+    }
+    CartStore._save(cart);
+    showToast(title + ' added to cart!', 'success');
+    return cart;
+  },
+
+  /** Remove a single item by id */
+  removeFromCart(productId) {
+    const cart = CartStore.getCart().filter(i => i.id !== productId);
+    CartStore._save(cart);
+    return cart;
+  },
+
+  /** Change quantity (+1 or -1). Removes item if qty would drop below 1. */
+  changeQty(productId, delta) {
+    const cart = CartStore.getCart();
+    const idx  = cart.findIndex(i => i.id === productId);
+    if (idx >= 0) {
+      cart[idx].quantity = Math.max(1, (cart[idx].quantity || 1) + delta);
+      CartStore._save(cart);
+    }
+    return CartStore.getCart();
+  },
+
+  /** Empty the cart */
+  clearCart() {
+    CartStore._save([]);
+    return [];
+  },
+
+  /** Update the navbar badge */
+  _syncBadge(cart) {
+    const total = (cart || CartStore.getCart()).reduce((s, i) => s + (i.quantity || i.qty || 1), 0);
+    const el = document.getElementById('cart-badge');
+    if (el) { el.textContent = total; el.style.display = total > 0 ? 'flex' : 'none'; }
+  },
+
+  /** Migrate items saved under old keys to the canonical key */
+  _migrate() {
+    // Migrate 'rh_cart' (old global key)
+    const old1 = localStorage.getItem('rh_cart');
+    if (old1 && !localStorage.getItem(CART_KEY)) {
+      try {
+        const items = JSON.parse(old1).map(i => ({
+          id: i.id, title: i.title || i.name || 'Product',
+          price: parseFloat(i.price) || 0,
+          currency: i.currency || i.token || 'USDC',
+          quantity: i.qty || i.quantity || 1, image: i.image || ''
+        }));
+        localStorage.setItem(CART_KEY, JSON.stringify(items));
+      } catch {}
+    }
+    // Migrate 'rhawk_cart' (product-page key)
+    const old2 = localStorage.getItem('rhawk_cart');
+    if (old2) {
+      try {
+        const existing = CartStore.getCart();
+        const items    = JSON.parse(old2);
+        items.forEach(i => {
+          const id = i.id;
+          if (!existing.find(e => e.id === id)) {
+            existing.push({
+              id, title: i.title || i.name || 'Product',
+              price: parseFloat(i.price) || 0,
+              currency: i.currency || i.token || 'USDC',
+              quantity: i.qty || i.quantity || 1, image: i.image || ''
+            });
+          }
+        });
+        localStorage.setItem(CART_KEY, JSON.stringify(existing));
+        localStorage.removeItem('rhawk_cart');
+      } catch {}
+    }
+    localStorage.removeItem('rh_cart');
+  }
+};
+
+// ── Backward-compat shims (keep old call-sites working) ────────────
+function getCart()          { return CartStore.getCart(); }
+function saveCart(c)        { CartStore._save(c); }
+function addToCart(product) { CartStore.addToCart(product); }
+function updateCartBadge()  { CartStore._syncBadge(); }
 
 // ─ Wallet state ────────────────────────────────────────────────
 let _walletAddress = null;
@@ -661,7 +759,11 @@ async function checkNetworkStatus(containerEl) {
 
 // ─ Init on every page ─────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  // 1. Migrate any items saved under old localStorage keys → canonical 'cart'
+  CartStore._migrate();
+  // 2. Hydrate cart badge
   updateCartBadge();
+  // 3. Wallet listeners
   setupWalletListeners();
 
   const stored = getStoredWallet();
@@ -1493,13 +1595,7 @@ function productPage(p: any) {
 
   <script>
   function addToCartOnly(id, name, price, token, image) {
-    const cart = JSON.parse(localStorage.getItem('rhawk_cart')||'[]');
-    const idx  = cart.findIndex(x => x.id === id);
-    if (idx >= 0) { cart[idx].qty = (cart[idx].qty||1) + 1; }
-    else          { cart.push({id, name, price: parseFloat(price), token, image, qty: 1, sellerAddress:'${seller}'}); }
-    localStorage.setItem('rhawk_cart', JSON.stringify(cart));
-    updateCartBadge();
-    showToast(name + ' added to cart!', 'success');
+    CartStore.addToCart({ id, title: name, price: parseFloat(price), currency: token, image });
   }
   function addToCartAndBuy(id, name, price, token, image) {
     addToCartOnly(id, name, price, token, image);
@@ -1552,37 +1648,76 @@ function cartPage() {
     </div>
   </div>
   <script>
+  // ── Cart page helpers — all read/write via CartStore ──────────────
   function renderCart() {
-    const cart = getCart();
+    const cart      = CartStore.getCart();
     const container = document.getElementById('cart-items');
-    if (!cart.length) { document.getElementById('empty-cart-msg').style.display='block'; return; }
-    document.getElementById('empty-cart-msg').style.display='none';
-    let total=0, gas=0;
+    const emptyMsg  = document.getElementById('empty-cart-msg');
+
+    if (!cart.length) {
+      emptyMsg.style.display  = 'block';
+      container.innerHTML     = '';
+      // zero totals
+      ['subtotal','platform-fee','total-price'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = '0.00 USDC';
+      });
+      const gasEl = document.getElementById('gas-fee');
+      if (gasEl) gasEl.textContent = '~0.00 USDC';
+      return;
+    }
+    emptyMsg.style.display = 'none';
+    let subtotal = 0, gas = 0;
     container.innerHTML = cart.map(item => {
-      total += item.price*item.qty; gas += 0.01;
+      const qty    = item.quantity || 1;
+      const price  = parseFloat(item.price) || 0;
+      const cur    = item.currency || item.token || 'USDC';
+      const title  = (item.title  || item.name || 'Product').replace(/</g,'&lt;');
+      subtotal    += price * qty;
+      gas         += 0.01;
       return '<div class="card p-4 mb-3 flex items-center gap-4">'
-        + (item.image ? '<img src="' + item.image + '" class="w-16 h-16 rounded-xl object-cover"/>'
-                      : '<div class="w-16 h-16 rounded-xl bg-slate-100 flex items-center justify-center text-slate-300"><i class="fas fa-box"></i></div>')
-        + '<div class="flex-1 min-w-0"><p class="font-semibold text-slate-800 text-sm truncate">' + item.name + '</p>'
-        + '<p class="text-red-600 font-bold">' + item.price + ' ' + (item.token||'USDC') + '</p></div>'
-        + '<div class="flex items-center gap-2">'
-        + '<button onclick="changeQty(\'' + item.id + '\',-1)" class="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center hover:bg-red-100 font-bold">-</button>'
-        + '<span class="font-bold w-6 text-center">' + item.qty + '</span>'
-        + '<button onclick="changeQty(\'' + item.id + '\',1)" class="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center hover:bg-red-100 font-bold">+</button>'
+        + (item.image
+            ? '<img src="' + item.image + '" class="w-16 h-16 rounded-xl object-cover flex-shrink-0"'
+              + ' onerror="this.style.display=\'none\'">'
+            : '<div class="w-16 h-16 rounded-xl bg-slate-100 flex items-center justify-center text-slate-300 flex-shrink-0"><i class="fas fa-box"></i></div>')
+        + '<div class="flex-1 min-w-0">'
+        + '<p class="font-semibold text-slate-800 text-sm truncate">' + title + '</p>'
+        + '<p class="text-red-600 font-bold text-sm">' + price.toFixed(2) + ' ' + cur + '</p>'
+        + '<p class="text-xs text-slate-400">Unit price · Qty: ' + qty + '</p>'
         + '</div>'
-        + '<button onclick="removeFromCart(\'' + item.id + '\')" class="text-red-400 hover:text-red-600 ml-2"><i class="fas fa-trash"></i></button>'
+        + '<div class="flex items-center gap-2 flex-shrink-0">'
+        + '<button onclick="cartChangeQty(\'' + item.id + '\',-1)" '
+        + 'class="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center hover:bg-red-100 font-bold text-sm">−</button>'
+        + '<span class="font-bold w-6 text-center text-sm">' + qty + '</span>'
+        + '<button onclick="cartChangeQty(\'' + item.id + '\',1)" '
+        + 'class="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center hover:bg-red-100 font-bold text-sm">+</button>'
+        + '</div>'
+        + '<button onclick="cartRemove(\'' + item.id + '\')" '
+        + 'class="text-red-400 hover:text-red-600 ml-2 flex-shrink-0"><i class="fas fa-trash text-sm"></i></button>'
         + '</div>';
     }).join('');
-    const fee = total*0.015;
-    document.getElementById('subtotal').textContent = total.toFixed(2)+' USDC';
-    document.getElementById('platform-fee').textContent = fee.toFixed(4)+' USDC';
-    document.getElementById('gas-fee').textContent = '~'+gas.toFixed(2)+' USDC';
-    document.getElementById('total-price').textContent = (total+fee).toFixed(2)+' USDC';
+
+    const fee = subtotal * 0.015;
+    const tok = cart[0]?.currency || cart[0]?.token || 'USDC';
+    document.getElementById('subtotal').textContent      = subtotal.toFixed(2) + ' ' + tok;
+    document.getElementById('platform-fee').textContent  = fee.toFixed(4)      + ' ' + tok;
+    document.getElementById('gas-fee').textContent       = '~' + gas.toFixed(2) + ' USDC';
+    document.getElementById('total-price').textContent   = (subtotal + fee).toFixed(2) + ' ' + tok;
+
     const w = getStoredWallet();
-    if (!w) document.getElementById('wallet-required-msg').classList.remove('hidden');
+    if (!w) document.getElementById('wallet-required-msg')?.classList.remove('hidden');
   }
-  function changeQty(id,d){ const c=getCart(); const i=c.findIndex(x=>x.id===id); if(i>=0){c[i].qty=Math.max(1,c[i].qty+d); saveCart(c); updateCartBadge(); renderCart(); } }
-  function removeFromCart(id){ saveCart(getCart().filter(x=>x.id!==id)); updateCartBadge(); renderCart(); showToast('Item removed','info'); }
+
+  function cartChangeQty(id, delta) {
+    CartStore.changeQty(id, delta);
+    renderCart();
+  }
+  function cartRemove(id) {
+    CartStore.removeFromCart(id);
+    renderCart();
+    showToast('Item removed from cart', 'info');
+  }
+
   document.addEventListener('DOMContentLoaded', renderCart);
   </script>
   `)
@@ -2713,12 +2848,14 @@ function sellPage() {
         </div>
         <!-- Image Upload -->
         <div>
-          <label class="block text-sm font-semibold text-slate-700 mb-2">Product Image</label>
+          <label class="block text-sm font-semibold text-slate-700 mb-2">
+            Product Image <span class="font-normal text-slate-400">(optional)</span>
+          </label>
           <!-- Tabs -->
-          <div class="flex gap-1 mb-3 bg-slate-100 rounded-lg p-1 w-fit">
+          <div class="flex gap-1 mb-3 bg-slate-100 rounded-lg p-1 w-fit flex-wrap">
             <button type="button" id="tab-upload" onclick="switchImgTab('upload')"
               class="px-4 py-1.5 rounded-md text-xs font-semibold transition-all bg-white text-slate-800 shadow-sm">
-              <i class="fas fa-upload mr-1"></i> Upload Photo
+              <i class="fas fa-camera mr-1"></i> Carregar Foto
             </button>
             <button type="button" id="tab-url" onclick="switchImgTab('url')"
               class="px-4 py-1.5 rounded-md text-xs font-semibold transition-all text-slate-500 hover:text-slate-700">
@@ -2728,6 +2865,7 @@ function sellPage() {
 
           <!-- Upload panel -->
           <div id="img-panel-upload">
+            <!-- Drop zone -->
             <div id="img-drop-zone"
               class="border-2 border-dashed border-slate-300 rounded-xl p-6 text-center cursor-pointer hover:border-red-400 hover:bg-red-50/30 transition-all"
               onclick="document.getElementById('img-file-input').click()"
@@ -2735,39 +2873,64 @@ function sellPage() {
               ondragleave="this.classList.remove('border-red-400','bg-red-50')"
               ondrop="handleImgDrop(event)">
               <div id="img-drop-content">
-                <i class="fas fa-cloud-upload-alt text-3xl text-slate-300 mb-2 block"></i>
-                <p class="text-sm font-medium text-slate-500">Drag & drop or <span class="text-red-600 font-semibold">click to browse</span></p>
-                <p class="text-xs text-slate-400 mt-1">JPG, PNG, GIF, WEBP — max 5 MB</p>
+                <i class="fas fa-camera text-3xl text-slate-300 mb-2 block"></i>
+                <p class="text-sm font-medium text-slate-500">Arraste a foto ou <span class="text-red-600 font-semibold">clique para escolher</span></p>
+                <p class="text-xs text-slate-400 mt-1">JPG, PNG, GIF, WEBP — máx 10 MB · Comprimida automaticamente</p>
               </div>
             </div>
             <input type="file" id="img-file-input" accept="image/jpeg,image/png,image/gif,image/webp"
               class="hidden" onchange="handleImgFile(this)"/>
-            <!-- Preview -->
-            <div id="img-preview-wrap" class="hidden mt-3 flex items-center gap-4">
-              <img id="img-preview" src="" alt="Preview" class="w-20 h-20 rounded-xl object-cover border border-slate-200 shadow-sm"/>
-              <div class="flex-1 min-w-0">
-                <p id="img-file-name" class="text-xs font-semibold text-slate-700 truncate"></p>
-                <p id="img-file-size" class="text-xs text-slate-400"></p>
-                <button type="button" onclick="clearImgUpload()"
-                  class="mt-1 text-xs text-red-500 hover:text-red-700 flex items-center gap-1">
-                  <i class="fas fa-trash-alt text-xs"></i> Remove
-                </button>
+
+            <!-- Upload progress bar (hidden by default) -->
+            <div id="img-upload-progress" class="hidden mt-3">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="loading-spinner inline-block"></span>
+                <span id="img-upload-status" class="text-xs text-slate-500">Processando imagem…</span>
+              </div>
+              <div class="w-full bg-slate-200 rounded-full h-1.5">
+                <div id="img-upload-bar" class="bg-red-500 h-1.5 rounded-full transition-all duration-300" style="width:0%"></div>
+              </div>
+            </div>
+
+            <!-- Preview after upload -->
+            <div id="img-preview-wrap" class="hidden mt-3">
+              <div class="flex items-start gap-4 p-3 bg-slate-50 rounded-xl border border-slate-200">
+                <img id="img-preview" src="" alt="Preview" class="w-24 h-24 rounded-xl object-cover border border-slate-200 shadow-sm flex-shrink-0"/>
+                <div class="flex-1 min-w-0">
+                  <p id="img-file-name" class="text-xs font-semibold text-slate-700 truncate mb-0.5"></p>
+                  <p id="img-file-size" class="text-xs text-slate-400 mb-0.5"></p>
+                  <p id="img-compressed-size" class="text-xs text-green-600 mb-2"></p>
+                  <div class="flex gap-2 flex-wrap">
+                    <button type="button" onclick="document.getElementById('img-file-input').click()"
+                      class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors">
+                      <i class="fas fa-sync-alt text-xs"></i> Trocar foto
+                    </button>
+                    <button type="button" onclick="clearImgUpload()"
+                      class="text-xs bg-red-50 hover:bg-red-100 text-red-500 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors">
+                      <i class="fas fa-trash-alt text-xs"></i> Remover
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
 
           <!-- URL / IPFS panel -->
           <div id="img-panel-url" class="hidden">
-            <input type="url" id="prod-img" placeholder="https://... or ipfs://..." class="input mb-2"/>
+            <input type="url" id="prod-img" placeholder="https://... ou ipfs://..." class="input mb-2"/>
             <div id="img-url-preview-wrap" class="hidden mt-2 flex items-center gap-3">
               <img id="img-url-preview" src="" alt="Preview"
-                class="w-16 h-16 rounded-xl object-cover border border-slate-200 shadow-sm"
+                class="w-20 h-20 rounded-xl object-cover border border-slate-200 shadow-sm"
                 onerror="this.parentElement.classList.add('hidden')"/>
-              <p class="text-xs text-slate-400">Preview</p>
+              <div>
+                <p class="text-xs font-semibold text-slate-600">Pré-visualização</p>
+                <p class="text-xs text-slate-400 mt-0.5">A imagem carregará no produto</p>
+              </div>
             </div>
-            <p class="text-xs text-slate-400 mt-1">
-              <i class="fas fa-info-circle mr-1"></i>
-              Use IPFS for decentralized, immutable storage. Paste an <code class="bg-slate-100 px-1 rounded">ipfs://</code> or <code class="bg-slate-100 px-1 rounded">https://</code> URL.
+            <p class="text-xs text-slate-400 mt-2 leading-relaxed">
+              <i class="fas fa-info-circle mr-1 text-blue-400"></i>
+              Cole uma URL de imagem (<code class="bg-slate-100 px-1 rounded">https://</code>) ou um link IPFS
+              (<code class="bg-slate-100 px-1 rounded">ipfs://</code>) para armazenamento descentralizado.
             </p>
           </div>
 
@@ -2775,11 +2938,11 @@ function sellPage() {
           <input type="hidden" id="prod-img-final"/>
         </div>
         <div class="card p-4 bg-red-50 border-red-100">
-          <h4 class="font-bold text-red-800 mb-1 flex items-center gap-2"><i class="fas fa-shield-alt"></i> Escrow Policy</h4>
-          <p class="text-sm text-red-700">All sales are escrow-protected via Arc Network smart contract. Funds release only on buyer delivery confirmation or after 48h.</p>
+          <h4 class="font-bold text-red-800 mb-1 flex items-center gap-2"><i class="fas fa-shield-alt"></i> Política de Escrow</h4>
+          <p class="text-sm text-red-700">Todas as vendas são protegidas por escrow via contrato inteligente na Arc Network. Os fundos só são liberados após confirmação de entrega pelo comprador.</p>
         </div>
         <button onclick="listProduct()" class="btn-primary w-full justify-center py-3 text-base">
-          <i class="fas fa-upload"></i> List Product on Arc Network
+          <i class="fas fa-tag mr-2"></i> Publicar Produto
         </button>
       </div>
     </div>
@@ -2790,9 +2953,9 @@ function sellPage() {
     const w=getStoredWallet();
     const wc=document.getElementById('sell-wallet-check');
     if(!w){
-      wc.innerHTML='<div class="network-warning"><i class="fas fa-exclamation-triangle"></i>You must connect a wallet to list products. <a href="/wallet" class="underline font-bold ml-1">Connect Wallet →</a></div>';
+      wc.innerHTML='<div class="network-warning"><i class="fas fa-exclamation-triangle"></i>Você precisa conectar uma carteira para listar produtos. <a href="/wallet" class="underline font-bold ml-1">Conectar Carteira →</a></div>';
     } else {
-      wc.innerHTML='<div class="network-ok"><i class="fas fa-check-circle text-green-600"></i>Seller wallet: <span class="font-mono text-xs ml-1">'+w.address+'</span></div>';
+      wc.innerHTML='<div class="network-ok"><i class="fas fa-check-circle text-green-600"></i>Vendedor: <span class="font-mono text-xs ml-1">'+w.address+'</span></div>';
     }
     // URL field live preview
     const urlInput = document.getElementById('prod-img');
@@ -2814,7 +2977,7 @@ function sellPage() {
   });
   async function listProduct(){
     const w=getStoredWallet();
-    if(!w){showToast('Connect wallet first','error');window.location.href='/wallet';return;}
+    if(!w){showToast('Conecte uma carteira primeiro','error');window.location.href='/wallet';return;}
     const name=document.getElementById('prod-name').value.trim();
     const cat=document.getElementById('prod-cat').value;
     const desc=document.getElementById('prod-desc').value.trim();
@@ -2822,12 +2985,12 @@ function sellPage() {
     const token=document.getElementById('prod-token').value;
     const stockVal=parseInt(document.getElementById('prod-stock').value)||1;
     const img=document.getElementById('prod-img-final').value.trim();
-    if(!name||!cat||!desc||!priceVal){showToast('Please fill all required fields','error');return;}
-    if(priceVal<=0){showToast('Price must be greater than 0','error');return;}
+    if(!name||!cat||!desc||!priceVal){showToast('Preencha todos os campos obrigatórios','error');return;}
+    if(priceVal<=0){showToast('O preço deve ser maior que zero','error');return;}
 
-    // Disable button to prevent double submit
+    // Desabilitar botão para evitar duplo envio
     const btn=document.querySelector('button[onclick="listProduct()"]');
-    if(btn){btn.disabled=true;btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Saving…';}
+    if(btn){btn.disabled=true;btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Publicando…';}
 
     try {
       const res=await fetch('/api/products',{
@@ -2841,16 +3004,16 @@ function sellPage() {
       });
       const data=await res.json();
       if(!res.ok||data.error){
-        showToast(data.error||'Failed to create product','error');
-        if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-upload"></i> List Product';}
+        showToast(data.error||'Erro ao publicar produto','error');
+        if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-tag mr-2"></i> Publicar Produto';}
         return;
       }
-      showToast('Product listed successfully!','success');
-      // Redirect to marketplace after short delay so user sees the toast
+      showToast('Produto publicado com sucesso!','success');
+      // Redirecionar para o marketplace após breve delay
       setTimeout(()=>{ window.location.href='/marketplace'; },1200);
     } catch(err){
-      showToast('Network error. Please try again.','error');
-      if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-upload"></i> List Product';}
+      showToast('Erro de rede. Tente novamente.','error');
+      if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-tag mr-2"></i> Publicar Produto';}
     }
   }
 
@@ -2861,33 +3024,96 @@ function sellPage() {
     document.getElementById('img-panel-url').classList.toggle('hidden', isUpload);
     const tu = document.getElementById('tab-upload');
     const tl = document.getElementById('tab-url');
-    if (isUpload) {
-      tu.className = 'px-4 py-1.5 rounded-md text-xs font-semibold transition-all bg-white text-slate-800 shadow-sm';
-      tl.className = 'px-4 py-1.5 rounded-md text-xs font-semibold transition-all text-slate-500 hover:text-slate-700';
-    } else {
-      tl.className = 'px-4 py-1.5 rounded-md text-xs font-semibold transition-all bg-white text-slate-800 shadow-sm';
-      tu.className = 'px-4 py-1.5 rounded-md text-xs font-semibold transition-all text-slate-500 hover:text-slate-700';
-    }
-    // clear the hidden field when switching tabs
+    const activeClass  = 'px-4 py-1.5 rounded-md text-xs font-semibold transition-all bg-white text-slate-800 shadow-sm';
+    const inactiveClass= 'px-4 py-1.5 rounded-md text-xs font-semibold transition-all text-slate-500 hover:text-slate-700';
+    tu.className = isUpload ? activeClass : inactiveClass;
+    tl.className = isUpload ? inactiveClass : activeClass;
+    // limpa o campo oculto ao trocar de aba
     document.getElementById('prod-img-final').value = '';
   }
 
-  // ── File upload handler ─────────────────────────────────────
-  function handleImgFile(input) {
+  // ── Comprime imagem via Canvas e retorna dataURL ─────────────
+  function compressImage(file, maxW, maxH, quality) {
+    return new Promise(function(resolve) {
+      const reader = new FileReader();
+      reader.onload = function(ev) {
+        const img = new Image();
+        img.onload = function() {
+          let w = img.width, h = img.height;
+          if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+          if (h > maxH) { w = Math.round(w * maxH / h); h = maxH; }
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.src = ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // ── File upload handler (com compressão automática) ─────────
+  async function handleImgFile(input) {
     const file = input.files[0];
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) { showToast('Image must be smaller than 5 MB', 'error'); input.value=''; return; }
-    const reader = new FileReader();
-    reader.onload = function(e) {
-      const dataUrl = e.target.result;
+    if (!file.type.startsWith('image/')) { showToast('Por favor selecione uma imagem válida', 'error'); input.value=''; return; }
+    const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+    if (file.size > MAX_BYTES) { showToast('A imagem deve ter no máximo 10 MB', 'error'); input.value=''; return; }
+
+    // Mostrar barra de progresso
+    const progressWrap = document.getElementById('img-upload-progress');
+    const progressBar  = document.getElementById('img-upload-bar');
+    const statusText   = document.getElementById('img-upload-status');
+    const previewWrap  = document.getElementById('img-preview-wrap');
+    const dropContent  = document.getElementById('img-drop-content');
+
+    progressWrap.classList.remove('hidden');
+    previewWrap.classList.add('hidden');
+    dropContent.classList.add('hidden');
+    progressBar.style.width = '20%';
+    statusText.textContent  = 'Lendo arquivo…';
+
+    try {
+      progressBar.style.width = '50%';
+      statusText.textContent  = 'Comprimindo imagem…';
+
+      // Comprimir: máx 1200×1200px, qualidade 0.82 → resulta em ~100-300 KB
+      let dataUrl = await compressImage(file, 1200, 1200, 0.82);
+
+      // Se ainda muito grande (> 800 KB base64), comprimir mais
+      if (dataUrl.length > 800 * 1024) {
+        statusText.textContent = 'Reduzindo qualidade…';
+        progressBar.style.width = '70%';
+        dataUrl = await compressImage(file, 900, 900, 0.65);
+      }
+
+      progressBar.style.width = '90%';
+      statusText.textContent  = 'Finalizando…';
+
+      // Calcular tamanho comprimido
+      const compressedBytes = Math.round(dataUrl.length * 0.75); // base64 → bytes aprox
+      const originalKB      = (file.size / 1024).toFixed(1);
+      const compressedKB    = (compressedBytes / 1024).toFixed(1);
+
+      // Mostrar preview
       document.getElementById('img-preview').src = dataUrl;
-      document.getElementById('img-file-name').textContent = file.name;
-      document.getElementById('img-file-size').textContent = (file.size/1024).toFixed(1) + ' KB';
-      document.getElementById('img-preview-wrap').classList.remove('hidden');
-      document.getElementById('img-drop-content').classList.add('hidden');
+      document.getElementById('img-file-name').textContent  = file.name;
+      document.getElementById('img-file-size').textContent  = 'Original: ' + originalKB + ' KB';
+      document.getElementById('img-compressed-size').textContent = '✓ Comprimida: ' + compressedKB + ' KB';
+      previewWrap.classList.remove('hidden');
       document.getElementById('prod-img-final').value = dataUrl;
-    };
-    reader.readAsDataURL(file);
+
+      progressBar.style.width = '100%';
+      statusText.textContent  = 'Pronto!';
+      setTimeout(function() { progressWrap.classList.add('hidden'); }, 800);
+
+    } catch(err) {
+      progressWrap.classList.add('hidden');
+      dropContent.classList.remove('hidden');
+      showToast('Erro ao processar imagem', 'error');
+    }
   }
 
   // ── Drag & drop ─────────────────────────────────────────────
@@ -2895,7 +3121,7 @@ function sellPage() {
     e.preventDefault();
     document.getElementById('img-drop-zone').classList.remove('border-red-400','bg-red-50');
     const file = e.dataTransfer.files[0];
-    if (!file || !file.type.startsWith('image/')) { showToast('Please drop an image file', 'error'); return; }
+    if (!file || !file.type.startsWith('image/')) { showToast('Por favor solte um arquivo de imagem', 'error'); return; }
     const dt = new DataTransfer();
     dt.items.add(file);
     const input = document.getElementById('img-file-input');
@@ -2903,16 +3129,17 @@ function sellPage() {
     handleImgFile(input);
   }
 
-  // ── Clear upload ────────────────────────────────────────────
+  // ── Limpar upload ────────────────────────────────────────────
   function clearImgUpload() {
     document.getElementById('img-file-input').value = '';
     document.getElementById('img-preview').src = '';
     document.getElementById('img-preview-wrap').classList.add('hidden');
+    document.getElementById('img-upload-progress').classList.add('hidden');
     document.getElementById('img-drop-content').classList.remove('hidden');
     document.getElementById('prod-img-final').value = '';
   }
 
-  // ── URL field live preview is initialized inside DOMContentLoaded above ──
+  // ── URL field live preview (inicializado no DOMContentLoaded acima) ──
   </script>
   `)
 }
