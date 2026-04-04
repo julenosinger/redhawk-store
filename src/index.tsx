@@ -1847,18 +1847,23 @@ function checkoutPage() {
     }
     let total=0;
     container.innerHTML = cart.map(item => {
-      total += item.price*item.qty;
+      const qty  = item.quantity || item.qty || 1;
+      const price= parseFloat(item.price) || 0;
+      const title= item.title || item.name || 'Product';
+      const cur  = item.currency || item.token || 'USDC';
+      total += price * qty;
       return '<div class="flex items-center gap-3">'
-        +(item.image?'<img src="'+item.image+'" class="w-12 h-12 rounded-lg object-cover"/>'
-                   :'<div class="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center text-slate-300"><i class="fas fa-box"></i></div>')
-        +'<div class="flex-1"><p class="font-medium text-slate-800 text-xs">'+item.name+'</p>'
-        +'<p class="text-slate-400 text-xs">Qty: '+item.qty+'</p></div>'
-        +'<p class="font-bold text-red-600 text-sm">'+(item.price*item.qty).toFixed(2)+' '+(item.token||'USDC')+'</p></div>';
+        +(item.image?'<img src="'+item.image+'" class="w-12 h-12 rounded-lg object-cover object-center" onerror="this.style.display=\'none\'"/>'
+                   :'<div class="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center text-slate-300 flex-shrink-0"><i class="fas fa-box"></i></div>')
+        +'<div class="flex-1 min-w-0"><p class="font-medium text-slate-800 text-xs truncate">'+title+'</p>'
+        +'<p class="text-slate-400 text-xs">Qty: '+qty+'</p></div>'
+        +'<p class="font-bold text-red-600 text-sm flex-shrink-0">'+(price*qty).toFixed(2)+' '+cur+'</p></div>';
     }).join('');
     const fee=total*0.015;
-    document.getElementById('co-sub').textContent=total.toFixed(2)+' USDC';
-    document.getElementById('co-fee').textContent=fee.toFixed(4)+' USDC';
-    document.getElementById('co-total').textContent=(total+fee).toFixed(2)+' USDC';
+    const mainCur = cart[0]?.currency || cart[0]?.token || 'USDC';
+    document.getElementById('co-sub').textContent=total.toFixed(2)+' '+mainCur;
+    document.getElementById('co-fee').textContent=fee.toFixed(4)+' '+mainCur;
+    document.getElementById('co-total').textContent=(total+fee).toFixed(2)+' '+mainCur;
 
     const w=getStoredWallet();
     if(w){
@@ -1881,7 +1886,7 @@ function checkoutPage() {
     const cart=getCart();
     if(!cart.length){showToast('Cart is empty','error');return;}
     // Transaction confirmation dialog
-    const total=cart.reduce((s,i)=>s+i.price*i.qty,0);
+    const total=cart.reduce((s,i)=>s+(parseFloat(i.price)||0)*((i.quantity||i.qty)||1),0);
     const token=document.querySelector('input[name="token"]:checked')?.value||'USDC';
     // Show custom TX confirmation modal instead of browser confirm()
     const confirmResult = await showTxConfirmModal({
