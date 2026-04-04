@@ -823,33 +823,6 @@ function homePage() {
     </div>
   </section>
 
-  <!-- Arc Network Info -->
-  <section class="max-w-7xl mx-auto px-4 py-8">
-    <div class="card p-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-100">
-      <div class="flex flex-col md:flex-row items-start md:items-center gap-4">
-        <div class="flex-1">
-          <h3 class="font-bold text-slate-800 flex items-center gap-2 mb-2">
-            <span class="arc-badge"><i class="fas fa-network-wired text-xs"></i> Arc Network</span>
-            Connected to Arc Testnet
-          </h3>
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-            <div><p class="text-slate-500 text-xs">Chain ID</p><p class="font-mono font-bold text-slate-800">5042002</p></div>
-            <div><p class="text-slate-500 text-xs">RPC</p><p class="font-mono font-bold text-slate-800 text-xs truncate">rpc.testnet.arc.network</p></div>
-            <div><p class="text-slate-500 text-xs">Gas Token</p><p class="font-bold text-blue-700">USDC (native)</p></div>
-            <div><p class="text-slate-500 text-xs">Finality</p><p class="font-bold text-green-600">Sub-second</p></div>
-          </div>
-        </div>
-        <div class="flex flex-wrap gap-2">
-          <a href="https://testnet.arcscan.app" target="_blank" class="btn-secondary text-xs py-2 px-3">
-            <i class="fas fa-external-link-alt"></i> Explorer
-          </a>
-          <a href="https://faucet.circle.com" target="_blank" class="btn-primary text-xs py-2 px-3">
-            <i class="fas fa-faucet"></i> Get Test USDC
-          </a>
-        </div>
-      </div>
-    </div>
-  </section>
 
   <!-- Demo Disclaimer — Homepage -->
   <div class="max-w-7xl mx-auto px-4 pb-4">
