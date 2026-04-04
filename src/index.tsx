@@ -1,8 +1,39 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 
-const app = new Hono()
+type Bindings = { DB: D1Database }
+const app = new Hono<{ Bindings: Bindings }>()
 app.use('*', cors())
+
+// ─── DB helpers ─────────────────────────────────────────────────────────────
+let _dbReady = false
+async function initDB(db: D1Database) {
+  if (_dbReady) return
+  // D1 exec() only supports single statements — run each DDL separately
+  await db.prepare(`CREATE TABLE IF NOT EXISTS products (
+    id          TEXT PRIMARY KEY,
+    title       TEXT NOT NULL,
+    description TEXT NOT NULL,
+    price       REAL NOT NULL,
+    token       TEXT NOT NULL DEFAULT 'USDC',
+    image       TEXT,
+    category    TEXT NOT NULL DEFAULT 'Other',
+    stock       INTEGER NOT NULL DEFAULT 1,
+    seller_id   TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'active',
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  )`).run()
+  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_products_seller  ON products(seller_id)`).run()
+  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_products_status  ON products(status)`).run()
+  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_products_cat     ON products(category)`).run()
+  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_products_created ON products(created_at DESC)`).run()
+  _dbReady = true
+}
+
+function nanoid(): string {
+  return 'prod_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+}
 
 // ─── Favicon ────────────────────────────────────────────────────────
 app.get('/favicon.ico', (c) => {
@@ -36,18 +67,81 @@ app.get('/api/arc-config', (c) => {
   return c.json({ arc: ARC })
 })
 
-// Products: returns empty — products come from DB/contracts (no mock data)
-app.get('/api/products', (c) => {
-  return c.json({
-    products: [],
-    total: 0,
-    source: 'database',
-    message: 'No products listed yet. Be the first to sell on redhawk-store!'
-  })
+// ─── Products CRUD (off-chain D1 database) ──────────────────────────────────
+
+// GET /api/products — list all active products (optional ?category=&seller=&q=)
+app.get('/api/products', async (c) => {
+  try {
+    const db = c.env.DB
+    await initDB(db)
+    const cat    = c.req.query('category') || ''
+    const seller = c.req.query('seller')   || ''
+    const q      = c.req.query('q')        || ''
+    let sql  = `SELECT * FROM products WHERE status = 'active'`
+    const params: string[] = []
+    if (cat)    { sql += ` AND category = ?`;              params.push(cat) }
+    if (seller) { sql += ` AND seller_id = ?`;             params.push(seller) }
+    if (q)      { sql += ` AND (title LIKE ? OR description LIKE ?)`;  params.push(`%${q}%`, `%${q}%`) }
+    sql += ` ORDER BY created_at DESC`
+    const { results } = await db.prepare(sql).bind(...params).all()
+    return c.json({ products: results, total: results.length, source: 'database' })
+  } catch (e: any) {
+    return c.json({ products: [], total: 0, source: 'database', error: e.message })
+  }
 })
 
-app.get('/api/products/:id', (c) => {
-  return c.json({ error: 'Product not found', product: null }, 404)
+// GET /api/products/:id — single product
+app.get('/api/products/:id', async (c) => {
+  try {
+    const db = c.env.DB
+    await initDB(db)
+    const row = await db.prepare(`SELECT * FROM products WHERE id = ? AND status = 'active'`)
+      .bind(c.req.param('id')).first()
+    if (!row) return c.json({ error: 'Product not found', product: null }, 404)
+    return c.json({ product: row })
+  } catch (e: any) {
+    return c.json({ error: e.message, product: null }, 500)
+  }
+})
+
+// POST /api/products — create a product
+app.post('/api/products', async (c) => {
+  try {
+    const db   = c.env.DB
+    await initDB(db)
+    const body = await c.req.json() as any
+    const { title, description, price, token = 'USDC', image = '', category = 'Other', stock = 1, seller_id } = body
+    if (!title || !description || !price || !seller_id)
+      return c.json({ error: 'Missing required fields: title, description, price, seller_id' }, 400)
+    if (Number(price) <= 0)
+      return c.json({ error: 'Price must be greater than 0' }, 400)
+    if (!['USDC','EURC'].includes(token))
+      return c.json({ error: 'Token must be USDC or EURC' }, 400)
+    const id = nanoid()
+    await db.prepare(`
+      INSERT INTO products (id, title, description, price, token, image, category, stock, seller_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(id, title.trim(), description.trim(), Number(price), token, image, category, Number(stock) || 1, seller_id).run()
+    const product = await db.prepare(`SELECT * FROM products WHERE id = ?`).bind(id).first()
+    return c.json({ product, success: true }, 201)
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500)
+  }
+})
+
+// DELETE /api/products/:id — soft-delete (seller only)
+app.delete('/api/products/:id', async (c) => {
+  try {
+    const db        = c.env.DB
+    const { seller_id } = await c.req.json() as any
+    const row = await db.prepare(`SELECT * FROM products WHERE id = ?`).bind(c.req.param('id')).first() as any
+    if (!row)                          return c.json({ error: 'Product not found' }, 404)
+    if (row.seller_id !== seller_id)   return c.json({ error: 'Unauthorized' }, 403)
+    await db.prepare(`UPDATE products SET status = 'deleted', updated_at = datetime('now') WHERE id = ?`).bind(c.req.param('id')).run()
+    return c.json({ success: true })
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500)
+  }
 })
 
 // Orders: returns empty — orders come from real escrow contract state
@@ -104,7 +198,16 @@ app.post('/api/ai-search', async (c) => {
 // ─── Pages ───────────────────────────────────────────────────────────
 app.get('/', (c) => c.html(homePage()))
 app.get('/marketplace', (c) => c.html(marketplacePage()))
-app.get('/product/:id', (c) => c.html(productNotFoundPage(c.req.param('id'))))
+// ─── API routes for product page ────────────────────────────────────────────
+app.get('/product/:id', async (c) => {
+  try {
+    const db  = c.env.DB
+    await initDB(db)
+    const row = await db.prepare(`SELECT * FROM products WHERE id = ? AND status = 'active'`).bind(c.req.param('id')).first() as any
+    if (row) return c.html(productPage(row))
+  } catch {}
+  return c.html(productNotFoundPage(c.req.param('id')))
+})
 app.get('/cart', (c) => c.html(cartPage()))
 app.get('/checkout', (c) => c.html(checkoutPage()))
 app.get('/wallet', (c) => c.html(walletPage()))
@@ -1041,16 +1144,20 @@ function homePage() {
             <div class="empty-state">
               <i class="fas fa-store"></i>
               <h3 class="font-bold text-slate-600 text-lg mb-2">No Products Yet</h3>
-              <p class="text-sm max-w-sm mx-auto mb-4">\${data.message || 'The marketplace is live on Arc Network but no products have been listed yet.'}</p>
+              <p class="text-sm max-w-sm mx-auto mb-4">Be the first seller — list your product now and start earning USDC or EURC!</p>
               <a href="/sell" class="btn-primary mx-auto">
                 <i class="fas fa-plus-circle"></i> List the First Product
               </a>
             </div>
           </div>\`;
       } else {
+        const latest = data.products.slice(0, 4);
         container.innerHTML = '<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">'
-          + data.products.map(renderProductCard).join('')
-          + '</div>';
+          + latest.map(renderProductCard).join('')
+          + '</div>'
+          + (data.products.length > 4
+              ? \`<div class="text-center mt-6"><a href="/marketplace" class="btn-secondary">View all \${data.products.length} products →</a></div>\`
+              : '');
       }
     } catch (err) {
       document.getElementById('home-products-container').innerHTML =
@@ -1058,31 +1165,19 @@ function homePage() {
     }
   });
 
-  function capPrice(raw) {
-    // Ensure all displayed prices are below 10 (demo constraint)
-    const n = parseFloat(raw);
-    if (isNaN(n) || n <= 0) return '1.00';
-    if (n >= 10) return (n % 9 + 0.5).toFixed(2); // map to 0.5–9.5 range
-    return n.toFixed(2);
-  }
   function renderProductCard(p) {
-    const stars = Array(5).fill(0).map((_,i) =>
-      '<i class="fas fa-star ' + (i < Math.floor(p.rating||0) ? 'star' : 'text-slate-200') + ' text-xs"></i>'
-    ).join('');
-    const displayPrice = capPrice(p.price);
+    const name  = (p.title || p.name || 'Untitled').replace(/</g,'&lt;');
+    const price = parseFloat(p.price||0).toFixed(2);
     return '<div class="product-card">'
       + '<div class="relative">'
-      + (p.image ? '<img src="' + p.image + '" alt="' + p.name + '" class="w-full h-48 object-cover"/>'
+      + (p.image ? '<img src="' + p.image + '" alt="' + name + '" class="w-full h-48 object-cover">'
                  : '<div class="w-full h-48 bg-slate-100 flex items-center justify-center text-slate-300"><i class="fas fa-image text-4xl"></i></div>')
       + '<span class="absolute top-2 left-2 badge-escrow"><i class="fas fa-shield-alt mr-1"></i>Escrow</span>'
       + '</div>'
       + '<div class="p-4">'
-      + '<span class="tag">' + (p.category||'Uncategorized') + '</span>'
-      + '<h3 class="font-semibold text-slate-800 mt-2 mb-2 text-sm leading-tight">' + p.name + '</h3>'
-      + '<div class="flex items-center gap-1 mb-2">' + stars + '</div>'
-      + '<div class="flex items-center justify-between mb-3">'
-      + '<p class="text-xl font-extrabold text-red-600">' + displayPrice + ' <span class="text-sm font-semibold">' + (p.token||'USDC') + '</span></p>'
-      + '</div>'
+      + '<span class="tag">' + (p.category||'Other') + '</span>'
+      + '<h3 class="font-semibold text-slate-800 mt-2 mb-2 text-sm leading-tight">' + name + '</h3>'
+      + '<p class="text-xl font-extrabold text-red-600 mb-3">' + price + ' <span class="text-sm font-semibold">' + (p.token||'USDC') + '</span></p>'
       + '<a href="/product/' + p.id + '" class="btn-primary w-full justify-center text-xs py-2">'
       + '<i class="fas fa-bolt"></i> View & Buy</a>'
       + '</div></div>';
@@ -1098,14 +1193,14 @@ function marketplacePage() {
     <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-6">
       <div>
         <h1 class="text-3xl font-bold text-slate-800">Marketplace</h1>
-        <p class="text-slate-500 mt-1">Live product listings on Arc Network · All escrow-protected</p>
+        <p class="text-slate-500 mt-1">Live product listings · Payments via escrow on Arc Network</p>
       </div>
-      <div class="flex items-center gap-3">
-        <select class="select w-40 text-sm">
-          <option>Sort by</option>
-          <option>Price: Low→High</option>
-          <option>Price: High→Low</option>
-          <option>Newest</option>
+      <div class="flex items-center gap-3 flex-wrap">
+        <input id="mp-search-bar" type="text" placeholder="Search products…" class="input text-sm py-2 w-48"/>
+        <select id="mp-sort" class="select w-44 text-sm">
+          <option value="newest">Sort: Newest</option>
+          <option value="price_asc">Price: Low → High</option>
+          <option value="price_desc">Price: High → Low</option>
         </select>
         <a href="/sell" class="btn-primary text-sm py-2">
           <i class="fas fa-plus-circle"></i> List Product
@@ -1134,7 +1229,7 @@ function marketplacePage() {
             <div class="space-y-1.5">
               ${['All','Electronics','Gaming','Audio','Photography','Wearables','Accessories'].map((cat,i) => `
                 <label class="flex items-center gap-2 cursor-pointer hover:text-red-600 text-sm text-slate-600">
-                  <input type="checkbox" ${i===0?'checked':''} class="accent-red-600 w-3.5 h-3.5"/> ${cat}
+                  <input type="checkbox" data-cat="${cat}" ${i===0?'checked':''} class="cat-filter accent-red-600 w-3.5 h-3.5"/> ${cat}
                 </label>`).join('')}
             </div>
           </div>
@@ -1150,7 +1245,7 @@ function marketplacePage() {
             <label class="flex items-center gap-2 cursor-pointer text-sm text-slate-600 mb-1"><input type="checkbox" checked class="accent-red-600"/> USDC</label>
             <label class="flex items-center gap-2 cursor-pointer text-sm text-slate-600"><input type="checkbox" checked class="accent-red-600"/> EURC</label>
           </div>
-          <button onclick="showToast('Filters will be applied when products are listed','info')" class="btn-primary w-full text-sm justify-center">Apply Filters</button>
+          <button onclick="renderProducts()" class="btn-primary w-full text-sm justify-center">Apply Filters</button>
         </div>
       </aside>
 
@@ -1165,55 +1260,112 @@ function marketplacePage() {
   </div>
 
   <script>
+  // ── State ──────────────────────────────────────────────────────────
+  let allProducts = [];
+  let activeCategory = 'All';
+  let sortMode = 'newest';
+
   document.addEventListener('DOMContentLoaded', async () => {
     checkNetworkStatus(document.getElementById('mp-network-status'));
+
+    // Read ?cat= param from URL
+    const urlCat = new URLSearchParams(window.location.search).get('cat') || 'All';
+    activeCategory = urlCat;
+
+    // Update sidebar checkbox
+    document.querySelectorAll('.cat-filter').forEach(cb => {
+      cb.checked = (cb.dataset.cat === activeCategory || (activeCategory === 'All' && cb.dataset.cat === 'All'));
+      cb.addEventListener('change', () => {
+        activeCategory = cb.dataset.cat;
+        document.querySelectorAll('.cat-filter').forEach(x => { x.checked = x.dataset.cat === activeCategory; });
+        renderProducts();
+      });
+    });
+
+    document.getElementById('mp-sort').addEventListener('change', function() {
+      sortMode = this.value; renderProducts();
+    });
+    document.getElementById('mp-search-bar').addEventListener('input', function() {
+      renderProducts(this.value.trim().toLowerCase());
+    });
+
+    await loadProducts();
+  });
+
+  async function loadProducts() {
     try {
-      const res = await fetch('/api/products');
+      const res  = await fetch('/api/products');
       const data = await res.json();
-      const container = document.getElementById('mp-products-container');
-      if (!data.products || data.products.length === 0) {
-        container.innerHTML = \`
-          <div class="card p-16 text-center">
-            <div class="empty-state">
-              <i class="fas fa-store"></i>
-              <h3 class="font-bold text-slate-700 text-xl mb-2">No Products Listed Yet</h3>
-              <p class="text-slate-400 text-sm mb-6 max-w-sm mx-auto">
-                The redhawk-store marketplace is live on Arc Network. Be the first seller to list your product and earn USDC or EURC!
-              </p>
-              <a href="/sell" class="btn-primary mx-auto text-base px-8 py-3">
-                <i class="fas fa-plus-circle"></i> List First Product
-              </a>
-              <div class="mt-6 p-4 bg-blue-50 rounded-xl text-xs text-blue-800 max-w-sm mx-auto">
-                <strong>Need test tokens?</strong><br/>
-                Get free USDC and EURC at <a href="${ARC.faucet}" target="_blank" class="underline font-bold">faucet.circle.com</a>
-              </div>
-            </div>
-          </div>\`;
-      } else {
-        container.innerHTML = '<div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">'
-          + data.products.map(p => renderMPCard(p)).join('') + '</div>';
-      }
+      allProducts = data.products || [];
+      renderProducts();
     } catch {
       document.getElementById('mp-products-container').innerHTML =
         '<div class="card p-8 text-center text-red-500"><i class="fas fa-exclamation-circle mr-2"></i>Could not connect to marketplace. Please try again.</div>';
     }
-  });
+  }
+
+  function renderProducts(searchText) {
+    const q = (searchText !== undefined ? searchText : (document.getElementById('mp-search-bar')||{}).value || '').toLowerCase();
+    let list = allProducts.filter(p => {
+      const matchCat = activeCategory === 'All' || p.category === activeCategory;
+      const matchQ   = !q || (p.title||p.name||'').toLowerCase().includes(q) || (p.description||'').toLowerCase().includes(q);
+      return matchCat && matchQ;
+    });
+
+    if (sortMode === 'price_asc')  list = [...list].sort((a,b) => a.price - b.price);
+    if (sortMode === 'price_desc') list = [...list].sort((a,b) => b.price - a.price);
+    if (sortMode === 'newest')     list = [...list].sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+
+    const container = document.getElementById('mp-products-container');
+    if (list.length === 0) {
+      container.innerHTML = \`
+        <div class="card p-16 text-center">
+          <div class="empty-state">
+            <i class="fas fa-store"></i>
+            <h3 class="font-bold text-slate-700 text-xl mb-2">\${allProducts.length === 0 ? 'No Products Listed Yet' : 'No Products Found'}</h3>
+            <p class="text-slate-400 text-sm mb-6 max-w-sm mx-auto">
+              \${allProducts.length === 0
+                ? 'Be the first seller to list your product and earn USDC or EURC!'
+                : 'Try changing the filters or search term.'}
+            </p>
+            <a href="/sell" class="btn-primary mx-auto text-base px-8 py-3">
+              <i class="fas fa-plus-circle"></i> List a Product
+            </a>
+          </div>
+        </div>\`;
+    } else {
+      container.innerHTML = '<div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">'
+        + list.map(p => renderMPCard(p)).join('') + '</div>'
+        + \`<p class="text-xs text-slate-400 text-right mt-3">\${list.length} product\${list.length!==1?'s':''} found</p>\`;
+    }
+  }
 
   function renderMPCard(p) {
-    const n = parseFloat(p.price); 
-    const displayPrice = (!isNaN(n) && n >= 10) ? (n % 9 + 0.5).toFixed(2) : (parseFloat(p.price)||1).toFixed(2);
+    const price = parseFloat(p.price||0).toFixed(2);
+    const title = (p.title || p.name || 'Untitled').replace(/</g,'&lt;');
+    const desc  = (p.description||'').replace(/</g,'&lt;').slice(0,80);
+    const cat   = (p.category||'Other').replace(/</g,'&lt;');
+    const tok   = p.token || 'USDC';
+    const imgEl = p.image
+      ? '<img src="' + p.image + '" class="w-full h-48 object-cover" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">'
+        + '<div class="w-full h-48 bg-slate-100 items-center justify-center text-slate-300 hidden"><i class="fas fa-image text-4xl"></i></div>'
+      : '<div class="w-full h-48 bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center text-slate-300"><i class="fas fa-image text-4xl"></i></div>';
+    const sellerShort = p.seller_id ? (p.seller_id.slice(0,6)+'…'+p.seller_id.slice(-4)) : '—';
     return '<div class="product-card">'
-      + '<div class="relative">'
-      + (p.image ? '<img src="' + p.image + '" class="w-full h-48 object-cover"/>'
-                 : '<div class="w-full h-48 bg-slate-100 flex items-center justify-center text-slate-300"><i class="fas fa-image text-4xl"></i></div>')
+      + '<div class="relative overflow-hidden">' + imgEl
       + '<span class="absolute top-2 left-2 badge-escrow"><i class="fas fa-shield-alt mr-1"></i>Escrow</span>'
       + '</div>'
       + '<div class="p-4">'
-      + '<span class="tag">' + (p.category||'—') + '</span>'
-      + '<h3 class="font-semibold text-slate-800 mt-2 mb-2 text-sm">' + p.name + '</h3>'
-      + '<p class="text-xl font-extrabold text-red-600 mb-3">' + displayPrice + ' <span class="text-sm">' + (p.token||'USDC') + '</span></p>'
+      + '<div class="flex items-center justify-between mb-1">'
+      + '<span class="tag">' + cat + '</span>'
+      + '<span class="text-xs text-slate-400 font-mono">' + sellerShort + '</span>'
+      + '</div>'
+      + '<h3 class="font-semibold text-slate-800 mt-2 mb-1 text-sm leading-tight">' + title + '</h3>'
+      + (desc ? '<p class="text-xs text-slate-400 mb-2 leading-relaxed">' + desc + (p.description.length>80?'…':'') + '</p>' : '')
+      + '<p class="text-xl font-extrabold text-red-600 mb-3">' + price + ' <span class="text-sm font-semibold">' + tok + '</span></p>'
       + '<div class="flex gap-2">'
-      + '<a href="/product/' + p.id + '" class="btn-primary flex-1 text-xs py-2 justify-center"><i class="fas fa-bolt"></i> Buy Now</a>'
+      + '<a href="/product/' + p.id + '" class="btn-primary flex-1 text-xs py-2 justify-center"><i class="fas fa-bolt mr-1"></i>Buy Now</a>'
+      + '<a href="/product/' + p.id + '" class="btn-secondary text-xs py-2 px-3 justify-center"><i class="fas fa-eye"></i></a>'
       + '</div></div></div>';
   }
   </script>
@@ -1246,6 +1398,114 @@ function productNotFoundPage(id: string) {
       </div>
     </div>
   </div>
+  `)
+}
+
+// ─── PAGE: PRODUCT DETAIL ─────────────────────────────────────────────────────
+function productPage(p: any) {
+  const title  = (p.title  || 'Untitled').replace(/</g, '&lt;')
+  const desc   = (p.description || '').replace(/</g, '&lt;')
+  const price  = parseFloat(p.price || 0).toFixed(2)
+  const tok    = p.token || 'USDC'
+  const cat    = (p.category || 'Other').replace(/</g, '&lt;')
+  const seller = (p.seller_id || '').replace(/</g, '&lt;')
+  const imgUrl = p.image || ''
+  const stockN = parseInt(p.stock) || 0
+
+  return shell(title, `
+  <div class="max-w-5xl mx-auto px-4 py-8">
+    <!-- Breadcrumb -->
+    <nav class="text-sm text-slate-400 mb-6 flex items-center gap-2">
+      <a href="/marketplace" class="hover:text-red-600">Marketplace</a>
+      <i class="fas fa-chevron-right text-xs"></i>
+      <span class="text-slate-700 font-medium">${title}</span>
+    </nav>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-10">
+      <!-- Image -->
+      <div>
+        ${imgUrl
+          ? `<img src="${imgUrl}" alt="${title}" class="w-full rounded-2xl object-cover max-h-[480px] border border-slate-100 shadow-md"
+               onerror="this.style.display='none';document.getElementById('img-fallback').style.display='flex'">`
+          : ''}
+        <div id="img-fallback" style="${imgUrl ? 'display:none' : ''}"
+          class="w-full rounded-2xl bg-gradient-to-br from-slate-100 to-slate-200 h-72 flex items-center justify-center text-slate-300">
+          <i class="fas fa-image text-6xl"></i>
+        </div>
+      </div>
+
+      <!-- Details -->
+      <div class="flex flex-col gap-5">
+        <div>
+          <span class="tag mb-2 inline-block">${cat}</span>
+          <h1 class="text-3xl font-extrabold text-slate-800 mb-2">${title}</h1>
+          <p class="text-4xl font-extrabold text-red-600">${price} <span class="text-xl font-bold">${tok}</span></p>
+          <p class="text-xs text-slate-400 mt-1">Seller: <span class="font-mono">${seller.slice(0,10)}…${seller.slice(-6)}</span></p>
+        </div>
+
+        <!-- Trust badge -->
+        <div class="flex items-start gap-3 bg-green-50 border border-green-200 rounded-xl p-3">
+          <i class="fas fa-shield-alt text-green-600 mt-0.5"></i>
+          <div>
+            <p class="font-bold text-green-800 text-sm">Escrow Protection</p>
+            <p class="text-xs text-green-700">Funds locked in Arc Network smart contract until you confirm delivery.</p>
+          </div>
+        </div>
+
+        <!-- Wallet transparency -->
+        <div class="flex items-start gap-3 bg-blue-50 border border-blue-100 rounded-xl p-3">
+          <i class="fas fa-lock text-blue-500 mt-0.5"></i>
+          <p class="text-xs text-blue-700">We never access your private keys. All transactions are signed locally in your wallet.</p>
+        </div>
+
+        <!-- Description -->
+        <div>
+          <h3 class="font-bold text-slate-700 mb-2">Description</h3>
+          <p class="text-slate-600 text-sm leading-relaxed whitespace-pre-line">${desc}</p>
+        </div>
+
+        <!-- Stock -->
+        <p class="text-sm text-slate-500"><i class="fas fa-box mr-1 text-slate-400"></i>Stock: <strong>${stockN}</strong> unit${stockN !== 1 ? 's' : ''} available</p>
+
+        <!-- Action buttons -->
+        <div class="flex flex-col gap-3 mt-2">
+          ${stockN > 0
+            ? `<button onclick="addToCartAndBuy('${p.id}','${title.replace(/'/g,"\\'")}',${price},'${tok}','${imgUrl}')"
+                class="btn-primary justify-center py-4 text-base">
+                <i class="fas fa-bolt"></i> Buy Now — ${price} ${tok}
+              </button>
+              <button onclick="addToCartOnly('${p.id}','${title.replace(/'/g,"\\'")}',${price},'${tok}','${imgUrl}')"
+                class="btn-secondary justify-center py-3">
+                <i class="fas fa-cart-plus"></i> Add to Cart
+              </button>`
+            : `<div class="card p-4 text-center text-slate-500 bg-slate-50">
+                <i class="fas fa-box-open mr-2"></i>Out of stock
+              </div>`}
+        </div>
+      </div>
+    </div>
+
+    <!-- Back link -->
+    <div class="mt-10">
+      <a href="/marketplace" class="btn-secondary text-sm py-2"><i class="fas fa-arrow-left mr-1"></i>Back to Marketplace</a>
+    </div>
+  </div>
+
+  <script>
+  function addToCartOnly(id, name, price, token, image) {
+    const cart = JSON.parse(localStorage.getItem('rhawk_cart')||'[]');
+    const idx  = cart.findIndex(x => x.id === id);
+    if (idx >= 0) { cart[idx].qty = (cart[idx].qty||1) + 1; }
+    else          { cart.push({id, name, price: parseFloat(price), token, image, qty: 1, sellerAddress:'${seller}'}); }
+    localStorage.setItem('rhawk_cart', JSON.stringify(cart));
+    updateCartBadge();
+    showToast(name + ' added to cart!', 'success');
+  }
+  function addToCartAndBuy(id, name, price, token, image) {
+    addToCartOnly(id, name, price, token, image);
+    setTimeout(() => window.location.href = '/cart', 400);
+  }
+  </script>
   `)
 }
 
@@ -2558,14 +2818,40 @@ function sellPage() {
     const name=document.getElementById('prod-name').value.trim();
     const cat=document.getElementById('prod-cat').value;
     const desc=document.getElementById('prod-desc').value.trim();
-    const price=parseFloat(document.getElementById('prod-price').value);
+    const priceVal=parseFloat(document.getElementById('prod-price').value);
     const token=document.getElementById('prod-token').value;
-    const stock=parseInt(document.getElementById('prod-stock').value);
+    const stockVal=parseInt(document.getElementById('prod-stock').value)||1;
     const img=document.getElementById('prod-img-final').value.trim();
-    if(!name||!cat||!desc||!price||!stock){showToast('Please fill all required fields','error');return;}
-    if(price<=0){showToast('Price must be greater than 0','error');return;}
-    showToast('Listing submitted! In production, this would be signed and submitted to Arc Network.','info');
-    setTimeout(()=>{showToast('Product listing requires smart contract deployment (coming soon)','warning');},2000);
+    if(!name||!cat||!desc||!priceVal){showToast('Please fill all required fields','error');return;}
+    if(priceVal<=0){showToast('Price must be greater than 0','error');return;}
+
+    // Disable button to prevent double submit
+    const btn=document.querySelector('button[onclick="listProduct()"]');
+    if(btn){btn.disabled=true;btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Saving…';}
+
+    try {
+      const res=await fetch('/api/products',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          title:name, description:desc, price:priceVal,
+          token, image:img, category:cat, stock:stockVal,
+          seller_id:w.address
+        })
+      });
+      const data=await res.json();
+      if(!res.ok||data.error){
+        showToast(data.error||'Failed to create product','error');
+        if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-upload"></i> List Product';}
+        return;
+      }
+      showToast('Product listed successfully!','success');
+      // Redirect to marketplace after short delay so user sees the toast
+      setTimeout(()=>{ window.location.href='/marketplace'; },1200);
+    } catch(err){
+      showToast('Network error. Please try again.','error');
+      if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-upload"></i> List Product';}
+    }
   }
 
   // ── Image tab switcher ──────────────────────────────────────
