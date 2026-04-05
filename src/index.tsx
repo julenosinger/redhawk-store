@@ -2851,7 +2851,7 @@ function ordersPage() {
       container.innerHTML='<div class="card p-12 text-center"><div class="empty-state"><i class="fas fa-box-open"></i><h3 class="font-bold text-slate-600 mb-2">'+msg+'</h3><p class="text-sm mb-4">Orders will appear here once created.</p><a href="/marketplace" class="btn-primary mx-auto"><i class="fas fa-store"></i> Browse Marketplace</a></div></div>';
       return;
     }
-    const statusColors={'escrow_locked':'bg-yellow-100 text-yellow-700','escrow_pending':'bg-blue-100 text-blue-700','shipped':'bg-indigo-100 text-indigo-700','delivered':'bg-teal-100 text-teal-700','completed':'bg-green-100 text-green-700','dispute':'bg-red-100 text-red-700'};
+    const statusColors={'escrow_locked':'bg-yellow-100 text-yellow-700','escrow_pending':'bg-blue-100 text-blue-700','shipped':'bg-indigo-100 text-indigo-700','delivered':'bg-teal-100 text-teal-700','completed':'bg-green-100 text-green-700','funds_released':'bg-emerald-100 text-emerald-800','dispute':'bg-red-100 text-red-700'};
     const isSeller = tab==='sales';
     container.innerHTML=orders.slice().reverse().map(o=>{
       const sc=statusColors[o.status]||'bg-slate-100 text-slate-700';
@@ -2932,64 +2932,163 @@ function ordersPage() {
       orders[i].releasedAt=new Date().toISOString();
       localStorage.setItem('rh_orders',JSON.stringify(orders));
       showToast('Funds released to seller wallet!','success');
-      setTimeout(()=>renderOrders(_currentOrderTab),600);
+      // Show completion screen in container
+      const container=document.getElementById('orders-container');
+      if(container){
+        container.innerHTML='<div class="card p-10 text-center max-w-md mx-auto mt-4">'
+          +'<div class="w-20 h-20 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-4">'
+          +'<i class="fas fa-check-circle text-4xl text-emerald-500"></i></div>'
+          +'<h2 class="text-2xl font-bold text-slate-800 mb-2">Funds Released!</h2>'
+          +'<p class="text-slate-500 mb-1">Order <span class="font-mono font-bold text-slate-700">'+orderId+'</span></p>'
+          +'<p class="text-slate-500 text-sm mb-6">The escrow funds have been successfully released to the seller wallet on Arc Network.</p>'
+          +'<div class="flex flex-col gap-3">'
+          +'<button onclick="showReceiptModal(\''+orderId+'\')" class="btn-primary justify-center"><i class="fas fa-receipt mr-2"></i>View & Download Receipt</button>'
+          +'<button onclick="renderOrders(\'sales\')" class="btn-secondary justify-center"><i class="fas fa-list mr-2"></i>Back to My Sales</button>'
+          +'</div></div>';
+      }
     }
   }
 
   function showReceiptModal(orderId){
     const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
-    const order=orders.find(o=>o.id===orderId);
+    const order=orders.find(function(o){return o.id===orderId;});
     if(!order){showToast('Order not found','error');return;}
-    const root=document.getElementById('receipt-modal-root');
+    var root=document.getElementById('receipt-modal-root');
     if(!root) return;
-    const explorerUrl=order.explorerUrl||('https://testnet.arcscan.app/tx/'+(order.txHash||''));
-    const items=order.items||[];
-    const itemsHtml=items.length
-      ? items.map(it=>'<div class="flex justify-between text-xs py-1 border-b border-slate-100"><span class="text-slate-600 truncate">'+(it.title||it.name||'Product')+'</span><span class="font-medium text-slate-700 shrink-0 ml-2">'+(it.quantity||1)+'x '+(parseFloat(it.price)||0).toFixed(2)+' '+(it.currency||it.token||'USDC')+'</span></div>').join('')
-      : '<p class="text-xs text-slate-400">No item details</p>';
-    root.innerHTML='<div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" id="receipt-overlay">'
-      +'<div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">'
-      +'<div class="flex items-center justify-between p-5 border-b border-slate-100">'
-      +'<h2 class="font-bold text-slate-800 flex items-center gap-2"><i class="fas fa-receipt text-red-500"></i> Order Receipt</h2>'
-      +'<button onclick="document.getElementById(\\'receipt-modal-root\\').innerHTML=\\'\\'" class="text-slate-400 hover:text-slate-700 text-xl w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100">&times;</button>'
+    var explorerUrl=order.explorerUrl||('https://testnet.arcscan.app/tx/'+(order.txHash||''));
+    var items=order.items||[];
+    var itemsHtml=items.length
+      ? items.map(function(it){return '<div class="flex justify-between text-xs py-1.5 border-b border-slate-100 last:border-0"><span class="text-slate-600 truncate pr-2">'+(it.title||it.name||'Product')+'</span><span class="font-semibold text-slate-700 shrink-0">'+(it.quantity||1)+'&times; '+(parseFloat(it.price)||0).toFixed(2)+' '+(it.currency||it.token||'USDC')+'</span></div>';}).join('')
+      : '<p class="text-xs text-slate-400 py-2">No item details recorded</p>';
+    var statusLabel=(order.status||'').replace(/_/g,' ');
+    var releasedAt=order.releasedAt?new Date(order.releasedAt).toLocaleString():'—';
+    root.innerHTML=
+      '<div id="rh-receipt-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;">'
+      +'<div style="background:#fff;border-radius:16px;box-shadow:0 25px 60px rgba(0,0,0,0.3);width:100%;max-width:520px;max-height:90vh;overflow-y:auto;">'
+      // Header
+      +'<div style="display:flex;align-items:center;justify-content:space-between;padding:20px 20px 16px;border-bottom:1px solid #f1f5f9;">'
+      +'<div style="display:flex;align-items:center;gap:10px;">'
+      +'<div style="width:36px;height:36px;border-radius:8px;background:#fee2e2;display:flex;align-items:center;justify-content:center;">'
+      +'<i class="fas fa-receipt" style="color:#ef4444;font-size:14px;"></i></div>'
+      +'<div><p style="font-weight:700;color:#1e293b;margin:0;font-size:15px;">Order Receipt</p>'
+      +'<p style="font-size:11px;color:#94a3b8;margin:0;">'+order.id+'</p></div></div>'
+      +'<button id="rh-receipt-close" style="width:32px;height:32px;border:none;background:#f8fafc;border-radius:8px;cursor:pointer;font-size:18px;color:#64748b;display:flex;align-items:center;justify-content:center;">&times;</button>'
       +'</div>'
-      +'<div class="p-5 space-y-4">'
-      // Header info
-      +'<div class="bg-slate-50 rounded-xl p-4 space-y-2">'
-      +'<div class="flex justify-between"><span class="text-xs text-slate-500">Order ID</span><span class="text-xs font-mono font-bold text-slate-800">'+order.id+'</span></div>'
-      +'<div class="flex justify-between"><span class="text-xs text-slate-500">Date</span><span class="text-xs text-slate-700">'+new Date(order.createdAt).toLocaleString()+'</span></div>'
-      +'<div class="flex justify-between"><span class="text-xs text-slate-500">Status</span><span class="text-xs font-bold capitalize text-green-700">'+(order.status||'').replace(/_/g,' ')+'</span></div>'
-      +'<div class="flex justify-between"><span class="text-xs text-slate-500">Network</span><span class="text-xs text-slate-700">Arc Testnet (Chain 5042002)</span></div>'
+      // Body
+      +'<div style="padding:20px;display:flex;flex-direction:column;gap:16px;">'
+      // Status
+      +'<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:10px;">'
+      +'<i class="fas fa-check-circle" style="color:#22c55e;font-size:18px;"></i>'
+      +'<div><p style="margin:0;font-weight:700;color:#15803d;font-size:13px;text-transform:capitalize;">'+statusLabel+'</p>'
+      +'<p style="margin:0;font-size:11px;color:#4ade80;">Escrow transaction on Arc Network</p></div></div>'
+      // Order info
+      +'<div style="background:#f8fafc;border-radius:12px;padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
+      +'<div><p style="margin:0 0 2px;font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:#94a3b8;font-weight:600;">Order Date</p><p style="margin:0;font-size:12px;color:#334155;">'+new Date(order.createdAt).toLocaleString()+'</p></div>'
+      +(order.releasedAt?'<div><p style="margin:0 0 2px;font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:#94a3b8;font-weight:600;">Released At</p><p style="margin:0;font-size:12px;color:#334155;">'+releasedAt+'</p></div>':'<div></div>')
+      +'<div><p style="margin:0 0 2px;font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:#94a3b8;font-weight:600;">Network</p><p style="margin:0;font-size:12px;color:#334155;">Arc Testnet</p></div>'
+      +'<div><p style="margin:0 0 2px;font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:#94a3b8;font-weight:600;">Chain ID</p><p style="margin:0;font-size:12px;color:#334155;">5042002</p></div>'
       +'</div>'
       // Wallets
-      +'<div class="space-y-2">'
-      +'<p class="text-xs font-bold text-slate-700 uppercase tracking-wide">Wallets</p>'
-      +'<div class="bg-slate-50 rounded-xl p-3 space-y-2">'
-      +'<div><p class="text-xs text-slate-500 mb-0.5">Buyer</p><p class="text-xs font-mono break-all text-slate-800">'+(order.buyerAddress||'—')+'</p></div>'
-      +'<div><p class="text-xs text-slate-500 mb-0.5">Seller</p><p class="text-xs font-mono break-all text-slate-800">'+(order.sellerAddress||'—')+'</p></div>'
+      +'<div><p style="margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;font-weight:700;">Wallet Addresses</p>'
+      +'<div style="background:#f8fafc;border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px;">'
+      +'<div><p style="margin:0 0 2px;font-size:10px;color:#94a3b8;font-weight:600;">BUYER</p><p style="margin:0;font-size:11px;font-family:monospace;color:#1e293b;word-break:break-all;">'+(order.buyerAddress||'—')+'</p></div>'
+      +'<div style="border-top:1px solid #e2e8f0;padding-top:8px;"><p style="margin:0 0 2px;font-size:10px;color:#94a3b8;font-weight:600;">SELLER</p><p style="margin:0;font-size:11px;font-family:monospace;color:#1e293b;word-break:break-all;">'+(order.sellerAddress||'—')+'</p></div>'
       +'</div></div>'
-      // Products
-      +'<div class="space-y-2">'
-      +'<p class="text-xs font-bold text-slate-700 uppercase tracking-wide">Products</p>'
-      +'<div class="bg-slate-50 rounded-xl p-3">'+itemsHtml+'</div>'
+      // Items
+      +'<div><p style="margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;font-weight:700;">Products</p>'
+      +'<div style="background:#f8fafc;border-radius:12px;padding:12px;">'+itemsHtml+'</div></div>'
+      // Amount
+      +'<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:12px;padding:14px;display:flex;align-items:center;justify-content:space-between;">'
+      +'<span style="font-size:13px;font-weight:600;color:#64748b;">Total Amount</span>'
+      +'<span style="font-size:20px;font-weight:800;color:#ef4444;">'+(order.amount||0)+' '+(order.token||'USDC')+'</span></div>'
+      // Tx Hash
+      +'<div><p style="margin:0 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;font-weight:700;">Transaction Hash</p>'
+      +'<a href="'+explorerUrl+'" target="_blank" style="font-size:11px;font-family:monospace;color:#3b82f6;word-break:break-all;text-decoration:none;">'+(order.txHash||'Pending — Transaction not yet recorded')+'</a>'
       +'</div>'
-      // Payment
-      +'<div class="space-y-2">'
-      +'<p class="text-xs font-bold text-slate-700 uppercase tracking-wide">Payment</p>'
-      +'<div class="bg-slate-50 rounded-xl p-3 space-y-1">'
-      +'<div class="flex justify-between"><span class="text-xs text-slate-500">Total Amount</span><span class="font-bold text-red-600">'+(order.amount||0)+' '+(order.token||'USDC')+'</span></div>'
-      +'<div class="flex justify-between"><span class="text-xs text-slate-500">Transaction Hash</span><a href="'+explorerUrl+'" target="_blank" class="text-xs font-mono text-blue-600 hover:underline break-all">'+(order.txHash||'Pending')+'</a></div>'
-      +'</div></div>'
       +'</div>'
-      // Footer
-      +'<div class="p-4 border-t border-slate-100 flex justify-end gap-2">'
-      +'<button onclick="document.getElementById(\\'receipt-modal-root\\').innerHTML=\\'\\'" class="btn-secondary text-sm py-2">Close</button>'
-      +'<a href="'+explorerUrl+'" target="_blank" class="btn-primary text-sm py-2"><i class="fas fa-external-link-alt mr-1"></i>View on Explorer</a>'
+      // Footer — download buttons
+      +'<div style="padding:16px 20px;border-top:1px solid #f1f5f9;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">'
+      +'<button id="rh-dl-json" class="btn-secondary text-sm py-2 px-3"><i class="fas fa-file-code mr-1"></i>Download JSON</button>'
+      +'<button id="rh-dl-pdf" class="btn-secondary text-sm py-2 px-3"><i class="fas fa-file-pdf mr-1"></i>Download PDF</button>'
+      +'<a href="'+explorerUrl+'" target="_blank" class="btn-primary text-sm py-2 px-3"><i class="fas fa-external-link-alt mr-1"></i>Explorer</a>'
       +'</div>'
       +'</div></div>';
-    document.getElementById('receipt-overlay').addEventListener('click',function(e){
-      if(e.target===this) root.innerHTML='';
-    });
+
+    // Close button
+    document.getElementById('rh-receipt-close').onclick=function(){ root.innerHTML=''; };
+    document.getElementById('rh-receipt-overlay').onclick=function(e){ if(e.target===this) root.innerHTML=''; };
+
+    // Download JSON
+    document.getElementById('rh-dl-json').onclick=function(){
+      var receipt={
+        receiptType:'ArcNetwork-Escrow-Receipt',
+        orderId:order.id,
+        status:order.status,
+        orderDate:order.createdAt,
+        releasedAt:order.releasedAt||null,
+        network:'Arc Testnet',
+        chainId:5042002,
+        buyer:order.buyerAddress||null,
+        seller:order.sellerAddress||null,
+        amount:order.amount,
+        token:order.token||'USDC',
+        transactionHash:order.txHash||null,
+        explorerUrl:explorerUrl,
+        products:items.map(function(it){return{title:it.title||it.name,price:it.price,currency:it.currency||it.token,quantity:it.quantity||1};}),
+        generatedAt:new Date().toISOString()
+      };
+      var blob=new Blob([JSON.stringify(receipt,null,2)],{type:'application/json'});
+      var url=URL.createObjectURL(blob);
+      var a=document.createElement('a');
+      a.href=url; a.download=order.id+'-receipt.json'; a.click();
+      URL.revokeObjectURL(url);
+      showToast('JSON receipt downloaded!','success');
+    };
+
+    // Download PDF — uses print-friendly HTML in a new window
+    document.getElementById('rh-dl-pdf').onclick=function(){
+      var productRows=items.length
+        ? items.map(function(it){return '<tr><td style="padding:6px 8px;border-bottom:1px solid #f1f5f9;">'+(it.title||it.name||'Product')+'</td><td style="padding:6px 8px;border-bottom:1px solid #f1f5f9;text-align:center;">'+(it.quantity||1)+'</td><td style="padding:6px 8px;border-bottom:1px solid #f1f5f9;text-align:right;">'+(parseFloat(it.price)||0).toFixed(2)+' '+(it.currency||it.token||'USDC')+'</td></tr>';}).join('')
+        : '<tr><td colspan="3" style="padding:8px;text-align:center;color:#94a3b8;">No items recorded</td></tr>';
+      var pdfContent='<!DOCTYPE html><html><head><meta charset="utf-8"><title>Receipt '+order.id+'</title>'
+        +'<style>body{font-family:Arial,sans-serif;max-width:600px;margin:40px auto;color:#1e293b;font-size:13px}'
+        +'h1{font-size:22px;margin:0 0 4px}h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;margin:16px 0 6px}'
+        +'.badge{display:inline-block;padding:3px 10px;border-radius:20px;background:#dcfce7;color:#15803d;font-weight:700;font-size:12px;text-transform:capitalize}'
+        +'.mono{font-family:monospace;font-size:11px;word-break:break-all}'
+        +'.row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #f1f5f9}'
+        +'.total{display:flex;justify-content:space-between;padding:10px 0;font-size:18px;font-weight:800;color:#ef4444}'
+        +'table{width:100%;border-collapse:collapse}th{background:#f8fafc;padding:6px 8px;text-align:left;font-size:11px;text-transform:uppercase;color:#64748b}'
+        +'@media print{body{margin:20px}}'
+        +'</style></head><body>'
+        +'<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;padding-bottom:16px;border-bottom:2px solid #ef4444;">'
+        +'<div style="width:40px;height:40px;border-radius:8px;background:#fef2f2;display:flex;align-items:center;justify-content:center;">'
+        +'<span style="color:#ef4444;font-size:20px;">&#128993;</span></div>'
+        +'<div><h1>Order Receipt</h1><p style="margin:0;color:#94a3b8;font-size:12px;">redhawk-store &bull; Arc Network</p></div></div>'
+        +'<span class="badge">'+statusLabel+'</span>'
+        +'<h2>Order Information</h2>'
+        +'<div class="row"><span style="color:#64748b;">Order ID</span><span class="mono">'+order.id+'</span></div>'
+        +'<div class="row"><span style="color:#64748b;">Date</span><span>'+new Date(order.createdAt).toLocaleString()+'</span></div>'
+        +(order.releasedAt?'<div class="row"><span style="color:#64748b;">Released At</span><span>'+releasedAt+'</span></div>':'')
+        +'<div class="row"><span style="color:#64748b;">Network</span><span>Arc Testnet (Chain 5042002)</span></div>'
+        +'<h2>Wallets</h2>'
+        +'<div class="row"><span style="color:#64748b;">Buyer</span><span class="mono">'+(order.buyerAddress||'—')+'</span></div>'
+        +'<div class="row"><span style="color:#64748b;">Seller</span><span class="mono">'+(order.sellerAddress||'—')+'</span></div>'
+        +'<h2>Products</h2>'
+        +'<table><thead><tr><th>Product</th><th style="text-align:center;">Qty</th><th style="text-align:right;">Price</th></tr></thead>'
+        +'<tbody>'+productRows+'</tbody></table>'
+        +'<h2>Payment</h2>'
+        +'<div class="total"><span>Total Amount</span><span>'+(order.amount||0)+' '+(order.token||'USDC')+'</span></div>'
+        +'<h2>Transaction</h2>'
+        +'<div class="row"><span style="color:#64748b;">Hash</span><span class="mono">'+(order.txHash||'Pending')+'</span></div>'
+        +'<div class="row"><span style="color:#64748b;">Explorer</span><a href="'+explorerUrl+'" style="color:#3b82f6;font-size:11px;">'+explorerUrl+'</a></div>'
+        +'<p style="margin-top:24px;font-size:10px;color:#94a3b8;text-align:center;">Generated '+new Date().toLocaleString()+' &bull; redhawk-store</p>'
+        +'</body></html>';
+      var w=window.open('','_blank','width=700,height=900');
+      w.document.write(pdfContent);
+      w.document.close();
+      setTimeout(function(){w.print();},400);
+      showToast('PDF ready — use browser Print > Save as PDF','info');
+    };
   }
 
   document.addEventListener('DOMContentLoaded', async () => {
@@ -3031,7 +3130,7 @@ function orderDetailPage(id: string) {
     const myAddr=wallet?wallet.address.toLowerCase():'';
     const isSeller=order.sellerAddress&&order.sellerAddress.toLowerCase()===myAddr;
     const isBuyer=order.buyerAddress&&order.buyerAddress.toLowerCase()===myAddr;
-    const statusSteps=['escrow_pending','escrow_locked','shipped','delivered','completed'];
+    const statusSteps=['escrow_pending','escrow_locked','shipped','delivered','completed','funds_released'];
     const statusIdx=Math.max(0,statusSteps.indexOf(order.status));
     const explorerTxUrl=order.explorerUrl||('${ARC.explorer}/tx/'+(order.txHash||''));
 
@@ -3050,19 +3149,29 @@ function orderDetailPage(id: string) {
       // Role badge
       +(isSeller ? '<div class="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm font-medium text-amber-800"><i class="fas fa-store"></i> You are the seller of this order</div>' : '')
       +(isBuyer  ? '<div class="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-xl text-sm font-medium text-blue-800"><i class="fas fa-shopping-bag"></i> You are the buyer of this order</div>' : '')
+      // Funds Released banner
+      +(order.status==='funds_released'
+        ? '<div class="card p-6 text-center bg-emerald-50 border-emerald-200">'
+          +'<div class="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-3">'
+          +'<i class="fas fa-check-circle text-3xl text-emerald-500"></i></div>'
+          +'<h3 class="text-xl font-bold text-emerald-800 mb-1">Funds Released!</h3>'
+          +'<p class="text-emerald-700 text-sm mb-4">The escrow has been fully completed. Funds were released to the seller wallet on Arc Network.</p>'
+          +'<button onclick="showReceiptModalDetail()" class="btn-primary mx-auto"><i class="fas fa-receipt mr-2"></i>View & Download Receipt</button>'
+          +'</div>'
+        : '')
       // Escrow Status
       +'<div class="card p-6">'
       +'<div class="flex items-center justify-between mb-4">'
       +'<h2 class="font-bold text-slate-800 flex items-center gap-2"><i class="fas fa-route text-red-500"></i> Escrow Status (Arc Network)</h2>'
       +'<span class="arc-badge"><i class="fas fa-network-wired text-xs"></i> Arc Testnet</span></div>'
       +'<div class="flex items-center gap-2 overflow-x-auto">'
-      +['Pending','Locked','Shipped','Delivered','Complete'].map((s,i)=>
+      +['Pending','Locked','Shipped','Delivered','Complete','Released'].map((s,i)=>
           '<div class="flex items-center gap-2 shrink-0">'
           +'<div class="flex flex-col items-center">'
           +'<div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold '+(i<=statusIdx?'bg-green-500 text-white':'bg-slate-200 text-slate-400')+'">'
           +(i<statusIdx?'<i class="fas fa-check text-xs"></i>':(i+1))+'</div>'
           +'<p class="text-xs text-center mt-1 text-slate-400 w-14">'+s+'</p></div>'
-          +(i<4?'<div class="w-8 h-0.5 '+(i<statusIdx?'bg-green-500':'bg-slate-200')+' mb-4"></div>':'')
+          +(i<5?'<div class="w-8 h-0.5 '+(i<statusIdx?'bg-green-500':'bg-slate-200')+' mb-4"></div>':'')
           +'</div>'
         ).join('')
       +'</div></div>'
@@ -3114,54 +3223,8 @@ function orderDetailPage(id: string) {
   }
 
   function showReceiptModalDetail(){
-    const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
-    const order=orders.find(o=>o.id==='${id}');
-    if(!order){showToast('Order not found','error');return;}
-    const root=document.getElementById('receipt-modal-root');
-    if(!root) return;
-    const explorerUrl=order.explorerUrl||('${ARC.explorer}/tx/'+(order.txHash||''));
-    const items=order.items||[];
-    const itemsHtml=items.length
-      ? items.map(it=>'<div class="flex justify-between text-xs py-1 border-b border-slate-100"><span class="text-slate-600 truncate">'+(it.title||it.name||'Product')+'</span><span class="font-medium text-slate-700 shrink-0 ml-2">'+(it.quantity||1)+'x '+(parseFloat(it.price)||0).toFixed(2)+' '+(it.currency||it.token||'USDC')+'</span></div>').join('')
-      : '<p class="text-xs text-slate-400">No item details</p>';
-    root.innerHTML='<div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" id="receipt-overlay">'
-      +'<div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">'
-      +'<div class="flex items-center justify-between p-5 border-b border-slate-100">'
-      +'<h2 class="font-bold text-slate-800 flex items-center gap-2"><i class="fas fa-receipt text-red-500"></i> Order Receipt</h2>'
-      +'<button onclick="document.getElementById(\\'receipt-modal-root\\').innerHTML=\\'\\'" class="text-slate-400 hover:text-slate-700 text-xl w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100">&times;</button>'
-      +'</div>'
-      +'<div class="p-5 space-y-4">'
-      +'<div class="bg-slate-50 rounded-xl p-4 space-y-2">'
-      +'<div class="flex justify-between"><span class="text-xs text-slate-500">Order ID</span><span class="text-xs font-mono font-bold text-slate-800">'+order.id+'</span></div>'
-      +'<div class="flex justify-between"><span class="text-xs text-slate-500">Date</span><span class="text-xs text-slate-700">'+new Date(order.createdAt).toLocaleString()+'</span></div>'
-      +'<div class="flex justify-between"><span class="text-xs text-slate-500">Status</span><span class="text-xs font-bold capitalize text-green-700">'+(order.status||'').replace(/_/g,' ')+'</span></div>'
-      +'<div class="flex justify-between"><span class="text-xs text-slate-500">Network</span><span class="text-xs text-slate-700">Arc Testnet (Chain 5042002)</span></div>'
-      +'</div>'
-      +'<div class="space-y-2">'
-      +'<p class="text-xs font-bold text-slate-700 uppercase tracking-wide">Wallets</p>'
-      +'<div class="bg-slate-50 rounded-xl p-3 space-y-2">'
-      +'<div><p class="text-xs text-slate-500 mb-0.5">Buyer</p><p class="text-xs font-mono break-all text-slate-800">'+(order.buyerAddress||'—')+'</p></div>'
-      +'<div><p class="text-xs text-slate-500 mb-0.5">Seller</p><p class="text-xs font-mono break-all text-slate-800">'+(order.sellerAddress||'—')+'</p></div>'
-      +'</div></div>'
-      +'<div class="space-y-2">'
-      +'<p class="text-xs font-bold text-slate-700 uppercase tracking-wide">Products</p>'
-      +'<div class="bg-slate-50 rounded-xl p-3">'+itemsHtml+'</div>'
-      +'</div>'
-      +'<div class="space-y-2">'
-      +'<p class="text-xs font-bold text-slate-700 uppercase tracking-wide">Payment</p>'
-      +'<div class="bg-slate-50 rounded-xl p-3 space-y-1">'
-      +'<div class="flex justify-between"><span class="text-xs text-slate-500">Total Amount</span><span class="font-bold text-red-600">'+(order.amount||0)+' '+(order.token||'USDC')+'</span></div>'
-      +'<div class="flex justify-between items-start gap-2"><span class="text-xs text-slate-500 shrink-0">Transaction Hash</span><a href="'+explorerUrl+'" target="_blank" class="text-xs font-mono text-blue-600 hover:underline break-all">'+(order.txHash||'Pending')+'</a></div>'
-      +'</div></div>'
-      +'</div>'
-      +'<div class="p-4 border-t border-slate-100 flex justify-end gap-2">'
-      +'<button onclick="document.getElementById(\\'receipt-modal-root\\').innerHTML=\\'\\'" class="btn-secondary text-sm py-2">Close</button>'
-      +'<a href="'+explorerUrl+'" target="_blank" class="btn-primary text-sm py-2"><i class="fas fa-external-link-alt mr-1"></i>View on Explorer</a>'
-      +'</div>'
-      +'</div></div>';
-    document.getElementById('receipt-overlay').addEventListener('click',function(e){
-      if(e.target===this) root.innerHTML='';
-    });
+    // Delegate to the shared showReceiptModal function
+    showReceiptModal('${id}');
   }
   </script>
   `)
