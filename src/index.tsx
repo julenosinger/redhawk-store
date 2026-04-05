@@ -1449,7 +1449,7 @@ function marketplacePage() {
     const cat   = (p.category||'Other').replace(/</g,'&lt;');
     const tok   = p.token || 'USDC';
     const imgEl = p.image
-      ? '<img src="' + p.image + '" class="w-full h-48 object-cover" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">'
+      ? '<img src="' + p.image + '" class="w-full h-48 object-cover" onerror="this.style.display=&quot;none&quot;;this.nextElementSibling.style.display=&quot;flex&quot;">'
         + '<div class="w-full h-48 bg-slate-100 items-center justify-center text-slate-300 hidden"><i class="fas fa-image text-4xl"></i></div>'
       : '<div class="w-full h-48 bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center text-slate-300"><i class="fas fa-image text-4xl"></i></div>';
     const sellerShort = p.seller_id ? (p.seller_id.slice(0,6)+'…'+p.seller_id.slice(-4)) : '—';
@@ -1668,34 +1668,45 @@ function cartPage() {
     }
     emptyMsg.style.display = 'none';
     let subtotal = 0, gas = 0;
-    container.innerHTML = cart.map(item => {
-      const qty    = item.quantity || 1;
-      const price  = parseFloat(item.price) || 0;
-      const cur    = item.currency || item.token || 'USDC';
-      const title  = (item.title  || item.name || 'Product').replace(/</g,'&lt;');
-      subtotal    += price * qty;
-      gas         += 0.01;
-      return '<div class="card p-4 mb-3 flex items-center gap-4">'
-        + (item.image
-            ? '<img src="' + item.image + '" class="w-16 h-16 rounded-xl object-cover flex-shrink-0"'
-              + ' onerror="this.style.display=\'none\'">'
-            : '<div class="w-16 h-16 rounded-xl bg-slate-100 flex items-center justify-center text-slate-300 flex-shrink-0"><i class="fas fa-box"></i></div>')
+    const rows = [];
+    for (const item of cart) {
+      const qty   = item.quantity || 1;
+      const price = parseFloat(item.price) || 0;
+      const cur   = item.currency || item.token || 'USDC';
+      const title = (item.title || item.name || 'Product').replace(/</g,'&lt;');
+      const id    = (item.id || '').replace(/"/g,'');
+      subtotal += price * qty;
+      gas      += 0.01;
+      const imgHtml = item.image
+        ? '<img src="' + item.image + '" class="w-16 h-16 rounded-xl object-cover flex-shrink-0" onerror="this.style.display=&quot;none&quot;">'
+        : '<div class="w-16 h-16 rounded-xl bg-slate-100 flex items-center justify-center text-slate-300 flex-shrink-0"><i class="fas fa-box"></i></div>';
+      rows.push(
+        '<div class="card p-4 mb-3 flex items-center gap-4">'
+        + imgHtml
         + '<div class="flex-1 min-w-0">'
         + '<p class="font-semibold text-slate-800 text-sm truncate">' + title + '</p>'
         + '<p class="text-red-600 font-bold text-sm">' + price.toFixed(2) + ' ' + cur + '</p>'
-        + '<p class="text-xs text-slate-400">Unit price · Qty: ' + qty + '</p>'
+        + '<p class="text-xs text-slate-400">Qty: ' + qty + '</p>'
         + '</div>'
         + '<div class="flex items-center gap-2 flex-shrink-0">'
-        + '<button onclick="cartChangeQty(\'' + item.id + '\',-1)" '
-        + 'class="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center hover:bg-red-100 font-bold text-sm">−</button>'
+        + '<button data-id="' + id + '" data-delta="-1" class="qty-btn w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center hover:bg-red-100 font-bold text-sm">−</button>'
         + '<span class="font-bold w-6 text-center text-sm">' + qty + '</span>'
-        + '<button onclick="cartChangeQty(\'' + item.id + '\',1)" '
-        + 'class="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center hover:bg-red-100 font-bold text-sm">+</button>'
+        + '<button data-id="' + id + '" data-delta="1" class="qty-btn w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center hover:bg-red-100 font-bold text-sm">+</button>'
         + '</div>'
-        + '<button onclick="cartRemove(\'' + item.id + '\')" '
-        + 'class="text-red-400 hover:text-red-600 ml-2 flex-shrink-0"><i class="fas fa-trash text-sm"></i></button>'
-        + '</div>';
-    }).join('');
+        + '<button data-id="' + id + '" class="rm-btn text-red-400 hover:text-red-600 ml-2 flex-shrink-0"><i class="fas fa-trash text-sm"></i></button>'
+        + '</div>'
+      );
+    }
+    container.innerHTML = rows.join('');
+    // Attach click handlers via event delegation (avoids inline onclick quoting issues)
+    container.querySelectorAll('.qty-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        cartChangeQty(this.dataset.id, parseInt(this.dataset.delta));
+      });
+    });
+    container.querySelectorAll('.rm-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() { cartRemove(this.dataset.id); });
+    });
 
     const fee = subtotal * 0.015;
     const tok = cart[0]?.currency || cart[0]?.token || 'USDC';
@@ -1849,11 +1860,11 @@ function checkoutPage() {
     container.innerHTML = cart.map(item => {
       const qty  = item.quantity || item.qty || 1;
       const price= parseFloat(item.price) || 0;
-      const title= item.title || item.name || 'Product';
+      const title= (item.title || item.name || 'Product').replace(/</g,'&lt;');
       const cur  = item.currency || item.token || 'USDC';
       total += price * qty;
       return '<div class="flex items-center gap-3">'
-        +(item.image?'<img src="'+item.image+'" class="w-12 h-12 rounded-lg object-cover object-center" onerror="this.style.display=\'none\'"/>'
+        +(item.image?'<img src="'+item.image+'" class="w-12 h-12 rounded-lg object-cover object-center" onerror="this.style.display=&quot;none&quot;"/>'
                    :'<div class="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center text-slate-300 flex-shrink-0"><i class="fas fa-box"></i></div>')
         +'<div class="flex-1 min-w-0"><p class="font-medium text-slate-800 text-xs truncate">'+title+'</p>'
         +'<p class="text-slate-400 text-xs">Qty: '+qty+'</p></div>'
@@ -2045,7 +2056,7 @@ function walletPage() {
 
       <!-- Actions -->
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
-        ${[['fas fa-paper-plane','Send','openSendModal()'],['fas fa-qrcode','Receive','openReceiveModal()'],['fas fa-external-link-alt','Explorer','openExplorer()'],['fas fa-history','Orders','window.location.href=\'/orders\'']].map(([icon,label,action])=>`
+        ${[['fas fa-paper-plane','Send','openSendModal()'],['fas fa-qrcode','Receive','openReceiveModal()'],['fas fa-external-link-alt','Explorer','openExplorer()'],['fas fa-history','Orders','window.location.href=&quot;/orders&quot;']].map(([icon,label,action])=>`
           <button onclick="${action}" class="card p-4 flex flex-col items-center gap-2 hover:border-red-300 hover:bg-red-50 transition-all">
             <div class="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center text-red-600"><i class="${icon}"></i></div>
             <p class="text-sm font-semibold text-slate-700">${label}</p>
@@ -2676,9 +2687,12 @@ function ordersPage() {
         +'</div>'
         +'<div class="flex gap-2">'
         +'<a href="/orders/'+o.id+'" class="btn-primary text-xs py-1.5 px-3">View Details</a>'
-        +(o.status==='shipped'?'<button onclick="confirmDelivery(\''+o.id+'\')" class="btn-secondary text-xs py-1.5 px-3">Confirm Delivery</button>':'')
+        +(o.status==='shipped'?'<button data-oid="'+o.id+'" class="confirm-delivery-btn btn-secondary text-xs py-1.5 px-3">Confirm Delivery</button>':'')
         +'</div></div>';
     }).join('');
+    document.querySelectorAll('.confirm-delivery-btn').forEach(function(b){
+      b.addEventListener('click',function(){ confirmDelivery(this.dataset.oid); });
+    });
   });
 
   function confirmDelivery(orderId){
@@ -2754,13 +2768,20 @@ function orderDetailPage(id: string) {
       +'</div></div>'
       // Actions
       +'<div class="flex flex-wrap gap-3">'
-      +(order.status==='escrow_locked'?'<button onclick="updateOrderStatus(\''+order.id+'\',\'shipped\')" class="btn-primary">Mark Shipped</button>':'')
-      +(order.status==='shipped'?'<button onclick="updateOrderStatus(\''+order.id+'\',\'completed\')" class="btn-primary">Confirm Delivery</button>':'')
-      +'<button onclick="openDispute(\''+order.id+'\')" class="btn-secondary"><i class="fas fa-gavel"></i> Open Dispute</button>'
+      +(order.status==='escrow_locked'?'<button data-oid="'+order.id+'" data-status="shipped" class="update-status-btn btn-primary">Mark Shipped</button>':'')
+      +(order.status==='shipped'?'<button data-oid="'+order.id+'" data-status="completed" class="update-status-btn btn-primary">Confirm Delivery</button>':'')
+      +'<button data-oid="'+order.id+'" class="open-dispute-btn btn-secondary"><i class="fas fa-gavel"></i> Open Dispute</button>'
       +'<a href="'+explorerTxUrl+'" target="_blank" class="btn-secondary text-sm"><i class="fas fa-external-link-alt"></i> Arc Explorer</a>'
       +'<button onclick="downloadReceipt()" class="btn-secondary text-sm"><i class="fas fa-file-download"></i> Receipt (JSON)</button>'
       +'</div>'
       +'</div>';
+    // Attach event listeners for action buttons
+    document.querySelectorAll('.update-status-btn').forEach(function(b){
+      b.addEventListener('click',function(){ updateOrderStatus(this.dataset.oid, this.dataset.status); });
+    });
+    document.querySelectorAll('.open-dispute-btn').forEach(function(b){
+      b.addEventListener('click',function(){ openDispute(this.dataset.oid); });
+    });
   });
 
   function updateOrderStatus(id,s){
@@ -3355,10 +3376,13 @@ function disputesPage() {
       +'<p class="text-sm text-slate-600 mb-1">Locked: <strong class="text-red-600">'+(d.amount||0)+' '+(d.token||'USDC')+'</strong></p>'
       +'<p class="text-xs text-slate-400 addr-mono mb-3">Tx: <a href="'+(d.explorerUrl||ARC.explorer+'/tx/'+d.txHash)+'" target="_blank" class="text-blue-500 hover:underline">'+(d.txHash||'').substring(0,24)+'…</a></p>'
       +'<div class="flex gap-2">'
-      +'<button onclick="resolveDispute(\''+d.id+'\',\'buyer\')" class="btn-primary text-xs py-1.5">Refund Buyer</button>'
-      +'<button onclick="resolveDispute(\''+d.id+'\',\'seller\')" class="btn-secondary text-xs py-1.5">Release to Seller</button>'
+      +'<button data-did="'+d.id+'" data-favor="buyer" class="resolve-btn btn-primary text-xs py-1.5">Refund Buyer</button>'
+      +'<button data-did="'+d.id+'" data-favor="seller" class="resolve-btn btn-secondary text-xs py-1.5">Release to Seller</button>'
       +'</div></div>'
     ).join('');
+    document.querySelectorAll('.resolve-btn').forEach(function(b){
+      b.addEventListener('click',function(){ resolveDispute(this.dataset.did, this.dataset.favor); });
+    });
   });
   function resolveDispute(id,favor){
     const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
