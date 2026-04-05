@@ -1081,8 +1081,6 @@ function homePage() {
     { name:'Gaming',                 icon:'fas fa-gamepad',       accent:'#8b5cf6', bg:'#f5f3ff' },
     { name:'Audio',                  icon:'fas fa-headphones',    accent:'#10b981', bg:'#ecfdf5' },
     { name:'Photography',            icon:'fas fa-camera',        accent:'#f59e0b', bg:'#fffbeb' },
-    { name:'Wearables',              icon:'fas fa-watch',         accent:'#ec4899', bg:'#fdf2f8' },
-    { name:'Accessories',            icon:'fas fa-keyboard',      accent:'#ef4444', bg:'#fef2f2' },
     { name:'Pet Shop',               icon:'fas fa-paw',           accent:'#f97316', bg:'#fff7ed' },
     { name:'Baby & Kids',            icon:'fas fa-baby',          accent:'#0ea5e9', bg:'#f0f9ff' },
     { name:'Beauty & Personal Care', icon:'fas fa-spa',           accent:'#fb7185', bg:'#fff1f2' },
@@ -1611,18 +1609,20 @@ function homePage() {
   /* ─── Trust bar ─── */
   .home-trust-bar{background:#fff;border-bottom:1px solid #f0f4f8;}
   .home-trust-bar-inner {
-    max-width:1320px;margin:0 auto;padding:0 24px;
-    display:flex;flex-wrap:wrap;justify-content:center;
+    max-width:1320px;margin:0 auto;padding:0 16px;
+    display:flex;flex-wrap:nowrap;justify-content:center;
+    overflow:hidden;
   }
   .home-trust-item {
-    display:flex;align-items:center;gap:14px;
-    padding:18px 28px;border-right:1px solid #f0f4f8;
+    display:flex;align-items:center;gap:10px;
+    padding:16px 18px;border-right:1px solid #f0f4f8;
+    flex:1 1 0;min-width:0;
     transition:background .2s;
   }
   .home-trust-item:hover{background:#fafbfc;}
-  .home-trust-icon{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:15px;}
-  .home-trust-title{font-weight:700;color:#1e293b;font-size:13px;margin:0;}
-  .home-trust-sub{color:#94a3b8;font-size:11px;margin:0;}
+  .home-trust-icon{width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px;}
+  .home-trust-title{font-weight:700;color:#1e293b;font-size:12px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .home-trust-sub{color:#94a3b8;font-size:10px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 
   /* ─── Demo notice ─── */
   .home-demo-notice {
