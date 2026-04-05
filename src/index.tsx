@@ -3452,265 +3452,417 @@ function ordersPage() {
   <div id="receipt-modal-root"></div>
 
   <script>
-  var _currentOrderTab = 'purchases';
+  /* ─────────────────────────────────────────────────────────────────────────
+     ORDERS PAGE — Initializer & Renderer
+     Fix: always clear loading state, safety timeout, loading guard,
+          async/await, try/catch/finally, separate Purchases vs Sales logic.
+  ───────────────────────────────────────────────────────────────────────── */
 
-  function switchOrderTab(tab){
+  var _currentOrderTab  = 'purchases';
+  var _ordersLoading    = false;   /* guard: prevent concurrent renders       */
+  var _walletRetryCount = 0;       /* limit wallet-availability retries       */
+  var _safetyTimer      = null;    /* safety timeout handle                   */
+  var MAX_WALLET_RETRIES = 15;     /* 15 × 300 ms = 4.5 s max wait           */
+  var SAFETY_TIMEOUT_MS  = 9000;   /* 9 s hard stop for the entire load cycle */
+
+  /* ── helpers ─────────────────────────────────────────────────── */
+  function _showLoadingState(msg) {
+    var c = document.getElementById('orders-container');
+    if (c) c.innerHTML =
+      '<div class="card p-8 text-center">'
+      + '<div class="loading-spinner-lg mx-auto mb-3"></div>'
+      + '<p class="text-slate-400 text-sm">' + (msg || 'Loading your orders\u2026') + '</p>'
+      + '</div>';
+  }
+
+  function _showErrorState(msg) {
+    var c = document.getElementById('orders-container');
+    if (c) c.innerHTML =
+      '<div class="card p-8 text-center">'
+      + '<i class="fas fa-exclamation-triangle text-3xl text-yellow-400 mb-3"></i>'
+      + '<p class="text-slate-500 text-sm">' + (msg || 'Could not load orders.') + '</p>'
+      + '<button onclick="renderOrders(_currentOrderTab)" class="btn-secondary mt-4 mx-auto text-sm">'
+      + '<i class="fas fa-redo mr-1"></i>Retry</button>'
+      + '</div>';
+  }
+
+  function _clearSafetyTimer() {
+    if (_safetyTimer !== null) { clearTimeout(_safetyTimer); _safetyTimer = null; }
+  }
+
+  function _normaliseOrder(o) {
+    return {
+      id:            o.id || o.orderId || ('ORD-' + Date.now()),
+      txHash:        o.txHash || o.tx_hash || '',
+      buyerAddress:  (o.buyerAddress  || o.buyer_address  || o.buyer  || '').toLowerCase(),
+      sellerAddress: (o.sellerAddress || o.seller_address || o.seller || '').toLowerCase(),
+      amount:        o.amount  || 0,
+      token:         o.token   || 'USDC',
+      status:        o.status  || 'escrow_locked',
+      createdAt:     o.createdAt || o.created_at || new Date().toISOString(),
+      explorerUrl:   o.explorerUrl || ('https://testnet.arcscan.app/tx/' + (o.txHash || '')),
+      items:         o.items        || [],
+      shippingInfo:  o.shippingInfo || null,
+      shippedAt:     o.shippedAt    || null,
+      deliveredAt:   o.deliveredAt  || null,
+      releasedAt:    o.releasedAt   || null,
+      productId:     o.productId    || null
+    };
+  }
+
+  /* ── tab switcher ─────────────────────────────────────────────── */
+  function switchOrderTab(tab) {
     _currentOrderTab = tab;
-    const tp = document.getElementById('tab-purchases');
-    const ts = document.getElementById('tab-sales');
-    if(tp && ts){
-      if(tab==='purchases'){
-        tp.className='px-4 py-2 rounded-lg text-sm font-semibold bg-red-600 text-white shadow-sm';
-        ts.className='px-4 py-2 rounded-lg text-sm font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200';
+    var tp = document.getElementById('tab-purchases');
+    var ts = document.getElementById('tab-sales');
+    if (tp && ts) {
+      if (tab === 'purchases') {
+        tp.className = 'px-4 py-2 rounded-lg text-sm font-semibold bg-red-600 text-white shadow-sm';
+        ts.className = 'px-4 py-2 rounded-lg text-sm font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200';
       } else {
-        ts.className='px-4 py-2 rounded-lg text-sm font-semibold bg-red-600 text-white shadow-sm';
-        tp.className='px-4 py-2 rounded-lg text-sm font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200';
+        ts.className = 'px-4 py-2 rounded-lg text-sm font-semibold bg-red-600 text-white shadow-sm';
+        tp.className = 'px-4 py-2 rounded-lg text-sm font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200';
       }
     }
     renderOrders(tab);
   }
 
-  function renderOrders(tab){
-    var container=document.getElementById('orders-container');
-    if(!container) return;
+  /* ── main renderer (async) ────────────────────────────────────── */
+  async function renderOrders(tab) {
 
-    /* Safety guard: globalScript may not have loaded yet — retry once */
-    if(typeof getStoredWallet !== 'function'){
-      container.innerHTML='<div class="card p-8 text-center"><div class="loading-spinner-lg mx-auto mb-3"></div><p class="text-slate-400 text-sm">Initializing wallet…</p></div>';
-      setTimeout(function(){ renderOrders(tab); }, 300);
-      return;
-    }
+    /* 1. Guard: prevent concurrent calls when user clicks tabs rapidly */
+    if (_ordersLoading) return;
+    _ordersLoading = true;
+    _walletRetryCount = 0;
+    _clearSafetyTimer();
 
-    var wallet=getStoredWallet();
-    if(!wallet){
-      container.innerHTML='<div class="card p-12 text-center"><div class="empty-state"><i class="fas fa-wallet"></i><h3 class="font-bold text-slate-600 mb-2">Connect Wallet</h3><p class="text-sm mb-4">Connect your wallet to view orders associated with your Arc address.</p><a href="/wallet" class="btn-primary mx-auto"><i class="fas fa-wallet"></i> Connect Wallet</a></div></div>';
-      return;
-    }
-    var myAddr = wallet.address.toLowerCase();
-    var rawOrders = localStorage.getItem('rh_orders');
-    var allOrders = [];
-    try { allOrders = JSON.parse(rawOrders || '[]'); } catch(e){ allOrders = []; }
+    var container = document.getElementById('orders-container');
+    if (!container) { _ordersLoading = false; return; }
 
-    /* Normalise field names — some orders may store buyer/seller differently */
-    allOrders = allOrders.map(function(o){
-      return {
-        id: o.id || o.orderId || ('ORD-'+Date.now()),
-        txHash: o.txHash || o.tx_hash || '',
-        buyerAddress: (o.buyerAddress || o.buyer_address || o.buyer || '').toLowerCase(),
-        sellerAddress: (o.sellerAddress || o.seller_address || o.seller || '').toLowerCase(),
-        amount: o.amount || 0,
-        token: o.token || 'USDC',
-        status: o.status || 'escrow_locked',
-        createdAt: o.createdAt || o.created_at || new Date().toISOString(),
-        explorerUrl: o.explorerUrl || ('https://testnet.arcscan.app/tx/'+(o.txHash||'')),
-        items: o.items || [],
-        shippingInfo: o.shippingInfo || null,
-        shippedAt: o.shippedAt || null,
-        deliveredAt: o.deliveredAt || null,
-        releasedAt: o.releasedAt || null
-      };
-    });
-
-    var orders = tab==='purchases'
-      ? allOrders.filter(function(o){ return o.buyerAddress === myAddr; })
-      : allOrders.filter(function(o){ return o.sellerAddress === myAddr; });
-
-    if(!orders.length){
-      var msg = tab==='purchases' ? 'No purchases yet.' : 'No sales yet.';
-      var subMsg = tab==='purchases'
-        ? 'When you buy a product, your order will appear here.'
-        : 'When a buyer purchases your product, the sale will appear here.';
-      container.innerHTML='<div class="card p-12 text-center">'
-        +'<div class="empty-state">'
-        +'<i class="fas fa-box-open"></i>'
-        +'<h3 class="font-bold text-slate-600 mb-2">'+msg+'</h3>'
-        +'<p class="text-sm mb-1 text-slate-400">'+subMsg+'</p>'
-        +'<p class="text-xs text-slate-300 mb-4 font-mono">Wallet: '+wallet.address.substring(0,14)+'…</p>'
-        +(tab==='purchases'
-          ? '<a href="/marketplace" class="btn-primary mx-auto"><i class="fas fa-store"></i> Browse Marketplace</a>'
-          : '<a href="/sell" class="btn-primary mx-auto"><i class="fas fa-plus-circle"></i> List a Product</a>')
-        +'</div></div>';
-      return;
-    }
-    var statusColors={
-      'escrow_locked':'bg-yellow-100 text-yellow-700',
-      'escrow_pending':'bg-blue-100 text-blue-700',
-      'shipped':'bg-indigo-100 text-indigo-700',
-      'delivered':'bg-teal-100 text-teal-700',
-      'completed':'bg-green-100 text-green-700',
-      'funds_released':'bg-emerald-100 text-emerald-800',
-      'dispute':'bg-red-100 text-red-700'
-    };
-    var statusLabels={
-      'escrow_locked':'Escrow Locked',
-      'escrow_pending':'Pending',
-      'shipped':'Shipped',
-      'delivered':'Delivered',
-      'completed':'Confirmed',
-      'funds_released':'Funds Released',
-      'dispute':'Dispute'
-    };
-    var isSeller = tab==='sales';
-    container.innerHTML=orders.slice().reverse().map(function(o){
-      var sc=statusColors[o.status]||'bg-slate-100 text-slate-700';
-      var sl=statusLabels[o.status]||o.status.replace(/_/g,' ');
-      var explorerUrl=o.explorerUrl||('https://testnet.arcscan.app/tx/'+(o.txHash||''));
-      /* Product name from items */
-      var productName = '';
-      if(o.items && o.items.length){
-        productName = (o.items[0].title||o.items[0].name||'Product');
-        if(o.items.length>1) productName += ' +' + (o.items.length-1) + ' more';
-      } else if(o.productId){
-        productName = 'Product #'+o.productId.substring(0,8);
+    /* 2. Safety timeout — force loading to end after SAFETY_TIMEOUT_MS */
+    _safetyTimer = setTimeout(function() {
+      if (_ordersLoading) {
+        _ordersLoading = false;
+        _showErrorState('Request timed out. Please refresh the page and try again.');
       }
-      /* Role-based action buttons */
-      var actionBtns='';
-      if(isSeller){
-        if(o.status==='escrow_locked') actionBtns+='<button data-oid="'+o.id+'" class="mark-shipped-btn btn-primary text-xs py-1.5 px-3"><i class="fas fa-shipping-fast mr-1"></i>Mark as Shipped</button>';
-        if(o.status==='completed')     actionBtns+='<button data-oid="'+o.id+'" class="release-funds-btn btn-primary text-xs py-1.5 px-3" style="background:#16a34a;border-color:#16a34a;"><i class="fas fa-coins mr-1"></i>Release Funds</button>';
+    }, SAFETY_TIMEOUT_MS);
+
+    _showLoadingState('Loading your orders\u2026');
+
+    try {
+
+      /* 3. Wait for getStoredWallet to become available (globalScript async load) */
+      await _waitForWallet();
+
+      var wallet = getStoredWallet();
+
+      /* 4. No wallet connected */
+      if (!wallet) {
+        container.innerHTML =
+          '<div class="card p-12 text-center"><div class="empty-state">'
+          + '<i class="fas fa-wallet"></i>'
+          + '<h3 class="font-bold text-slate-600 mb-2">Connect Wallet</h3>'
+          + '<p class="text-sm mb-4">Connect your wallet to view orders associated with your Arc address.</p>'
+          + '<a href="/wallet" class="btn-primary mx-auto"><i class="fas fa-wallet"></i> Connect Wallet</a>'
+          + '</div></div>';
+        return;   /* finally will run */
+      }
+
+      var myAddr = wallet.address.toLowerCase();
+
+      /* 5. Load & normalise orders from localStorage */
+      var allOrders = [];
+      try {
+        allOrders = JSON.parse(localStorage.getItem('rh_orders') || '[]');
+      } catch (parseErr) {
+        allOrders = [];
+      }
+      allOrders = allOrders.map(_normaliseOrder);
+
+      /* 6. Separate Purchases vs Sales */
+      if (tab === 'purchases') {
+        await _renderPurchases(container, allOrders, myAddr, wallet);
       } else {
-        if(o.status==='shipped') actionBtns+='<button data-oid="'+o.id+'" class="confirm-delivery-btn btn-secondary text-xs py-1.5 px-3"><i class="fas fa-check-circle mr-1"></i>Confirm Delivery</button>';
+        await _renderSales(container, allOrders, myAddr, wallet);
       }
-      /* Shipping info panel for buyer */
-      var shippingPanel='';
-      if(!isSeller && o.shippingInfo){
-        shippingPanel='<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:12px;margin-bottom:12px;">'
-          +'<p style="font-size:11px;font-weight:700;text-transform:uppercase;color:#0369a1;margin:0 0 8px;"><i class="fas fa-shipping-fast" style="margin-right:5px;"></i>Shipping Update</p>'
-          +'<div style="display:flex;flex-direction:column;gap:5px;font-size:12px;color:#1e293b;">'
-          +'<p style="margin:0;"><strong>Carrier:</strong> '+o.shippingInfo.carrier+'</p>'
-          +'<p style="margin:0;"><strong>Tracking #:</strong> <span style="font-family:monospace;">'+o.shippingInfo.trackingNumber+'</span></p>'
-          +(o.shippingInfo.trackingLink?'<p style="margin:0;"><strong>Track:</strong> <a href="'+o.shippingInfo.trackingLink+'" target="_blank" style="color:#0369a1;text-decoration:underline;">'+o.shippingInfo.trackingLink+'</a></p>':'')
-          +(o.shippingInfo.notes?'<p style="margin:0;color:#475569;font-style:italic;">'+o.shippingInfo.notes+'</p>':'')
-          +'</div></div>';
-      }
-      return '<div class="card p-5 mb-4 hover:shadow-md transition-shadow">'
-        +'<div class="flex items-start justify-between gap-4 mb-3">'
-        +'<div>'
-        +'<p class="font-bold text-slate-800 text-sm font-mono">'+o.id+'</p>'
-        +(productName?'<p class="text-slate-700 font-semibold text-sm mt-0.5">'+productName+'</p>':'')
-        +'<p class="text-slate-400 text-xs mt-0.5">'+new Date(o.createdAt).toLocaleString()+'</p>'
-        +'</div>'
-        +'<span class="px-3 py-1 rounded-full text-xs font-bold '+sc+' capitalize shrink-0">'+sl+'</span>'
-        +'</div>'
-        +'<div class="text-sm mb-3 flex flex-col gap-1">'
-        +'<p class="text-slate-600">Amount: <strong class="text-red-600">'+o.amount+' '+(o.token||'USDC')+'</strong></p>'
-        +(isSeller
-          ?'<p class="text-slate-400 text-xs addr-mono">Buyer: '+(o.buyerAddress||'—')+'</p>'
-          :'<p class="text-slate-400 text-xs addr-mono">Seller: '+(o.sellerAddress||'—')+'</p>')
-        +(o.txHash?'<p class="text-slate-400 text-xs addr-mono">Tx: <a href="'+explorerUrl+'" target="_blank" class="text-blue-500 hover:underline">'+o.txHash.substring(0,20)+'…</a></p>':'')
-        +'</div>'
-        +shippingPanel
-        +'<div class="flex gap-2 flex-wrap">'
-        +'<a href="/orders/'+o.id+'" class="btn-primary text-xs py-1.5 px-3"><i class="fas fa-eye mr-1"></i>View Details</a>'
-        +'<button data-oid="'+o.id+'" class="view-receipt-btn btn-secondary text-xs py-1.5 px-3"><i class="fas fa-receipt mr-1"></i>Receipt</button>'
-        +actionBtns
-        +'</div>'
-        +'</div>';
-    }).join('');
 
-    /* Attach event listeners */
-    document.querySelectorAll('.confirm-delivery-btn').forEach(function(b){
-      b.addEventListener('click',function(){ confirmDeliveryOrder(this.dataset.oid); });
-    });
-    document.querySelectorAll('.mark-shipped-btn').forEach(function(b){
-      b.addEventListener('click',function(){ markOrderShipped(this.dataset.oid); });
-    });
-    document.querySelectorAll('.release-funds-btn').forEach(function(b){
-      b.addEventListener('click',function(){ releaseFundsOrder(this.dataset.oid); });
-    });
-    document.querySelectorAll('.view-receipt-btn').forEach(function(b){
-      b.addEventListener('click',function(){ showReceiptModal(this.dataset.oid); });
-    });
-  }
+    } catch (err) {
+      /* 7. Any unexpected error → show friendly error state */
+      _showErrorState('Something went wrong loading your orders. Please try again.');
+      console.error('[redhawk orders] renderOrders error:', err);
 
-  function confirmDeliveryOrder(orderId){
-    const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
-    const i=orders.findIndex(o=>o.id===orderId);
-    if(i>=0){
-      orders[i].status='completed';
-      orders[i].deliveredAt=new Date().toISOString();
-      localStorage.setItem('rh_orders',JSON.stringify(orders));
-      showToast('Delivery confirmed! Funds released from escrow.','success');
-      setTimeout(()=>renderOrders(_currentOrderTab),600);
+    } finally {
+      /* 8. ALWAYS clear the loading flag and the safety timer */
+      _ordersLoading = false;
+      _clearSafetyTimer();
     }
   }
 
-  function markOrderShipped(orderId){
-    // Show shipping info form modal before marking shipped
-    var root=document.getElementById('receipt-modal-root');
-    if(!root) return;
-    root.innerHTML=
-      '<div id="ship-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;">'+
-      '<div style="background:#fff;border-radius:16px;box-shadow:0 25px 60px rgba(0,0,0,0.3);width:100%;max-width:480px;max-height:90vh;overflow-y:auto;">'+
-      '<div style="display:flex;align-items:center;justify-content:space-between;padding:20px 20px 14px;border-bottom:1px solid #f1f5f9;">'+
-      '<div style="display:flex;align-items:center;gap:10px;">'+
-      '<div style="width:36px;height:36px;border-radius:8px;background:#fef2f2;display:flex;align-items:center;justify-content:center;"><i class="fas fa-shipping-fast" style="color:#ef4444;"></i></div>'+
-      '<div><p style="font-weight:700;color:#1e293b;margin:0;font-size:15px;">Shipping Information</p>'+
-      '<p style="font-size:11px;color:#94a3b8;margin:0;">Order '+orderId+'</p></div></div>'+
-      '<button id="ship-close-btn" style="width:32px;height:32px;border:none;background:#f8fafc;border-radius:8px;cursor:pointer;font-size:18px;color:#64748b;">&times;</button>'+
-      '</div>'+
-      '<div style="padding:20px;display:flex;flex-direction:column;gap:14px;">'+
-      '<div><label style="display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;">Tracking Number *</label>'+
-      '<input id="ship-tracking" type="text" placeholder="e.g. 1Z999AA10123456784" style="width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;box-sizing:border-box;"/></div>'+
-      '<div><label style="display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;">Shipping Carrier *</label>'+
-      '<input id="ship-carrier" type="text" placeholder="e.g. UPS, FedEx, DHL, USPS" style="width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;box-sizing:border-box;"/></div>'+
-      '<div><label style="display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;">Tracking Link (optional)</label>'+
-      '<input id="ship-link" type="url" placeholder="https://tracking.example.com/ABC123" style="width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;box-sizing:border-box;"/></div>'+
-      '<div><label style="display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;">Additional Notes (optional)</label>'+
-      '<textarea id="ship-notes" rows="3" placeholder="Any notes for the buyer…" style="width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;resize:none;box-sizing:border-box;"></textarea></div>'+
-      '</div>'+
-      '<div style="padding:14px 20px;border-top:1px solid #f1f5f9;display:flex;gap:8px;justify-content:flex-end;">'+
-      '<button id="ship-cancel-btn" style="padding:8px 16px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;color:#64748b;font-size:13px;cursor:pointer;">Cancel</button>'+
-      '<button id="ship-confirm-btn" style="padding:8px 20px;border:none;border-radius:8px;background:#dc2626;color:#fff;font-size:13px;font-weight:600;cursor:pointer;"><i class="fas fa-paper-plane" style="margin-right:6px;"></i>Send Shipping Info to Buyer</button>'+
-      '</div></div></div>';
-    function closeShipModal(){ root.innerHTML=''; }
-    document.getElementById('ship-close-btn').onclick=closeShipModal;
-    document.getElementById('ship-cancel-btn').onclick=closeShipModal;
-    document.getElementById('ship-overlay').addEventListener('click',function(e){ if(e.target===this) closeShipModal(); });
-    document.getElementById('ship-confirm-btn').onclick=function(){
-      var tracking=document.getElementById('ship-tracking').value.trim();
-      var carrier=document.getElementById('ship-carrier').value.trim();
-      var link=document.getElementById('ship-link').value.trim();
-      var notes=document.getElementById('ship-notes').value.trim();
-      if(!tracking){showToast('Please enter a tracking number','error');return;}
-      if(!carrier){showToast('Please enter the shipping carrier','error');return;}
-      var orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
-      var i=orders.findIndex(function(o){return o.id===orderId;});
-      if(i>=0){
-        orders[i].status='shipped';
-        orders[i].shippedAt=new Date().toISOString();
-        orders[i].shippingInfo={trackingNumber:tracking,carrier:carrier,trackingLink:link||null,notes:notes||null,sentAt:new Date().toISOString()};
-        localStorage.setItem('rh_orders',JSON.stringify(orders));
-        closeShipModal();
-        showToast('Shipping info sent to buyer! Order marked as shipped.','success');
-        setTimeout(function(){renderOrders(_currentOrderTab);},600);
+  /* ── wait for globalScript wallet helper ──────────────────────── */
+  function _waitForWallet() {
+    return new Promise(function(resolve, reject) {
+      if (typeof getStoredWallet === 'function') { resolve(); return; }
+      var attempts = 0;
+      var iv = setInterval(function() {
+        attempts++;
+        if (typeof getStoredWallet === 'function') {
+          clearInterval(iv);
+          resolve();
+        } else if (attempts >= MAX_WALLET_RETRIES) {
+          clearInterval(iv);
+          /* Resolve anyway — caller will handle missing wallet */
+          resolve();
+        }
+      }, 300);
+    });
+  }
+
+  /* ── render: Purchases tab ────────────────────────────────────── */
+  async function _renderPurchases(container, allOrders, myAddr, wallet) {
+    var orders = allOrders.filter(function(o) { return o.buyerAddress === myAddr; });
+
+    if (!orders.length) {
+      container.innerHTML =
+        '<div class="card p-12 text-center"><div class="empty-state">'
+        + '<i class="fas fa-box-open"></i>'
+        + '<h3 class="font-bold text-slate-600 mb-2">No purchases yet.</h3>'
+        + '<p class="text-sm mb-1 text-slate-400">When you buy a product, your order will appear here.</p>'
+        + '<p class="text-xs text-slate-300 mb-4 font-mono">Wallet: ' + wallet.address.substring(0, 14) + '\u2026</p>'
+        + '<a href="/marketplace" class="btn-primary mx-auto"><i class="fas fa-store"></i> Browse Marketplace</a>'
+        + '</div></div>';
+      return;
+    }
+
+    container.innerHTML = _buildOrderCards(orders, false);
+    _attachOrderListeners();
+  }
+
+  /* ── render: Sales tab ────────────────────────────────────────── */
+  async function _renderSales(container, allOrders, myAddr, wallet) {
+    var orders = allOrders.filter(function(o) { return o.sellerAddress === myAddr; });
+
+    if (!orders.length) {
+      container.innerHTML =
+        '<div class="card p-12 text-center"><div class="empty-state">'
+        + '<i class="fas fa-box-open"></i>'
+        + '<h3 class="font-bold text-slate-600 mb-2">No sales yet.</h3>'
+        + '<p class="text-sm mb-1 text-slate-400">When a buyer purchases your product, the sale will appear here.</p>'
+        + '<p class="text-xs text-slate-300 mb-4 font-mono">Wallet: ' + wallet.address.substring(0, 14) + '\u2026</p>'
+        + '<a href="/sell" class="btn-primary mx-auto"><i class="fas fa-plus-circle"></i> List a Product</a>'
+        + '</div></div>';
+      return;
+    }
+
+    container.innerHTML = _buildOrderCards(orders, true);
+    _attachOrderListeners();
+  }
+
+  /* ── build card HTML ──────────────────────────────────────────── */
+  function _buildOrderCards(orders, isSeller) {
+    var statusColors = {
+      'escrow_locked':  'bg-yellow-100 text-yellow-700',
+      'escrow_pending': 'bg-blue-100 text-blue-700',
+      'shipped':        'bg-indigo-100 text-indigo-700',
+      'delivered':      'bg-teal-100 text-teal-700',
+      'completed':      'bg-green-100 text-green-700',
+      'funds_released': 'bg-emerald-100 text-emerald-800',
+      'dispute':        'bg-red-100 text-red-700'
+    };
+    var statusLabels = {
+      'escrow_locked':  'Escrow Locked',
+      'escrow_pending': 'Pending',
+      'shipped':        'Shipped',
+      'delivered':      'Delivered',
+      'completed':      'Confirmed',
+      'funds_released': 'Funds Released',
+      'dispute':        'Dispute'
+    };
+
+    return orders.slice().reverse().map(function(o) {
+      var sc  = statusColors[o.status] || 'bg-slate-100 text-slate-700';
+      var sl  = statusLabels[o.status] || o.status.replace(/_/g, ' ');
+      var exUrl = o.explorerUrl || ('https://testnet.arcscan.app/tx/' + (o.txHash || ''));
+
+      /* Product name */
+      var productName = '';
+      if (o.items && o.items.length) {
+        productName = o.items[0].title || o.items[0].name || 'Product';
+        if (o.items.length > 1) productName += ' +' + (o.items.length - 1) + ' more';
+      } else if (o.productId) {
+        productName = 'Product #' + String(o.productId).substring(0, 8);
       }
+
+      /* Role-based action buttons */
+      var actionBtns = '';
+      if (isSeller) {
+        if (o.status === 'escrow_locked')
+          actionBtns += '<button data-oid="' + o.id + '" class="mark-shipped-btn btn-primary text-xs py-1.5 px-3">'
+            + '<i class="fas fa-shipping-fast mr-1"></i>Mark as Shipped</button>';
+        if (o.status === 'completed')
+          actionBtns += '<button data-oid="' + o.id + '" class="release-funds-btn btn-primary text-xs py-1.5 px-3" style="background:#16a34a;border-color:#16a34a;">'
+            + '<i class="fas fa-coins mr-1"></i>Release Funds</button>';
+      } else {
+        if (o.status === 'shipped')
+          actionBtns += '<button data-oid="' + o.id + '" class="confirm-delivery-btn btn-secondary text-xs py-1.5 px-3">'
+            + '<i class="fas fa-check-circle mr-1"></i>Confirm Delivery</button>';
+      }
+
+      /* Shipping info panel (buyer only) */
+      var shippingPanel = '';
+      if (!isSeller && o.shippingInfo) {
+        shippingPanel =
+          '<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:12px;margin-bottom:12px;">'
+          + '<p style="font-size:11px;font-weight:700;text-transform:uppercase;color:#0369a1;margin:0 0 8px;">'
+          + '<i class="fas fa-shipping-fast" style="margin-right:5px;"></i>Shipping Update</p>'
+          + '<div style="display:flex;flex-direction:column;gap:5px;font-size:12px;color:#1e293b;">'
+          + '<p style="margin:0;"><strong>Carrier:</strong> ' + o.shippingInfo.carrier + '</p>'
+          + '<p style="margin:0;"><strong>Tracking #:</strong> <span style="font-family:monospace;">' + o.shippingInfo.trackingNumber + '</span></p>'
+          + (o.shippingInfo.trackingLink
+              ? '<p style="margin:0;"><strong>Track:</strong> <a href="' + o.shippingInfo.trackingLink + '" target="_blank" style="color:#0369a1;text-decoration:underline;">' + o.shippingInfo.trackingLink + '</a></p>'
+              : '')
+          + (o.shippingInfo.notes ? '<p style="margin:0;color:#475569;font-style:italic;">' + o.shippingInfo.notes + '</p>' : '')
+          + '</div></div>';
+      }
+
+      return '<div class="card p-5 mb-4 hover:shadow-md transition-shadow">'
+        + '<div class="flex items-start justify-between gap-4 mb-3">'
+        + '<div>'
+        + '<p class="font-bold text-slate-800 text-sm font-mono">' + o.id + '</p>'
+        + (productName ? '<p class="text-slate-700 font-semibold text-sm mt-0.5">' + productName + '</p>' : '')
+        + '<p class="text-slate-400 text-xs mt-0.5">' + new Date(o.createdAt).toLocaleString() + '</p>'
+        + '</div>'
+        + '<span class="px-3 py-1 rounded-full text-xs font-bold ' + sc + ' capitalize shrink-0">' + sl + '</span>'
+        + '</div>'
+        + '<div class="text-sm mb-3 flex flex-col gap-1">'
+        + '<p class="text-slate-600">Amount: <strong class="text-red-600">' + o.amount + ' ' + (o.token || 'USDC') + '</strong></p>'
+        + (isSeller
+            ? '<p class="text-slate-400 text-xs addr-mono">Buyer: '  + (o.buyerAddress  || '\u2014') + '</p>'
+            : '<p class="text-slate-400 text-xs addr-mono">Seller: ' + (o.sellerAddress || '\u2014') + '</p>')
+        + (o.txHash
+            ? '<p class="text-slate-400 text-xs addr-mono">Tx: <a href="' + exUrl + '" target="_blank" class="text-blue-500 hover:underline">' + o.txHash.substring(0, 20) + '\u2026</a></p>'
+            : '')
+        + '</div>'
+        + shippingPanel
+        + '<div class="flex gap-2 flex-wrap">'
+        + '<a href="/orders/' + o.id + '" class="btn-primary text-xs py-1.5 px-3"><i class="fas fa-eye mr-1"></i>View Details</a>'
+        + '<button data-oid="' + o.id + '" class="view-receipt-btn btn-secondary text-xs py-1.5 px-3"><i class="fas fa-receipt mr-1"></i>Receipt</button>'
+        + actionBtns
+        + '</div>'
+        + '</div>';
+    }).join('');
+  }
+
+  /* ── attach event listeners after render ─────────────────────── */
+  function _attachOrderListeners() {
+    document.querySelectorAll('.confirm-delivery-btn').forEach(function(b) {
+      b.addEventListener('click', function() { confirmDeliveryOrder(this.dataset.oid); });
+    });
+    document.querySelectorAll('.mark-shipped-btn').forEach(function(b) {
+      b.addEventListener('click', function() { markOrderShipped(this.dataset.oid); });
+    });
+    document.querySelectorAll('.release-funds-btn').forEach(function(b) {
+      b.addEventListener('click', function() { releaseFundsOrder(this.dataset.oid); });
+    });
+    document.querySelectorAll('.view-receipt-btn').forEach(function(b) {
+      b.addEventListener('click', function() { showReceiptModal(this.dataset.oid); });
+    });
+  }
+
+  /* ── action callbacks ────────────────────────────────────────── */
+  function confirmDeliveryOrder(orderId) {
+    try {
+      var orders = JSON.parse(localStorage.getItem('rh_orders') || '[]');
+      var i = orders.findIndex(function(o) { return o.id === orderId; });
+      if (i >= 0) {
+        orders[i].status      = 'completed';
+        orders[i].deliveredAt = new Date().toISOString();
+        localStorage.setItem('rh_orders', JSON.stringify(orders));
+        showToast('Delivery confirmed! Funds released from escrow.', 'success');
+        setTimeout(function() { renderOrders(_currentOrderTab); }, 600);
+      }
+    } catch(e) { showToast('Error updating order.', 'error'); }
+  }
+
+  function markOrderShipped(orderId) {
+    var root = document.getElementById('receipt-modal-root');
+    if (!root) return;
+    root.innerHTML =
+      '<div id="ship-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;">'
+      + '<div style="background:#fff;border-radius:16px;box-shadow:0 25px 60px rgba(0,0,0,0.3);width:100%;max-width:480px;max-height:90vh;overflow-y:auto;">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;padding:20px 20px 14px;border-bottom:1px solid #f1f5f9;">'
+      + '<div style="display:flex;align-items:center;gap:10px;">'
+      + '<div style="width:36px;height:36px;border-radius:8px;background:#fef2f2;display:flex;align-items:center;justify-content:center;"><i class="fas fa-shipping-fast" style="color:#ef4444;"></i></div>'
+      + '<div><p style="font-weight:700;color:#1e293b;margin:0;font-size:15px;">Shipping Information</p>'
+      + '<p style="font-size:11px;color:#94a3b8;margin:0;">Order ' + orderId + '</p></div></div>'
+      + '<button id="ship-close-btn" style="width:32px;height:32px;border:none;background:#f8fafc;border-radius:8px;cursor:pointer;font-size:18px;color:#64748b;">&times;</button>'
+      + '</div>'
+      + '<div style="padding:20px;display:flex;flex-direction:column;gap:14px;">'
+      + '<div><label style="display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;">Tracking Number *</label>'
+      + '<input id="ship-tracking" type="text" placeholder="e.g. 1Z999AA10123456784" style="width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;box-sizing:border-box;"/></div>'
+      + '<div><label style="display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;">Shipping Carrier *</label>'
+      + '<input id="ship-carrier" type="text" placeholder="e.g. UPS, FedEx, DHL, USPS" style="width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;box-sizing:border-box;"/></div>'
+      + '<div><label style="display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;">Tracking Link (optional)</label>'
+      + '<input id="ship-link" type="url" placeholder="https://tracking.example.com/ABC123" style="width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;box-sizing:border-box;"/></div>'
+      + '<div><label style="display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;">Additional Notes (optional)</label>'
+      + '<textarea id="ship-notes" rows="3" placeholder="Any notes for the buyer\u2026" style="width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;resize:none;box-sizing:border-box;"></textarea></div>'
+      + '</div>'
+      + '<div style="padding:14px 20px;border-top:1px solid #f1f5f9;display:flex;gap:8px;justify-content:flex-end;">'
+      + '<button id="ship-cancel-btn" style="padding:8px 16px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;color:#64748b;font-size:13px;cursor:pointer;">Cancel</button>'
+      + '<button id="ship-confirm-btn" style="padding:8px 20px;border:none;border-radius:8px;background:#dc2626;color:#fff;font-size:13px;font-weight:600;cursor:pointer;"><i class="fas fa-paper-plane" style="margin-right:6px;"></i>Send Shipping Info to Buyer</button>'
+      + '</div></div></div>';
+
+    function closeShipModal() { root.innerHTML = ''; }
+    document.getElementById('ship-close-btn').onclick  = closeShipModal;
+    document.getElementById('ship-cancel-btn').onclick = closeShipModal;
+    document.getElementById('ship-overlay').addEventListener('click', function(e) { if (e.target === this) closeShipModal(); });
+    document.getElementById('ship-confirm-btn').onclick = function() {
+      var tracking = document.getElementById('ship-tracking').value.trim();
+      var carrier  = document.getElementById('ship-carrier').value.trim();
+      var link     = document.getElementById('ship-link').value.trim();
+      var notes    = document.getElementById('ship-notes').value.trim();
+      if (!tracking) { showToast('Please enter a tracking number', 'error'); return; }
+      if (!carrier)  { showToast('Please enter the shipping carrier', 'error'); return; }
+      try {
+        var orders = JSON.parse(localStorage.getItem('rh_orders') || '[]');
+        var i = orders.findIndex(function(o) { return o.id === orderId; });
+        if (i >= 0) {
+          orders[i].status       = 'shipped';
+          orders[i].shippedAt    = new Date().toISOString();
+          orders[i].shippingInfo = { trackingNumber: tracking, carrier: carrier, trackingLink: link || null, notes: notes || null, sentAt: new Date().toISOString() };
+          localStorage.setItem('rh_orders', JSON.stringify(orders));
+          closeShipModal();
+          showToast('Shipping info sent to buyer! Order marked as shipped.', 'success');
+          setTimeout(function() { renderOrders(_currentOrderTab); }, 600);
+        }
+      } catch(e) { showToast('Error saving shipping info.', 'error'); }
     };
   }
 
-  function releaseFundsOrder(orderId){
-    const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
-    const i=orders.findIndex(o=>o.id===orderId);
-    if(i>=0){
-      orders[i].status='funds_released';
-      orders[i].releasedAt=new Date().toISOString();
-      localStorage.setItem('rh_orders',JSON.stringify(orders));
-      showToast('Funds released to seller wallet!','success');
-      // Show completion screen in container
-      const container=document.getElementById('orders-container');
-      if(container){
-        container.innerHTML='<div class="card p-10 text-center max-w-md mx-auto mt-4">'
-          +'<div class="w-20 h-20 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-4">'
-          +'<i class="fas fa-check-circle text-4xl text-emerald-500"></i></div>'
-          +'<h2 class="text-2xl font-bold text-slate-800 mb-2">Funds Released!</h2>'
-          +'<p class="text-slate-500 mb-1">Order <span class="font-mono font-bold text-slate-700">'+orderId+'</span></p>'
-          +'<p class="text-slate-500 text-sm mb-6">The escrow funds have been successfully released to the seller wallet on Arc Network.</p>'
-          +'<div class="flex flex-col gap-3">'
-          +'<button onclick="showReceiptModal(\''+orderId+'\')" class="btn-primary justify-center"><i class="fas fa-receipt mr-2"></i>View & Download Receipt</button>'
-          +'<button onclick="renderOrders(\'sales\')" class="btn-secondary justify-center"><i class="fas fa-list mr-2"></i>Back to My Sales</button>'
-          +'</div></div>';
+  function releaseFundsOrder(orderId) {
+    try {
+      var orders = JSON.parse(localStorage.getItem('rh_orders') || '[]');
+      var i = orders.findIndex(function(o) { return o.id === orderId; });
+      if (i >= 0) {
+        orders[i].status     = 'funds_released';
+        orders[i].releasedAt = new Date().toISOString();
+        localStorage.setItem('rh_orders', JSON.stringify(orders));
+        showToast('Funds released to seller wallet!', 'success');
+        var container = document.getElementById('orders-container');
+        if (container) {
+          container.innerHTML =
+            '<div class="card p-10 text-center max-w-md mx-auto mt-4">'
+            + '<div class="w-20 h-20 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-4">'
+            + '<i class="fas fa-check-circle text-4xl text-emerald-500"></i></div>'
+            + '<h2 class="text-2xl font-bold text-slate-800 mb-2">Funds Released!</h2>'
+            + '<p class="text-slate-500 mb-1">Order <span class="font-mono font-bold text-slate-700">' + orderId + '</span></p>'
+            + '<p class="text-slate-500 text-sm mb-6">The escrow funds have been successfully released to the seller wallet on Arc Network.</p>'
+            + '<div class="flex flex-col gap-3">'
+            + '<button onclick="showReceiptModal(&apos;' + orderId + '&apos;)" class="btn-primary justify-center"><i class="fas fa-receipt mr-2"></i>View &amp; Download Receipt</button>'
+            + '<button onclick="renderOrders(&apos;sales&apos;)" class="btn-secondary justify-center"><i class="fas fa-list mr-2"></i>Back to My Sales</button>'
+            + '</div></div>';
+        }
       }
-    }
+    } catch(e) { showToast('Error releasing funds.', 'error'); }
   }
 
   function showReceiptModal(orderId){
@@ -3855,36 +4007,45 @@ function ordersPage() {
     };
   }
 
-  /* ── Robust initializer: handles both "already loaded" and "not yet loaded" ── */
+  /* ── Robust initializer ──────────────────────────────────────── */
   function _ordersInit() {
-    if(typeof checkNetworkStatus === 'function'){
-      checkNetworkStatus(document.getElementById('orders-network-status'));
-    }
-    /* Show wallet bar and order count badge */
-    if(typeof getStoredWallet === 'function'){
-      var w = getStoredWallet();
-      if(w){
-        var bar = document.getElementById('orders-wallet-bar');
-        var addr = document.getElementById('orders-wallet-addr');
-        if(bar){ bar.classList.remove('hidden'); }
-        if(addr){ addr.textContent = w.address.substring(0,10)+'…'+w.address.slice(-6); }
-        /* Update summary badge */
-        try {
-          var all = JSON.parse(localStorage.getItem('rh_orders')||'[]');
-          var myAddr = w.address.toLowerCase();
-          var buys = all.filter(function(o){ return (o.buyerAddress||'').toLowerCase()===myAddr; }).length;
-          var sells = all.filter(function(o){ return (o.sellerAddress||'').toLowerCase()===myAddr; }).length;
-          var badge = document.getElementById('orders-summary-badge');
-          if(badge) badge.textContent = buys+' purchase'+(buys!==1?'s':'')+' · '+sells+' sale'+(sells!==1?'s':'');
-        } catch(e){}
+    /* Network status widget */
+    try {
+      if (typeof checkNetworkStatus === 'function') {
+        checkNetworkStatus(document.getElementById('orders-network-status'));
       }
-    }
+    } catch(e) {}
+
+    /* Wallet bar + summary badge — best-effort, don't block orders render */
+    try {
+      if (typeof getStoredWallet === 'function') {
+        var w = getStoredWallet();
+        if (w) {
+          var bar  = document.getElementById('orders-wallet-bar');
+          var addr = document.getElementById('orders-wallet-addr');
+          if (bar)  bar.classList.remove('hidden');
+          if (addr) addr.textContent = w.address.substring(0, 10) + '\u2026' + w.address.slice(-6);
+          try {
+            var all    = JSON.parse(localStorage.getItem('rh_orders') || '[]');
+            var myAddr = w.address.toLowerCase();
+            var buys   = all.filter(function(o) { return (o.buyerAddress  || o.buyer_address  || o.buyer  || '').toLowerCase() === myAddr; }).length;
+            var sells  = all.filter(function(o) { return (o.sellerAddress || o.seller_address || o.seller || '').toLowerCase() === myAddr; }).length;
+            var badge  = document.getElementById('orders-summary-badge');
+            if (badge) badge.textContent = buys + ' purchase' + (buys !== 1 ? 's' : '') + ' \u00b7 ' + sells + ' sale' + (sells !== 1 ? 's' : '');
+          } catch(e) {}
+        }
+      }
+    } catch(e) {}
+
+    /* Kick off the async orders render */
     renderOrders('purchases');
   }
-  if(document.readyState === 'loading'){
+
+  /* Bootstrap: run after DOM + globalScript are ready */
+  if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', _ordersInit);
   } else {
-    /* DOM already ready — setTimeout(0) lets globalScript functions finish registering */
+    /* Already loaded — setTimeout(0) ensures globalScript functions are registered */
     setTimeout(_ordersInit, 0);
   }
   </script>
