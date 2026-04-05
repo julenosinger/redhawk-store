@@ -1569,20 +1569,28 @@ function productPage(p: any) {
         <!-- Stock -->
         <p class="text-sm text-slate-500"><i class="fas fa-box mr-1 text-slate-400"></i>Stock: <strong>${stockN}</strong> unit${stockN !== 1 ? 's' : ''} available</p>
 
-        <!-- Action buttons -->
-        <div class="flex flex-col gap-3 mt-2">
+        <!-- Action buttons — rendered dynamically to support self-purchase check -->
+        <div id="product-action-btns" class="flex flex-col gap-3 mt-2">
           ${stockN > 0
-            ? `<button onclick="addToCartAndBuy('${p.id}','${title.replace(/'/g,"\\'")}',${price},'${tok}','${imgUrl}')"
+            ? `<button id="btn-buy-now" onclick="addToCartAndBuy('${p.id}','${title.replace(/'/g,"\\'")}',${price},'${tok}','${imgUrl}')"
                 class="btn-primary justify-center py-4 text-base">
                 <i class="fas fa-bolt"></i> Buy Now — ${price} ${tok}
               </button>
-              <button onclick="addToCartOnly('${p.id}','${title.replace(/'/g,"\\'")}',${price},'${tok}','${imgUrl}')"
+              <button id="btn-add-cart" onclick="addToCartOnly('${p.id}','${title.replace(/'/g,"\\'")}',${price},'${tok}','${imgUrl}')"
                 class="btn-secondary justify-center py-3">
                 <i class="fas fa-cart-plus"></i> Add to Cart
               </button>`
             : `<div class="card p-4 text-center text-slate-500 bg-slate-50">
                 <i class="fas fa-box-open mr-2"></i>Out of stock
               </div>`}
+        </div>
+
+        <!-- Seller management panel (hidden by default, shown if viewer is the seller) -->
+        <div id="seller-actions" class="hidden mt-2 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+          <p class="text-sm font-bold text-amber-800 flex items-center gap-2 mb-2">
+            <i class="fas fa-store"></i> Your listing
+          </p>
+          <p class="text-xs text-amber-700">You are the seller of this product. You cannot purchase your own product.</p>
         </div>
       </div>
     </div>
@@ -1594,6 +1602,18 @@ function productPage(p: any) {
   </div>
 
   <script>
+  (function(){
+    // Self-purchase check: hide buy buttons if viewer is the seller
+    const sellerAddr = '${seller}'.toLowerCase();
+    const w = getStoredWallet();
+    if(w && sellerAddr && w.address.toLowerCase() === sellerAddr){
+      const btns = document.getElementById('product-action-btns');
+      const panel = document.getElementById('seller-actions');
+      if(btns) btns.classList.add('hidden');
+      if(panel) panel.classList.remove('hidden');
+    }
+  })();
+
   function addToCartOnly(id, name, price, token, image) {
     CartStore.addToCart({ id, title: name, price: parseFloat(price), currency: token, image });
   }
@@ -1837,7 +1857,7 @@ function checkoutPage() {
         </div>
 
         <button onclick="confirmOrder()" id="co-confirm-btn" class="btn-primary w-full justify-center py-4 text-base font-bold">
-          <i class="fas fa-lock mr-2"></i> Confirmar & Bloquear Fundos
+          <i class="fas fa-lock mr-2"></i> Confirm & Lock Funds
         </button>
         <p class="text-xs text-slate-400 text-center mt-2">
           <i class="fas fa-shield-alt text-red-400 mr-1"></i>
@@ -1888,26 +1908,26 @@ function checkoutPage() {
 
   async function confirmOrder(){
     const w=getStoredWallet();
-    if(!w){showToast('Conecte uma carteira primeiro','error');window.location.href='/wallet';return;}
+    if(!w){showToast('Connect a wallet first','error');window.location.href='/wallet';return;}
 
-    // Verificar rede apenas para MetaMask (carteira interna usa RPC direto)
+    // Check network only for MetaMask (internal wallet uses direct RPC)
     if(w.type==='metamask' && window.ethereum){
       const onArc=await isOnArcNetwork();
       if(!onArc){
-        showToast('Trocando para Arc Testnet…','info');
+        showToast('Switching to Arc Testnet…','info');
         const switched = await switchToArc();
-        if(!switched){ showToast('Por favor troque para Arc Testnet na MetaMask','warning'); return; }
+        if(!switched){ showToast('Please switch to Arc Testnet in MetaMask','warning'); return; }
       }
     }
 
     const cart=getCart();
-    if(!cart.length){showToast('Carrinho vazio','error');return;}
+    if(!cart.length){showToast('Cart is empty','error');return;}
 
     const total=cart.reduce((s,i)=>s+(parseFloat(i.price)||0)*((i.quantity||i.qty)||1),0);
     const token=document.querySelector('input[name="token"]:checked')?.value||'USDC';
 
-    // ── Pegar endereço do seller do primeiro item do carrinho ──
-    // (em multi-seller future build isso seria por item)
+    // ── Get seller address from first cart item ──
+    // (in a multi-seller build this would be per item)
     let sellerAddress = '0x0000000000000000000000000000000000000000';
     try {
       const pid = cart[0]?.id;
@@ -1920,19 +1940,26 @@ function checkoutPage() {
       }
     } catch(e){}
 
-    // ── Mostrar modal de confirmação com detalhes reais ──
+    // ── Self-purchase check ──
+    if(sellerAddress && sellerAddress !== '0x0000000000000000000000000000000000000000' &&
+       w.address.toLowerCase() === sellerAddress.toLowerCase()){
+      showToast('You cannot purchase your own product','error');
+      return;
+    }
+
+    // ── Show confirmation modal with real details ──
     const confirmResult = await showTxConfirmModal({
-      action: 'Bloquear fundos em Escrow',
+      action: 'Lock Funds in Escrow',
       amount: total.toFixed(2),
       token: token,
       network: 'Arc Testnet (Chain ID: 5042002)',
-      note: 'Esta é uma transação TESTNET — nenhum valor real é usado. Sua wallet será aberta para assinar.'
+      note: 'This is a TESTNET transaction — no real value is used. Your wallet will open to sign.'
     });
-    if(!confirmResult){showToast('Transação cancelada','info');return;}
+    if(!confirmResult){showToast('Transaction cancelled','info');return;}
 
     // ── Desabilitar botão durante processamento ──
     const btn=document.getElementById('co-confirm-btn');
-    if(btn){btn.disabled=true;btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Aguardando wallet…';}
+    if(btn){btn.disabled=true;btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Waiting for wallet…';}
 
     let txHash = null;
     try {
@@ -1946,7 +1973,7 @@ function checkoutPage() {
         const signer   = await provider.getSigner();
         const amountWei = ethers.parseUnits(amountStr, 6);
 
-        showToast('Abrindo MetaMask para assinar…','info');
+        showToast('Opening MetaMask to sign…','info');
 
         let txResponse;
         if(token==='USDC'){
@@ -1966,17 +1993,17 @@ function checkoutPage() {
           txResponse = await eurcContract.transfer(sellerAddress, amountWei);
         }
         txHash = txResponse.hash;
-        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Confirmando na rede…';
-        showToast('Tx enviada! Hash: '+txHash.substring(0,14)+'…','info');
+        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Confirming on network…';
+        showToast('Tx sent! Hash: '+txHash.substring(0,14)+'…','info');
         try { await txResponse.wait(1); } catch(e){}
-        showToast('Confirmado na Arc Network!','success');
+        showToast('Confirmed on Arc Network!','success');
 
       } else if((w.type==='internal'||w.type==='imported') && w.privateKey && !w.privateKey.startsWith('[')){
         const provider  = new ethers.JsonRpcProvider(window.ARC.rpc);
         const wallet    = new ethers.Wallet(w.privateKey, provider);
         const amountWei = ethers.parseUnits(amountStr, 6);
 
-        showToast('Assinando com carteira interna…','info');
+        showToast('Signing with internal wallet…','info');
 
         let txResponse;
         if(token==='USDC'){
@@ -1995,25 +2022,25 @@ function checkoutPage() {
         }
         txHash = txResponse.hash;
         if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Confirmando na rede…';
-        showToast('Tx enviada! Hash: '+txHash.substring(0,14)+'…','info');
+        showToast('Tx sent! Hash: '+txHash.substring(0,14)+'…','info');
         try { await txResponse.wait(1); } catch(e){}
-        showToast('Transação confirmada!','success');
+        showToast('Transaction confirmed!','success');
 
       } else {
         const hasKey = w.privateKey && !w.privateKey.startsWith('[');
         showToast(hasKey
-          ? 'Use MetaMask ou carteira interna para assinar.'
-          : 'Chave privada indisponível. Recrie ou reimporte a carteira com seed phrase.','error');
-        if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-lock mr-2"></i>Confirmar & Bloquear Fundos';}
+          ? 'Use MetaMask or internal wallet to sign.'
+          : 'Private key unavailable. Recreate or re-import the wallet with seed phrase.','error');
+        if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-lock mr-2"></i>Confirm & Lock Funds';}
         return;
       }
     } catch(err){
       // Usuário cancelou ou erro na tx
       const msg = err.code==='ACTION_REJECTED'||err.code===4001
-        ? 'Transação rejeitada pelo usuário'
+        ? 'Transaction rejected by user'
         : 'Erro na transação: '+(err.shortMessage||err.message||'');
       showToast(msg,'error');
-      if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-lock mr-2"></i>Confirmar & Bloquear Fundos';}
+      if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-lock mr-2"></i>Confirm & Lock Funds';}
       return;
     }
 
@@ -2035,7 +2062,7 @@ function checkoutPage() {
         orders.push({...data.order, items:cart, explorerUrl:ARC.explorer+'/tx/'+txHash});
         localStorage.setItem('rh_orders',JSON.stringify(orders));
         saveCart([]);updateCartBadge();
-        showToast('Escrow iniciado! Pedido '+data.order.id,'success');
+        showToast('Escrow started! Order '+data.order.id,'success');
         setTimeout(()=>window.location.href='/orders/'+data.order.id, 1500);
       }
     } catch(err){
@@ -2047,7 +2074,7 @@ function checkoutPage() {
         createdAt:new Date().toISOString(),explorerUrl:ARC.explorer+'/tx/'+txHash});
       localStorage.setItem('rh_orders',JSON.stringify(orders));
       saveCart([]);updateCartBadge();
-      showToast('Pedido salvo localmente. Hash: '+txHash.substring(0,14)+'…','success');
+      showToast('Order saved locally. Hash: '+txHash.substring(0,14)+'…','success');
       setTimeout(()=>window.location.href='/orders/'+orderId, 1500);
     }
   }
@@ -2773,28 +2800,72 @@ function ordersPage() {
     </h1>
     <p class="text-slate-500 mb-2">Escrow-protected orders on Arc Network.</p>
     <div id="orders-network-status" class="mb-6"></div>
+    <!-- Tabs: Purchases / Sales -->
+    <div class="flex gap-2 mb-6">
+      <button id="tab-purchases" onclick="switchOrderTab('purchases')" class="px-4 py-2 rounded-lg text-sm font-semibold bg-red-600 text-white shadow-sm">
+        <i class="fas fa-shopping-bag mr-1"></i> My Purchases
+      </button>
+      <button id="tab-sales" onclick="switchOrderTab('sales')" class="px-4 py-2 rounded-lg text-sm font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200">
+        <i class="fas fa-store mr-1"></i> My Sales
+      </button>
+    </div>
     <div id="orders-container"></div>
   </div>
+
+  <!-- Receipt Modal -->
+  <div id="receipt-modal-root"></div>
+
   <script>
-  document.addEventListener('DOMContentLoaded', async () => {
-    checkNetworkStatus(document.getElementById('orders-network-status'));
+  var _currentOrderTab = 'purchases';
+
+  function switchOrderTab(tab){
+    _currentOrderTab = tab;
+    const tp = document.getElementById('tab-purchases');
+    const ts = document.getElementById('tab-sales');
+    if(tp && ts){
+      if(tab==='purchases'){
+        tp.className='px-4 py-2 rounded-lg text-sm font-semibold bg-red-600 text-white shadow-sm';
+        ts.className='px-4 py-2 rounded-lg text-sm font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200';
+      } else {
+        ts.className='px-4 py-2 rounded-lg text-sm font-semibold bg-red-600 text-white shadow-sm';
+        tp.className='px-4 py-2 rounded-lg text-sm font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200';
+      }
+    }
+    renderOrders(tab);
+  }
+
+  function renderOrders(tab){
     const container=document.getElementById('orders-container');
     const wallet=getStoredWallet();
     if(!wallet){
       container.innerHTML='<div class="card p-12 text-center"><div class="empty-state"><i class="fas fa-wallet"></i><h3 class="font-bold text-slate-600 mb-2">Connect Wallet</h3><p class="text-sm mb-4">Connect your wallet to view orders associated with your Arc address.</p><a href="/wallet" class="btn-primary mx-auto"><i class="fas fa-wallet"></i> Connect Wallet</a></div></div>';
       return;
     }
-    // Load orders from localStorage (escrow metadata)
-    const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]').filter(o=>
-      o.buyerAddress&&o.buyerAddress.toLowerCase()===wallet.address.toLowerCase()
-    );
+    const myAddr = wallet.address.toLowerCase();
+    const allOrders = JSON.parse(localStorage.getItem('rh_orders')||'[]');
+    const orders = tab==='purchases'
+      ? allOrders.filter(o => o.buyerAddress && o.buyerAddress.toLowerCase()===myAddr)
+      : allOrders.filter(o => o.sellerAddress && o.sellerAddress.toLowerCase()===myAddr);
     if(!orders.length){
-      container.innerHTML='<div class="card p-12 text-center"><div class="empty-state"><i class="fas fa-box-open"></i><h3 class="font-bold text-slate-600 mb-2">No Orders Yet</h3><p class="text-sm mb-4">Your escrow orders from Arc Network will appear here.</p><a href="/marketplace" class="btn-primary mx-auto"><i class="fas fa-store"></i> Start Shopping</a></div></div>';
+      const msg = tab==='purchases' ? 'No purchases yet.' : 'No sales yet.';
+      container.innerHTML='<div class="card p-12 text-center"><div class="empty-state"><i class="fas fa-box-open"></i><h3 class="font-bold text-slate-600 mb-2">'+msg+'</h3><p class="text-sm mb-4">Orders will appear here once created.</p><a href="/marketplace" class="btn-primary mx-auto"><i class="fas fa-store"></i> Browse Marketplace</a></div></div>';
       return;
     }
     const statusColors={'escrow_locked':'bg-yellow-100 text-yellow-700','escrow_pending':'bg-blue-100 text-blue-700','shipped':'bg-indigo-100 text-indigo-700','delivered':'bg-teal-100 text-teal-700','completed':'bg-green-100 text-green-700','dispute':'bg-red-100 text-red-700'};
+    const isSeller = tab==='sales';
     container.innerHTML=orders.slice().reverse().map(o=>{
       const sc=statusColors[o.status]||'bg-slate-100 text-slate-700';
+      const explorerUrl=o.explorerUrl||('https://testnet.arcscan.app/tx/'+(o.txHash||''));
+      // Role-based action buttons
+      let actionBtns='';
+      if(isSeller){
+        // Seller sees: Mark Shipped (when escrow_locked), Release Funds (when completed)
+        if(o.status==='escrow_locked') actionBtns+='<button data-oid="'+o.id+'" class="mark-shipped-btn btn-primary text-xs py-1.5 px-3"><i class=\\"fas fa-shipping-fast mr-1\\"></i>Mark as Shipped</button>';
+        if(o.status==='completed')     actionBtns+='<button data-oid="'+o.id+'" class="release-funds-btn btn-primary text-xs py-1.5 px-3 bg-green-600 hover:bg-green-700"><i class=\\"fas fa-coins mr-1\\"></i>Release Funds</button>';
+      } else {
+        // Buyer sees: Confirm Delivery (when shipped)
+        if(o.status==='shipped') actionBtns+='<button data-oid="'+o.id+'" class="confirm-delivery-btn btn-secondary text-xs py-1.5 px-3"><i class=\\"fas fa-check-circle mr-1\\"></i>Confirm Delivery</button>';
+      }
       return '<div class="card p-5 mb-4 hover:shadow-md transition-shadow">'
         +'<div class="flex items-start justify-between gap-4 mb-3">'
         +'<div><p class="font-bold text-slate-800">'+o.id+'</p>'
@@ -2803,30 +2874,128 @@ function ordersPage() {
         +'</div>'
         +'<div class="text-sm mb-3">'
         +'<p class="text-slate-600">Amount: <strong class="text-red-600">'+(o.amount||0)+' '+(o.token||'USDC')+'</strong></p>'
-        +'<p class="text-slate-400 text-xs addr-mono">Buyer: '+o.buyerAddress+'</p>'
-        +'<p class="text-slate-400 text-xs addr-mono">Tx: <a href="'+(o.explorerUrl||ARC.explorer+'/tx/'+o.txHash)+'" target="_blank" class="text-blue-500 hover:underline">'+(o.txHash||'').substring(0,20)+'…</a></p>'
+        +(isSeller
+          ? '<p class="text-slate-400 text-xs addr-mono">Buyer: '+(o.buyerAddress||'—')+'</p>'
+          : '<p class="text-slate-400 text-xs addr-mono">Seller: '+(o.sellerAddress||'—')+'</p>')
+        +'<p class="text-slate-400 text-xs addr-mono">Tx: <a href="'+explorerUrl+'" target="_blank" class="text-blue-500 hover:underline">'+(o.txHash||'').substring(0,20)+'…</a></p>'
         +'</div>'
-        +'<div class="flex gap-2">'
+        +'<div class="flex gap-2 flex-wrap">'
         +'<a href="/orders/'+o.id+'" class="btn-primary text-xs py-1.5 px-3">View Details</a>'
-        +(o.status==='shipped'?'<button data-oid="'+o.id+'" class="confirm-delivery-btn btn-secondary text-xs py-1.5 px-3">Confirm Delivery</button>':'')
+        +'<button data-oid="'+o.id+'" class="view-receipt-btn btn-secondary text-xs py-1.5 px-3"><i class="fas fa-receipt mr-1"></i>View Receipt</button>'
+        +actionBtns
         +'</div></div>';
     }).join('');
+    // Attach event listeners
     document.querySelectorAll('.confirm-delivery-btn').forEach(function(b){
-      b.addEventListener('click',function(){ confirmDelivery(this.dataset.oid); });
+      b.addEventListener('click',function(){ confirmDeliveryOrder(this.dataset.oid); });
     });
-  });
+    document.querySelectorAll('.mark-shipped-btn').forEach(function(b){
+      b.addEventListener('click',function(){ markOrderShipped(this.dataset.oid); });
+    });
+    document.querySelectorAll('.release-funds-btn').forEach(function(b){
+      b.addEventListener('click',function(){ releaseFundsOrder(this.dataset.oid); });
+    });
+    document.querySelectorAll('.view-receipt-btn').forEach(function(b){
+      b.addEventListener('click',function(){ showReceiptModal(this.dataset.oid); });
+    });
+  }
 
-  function confirmDelivery(orderId){
+  function confirmDeliveryOrder(orderId){
     const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
     const i=orders.findIndex(o=>o.id===orderId);
     if(i>=0){
       orders[i].status='completed';
       orders[i].deliveredAt=new Date().toISOString();
       localStorage.setItem('rh_orders',JSON.stringify(orders));
-      showToast('Delivery confirmed! Escrow funds released on Arc Network.','success');
-      setTimeout(()=>location.reload(),800);
+      showToast('Delivery confirmed! Funds released from escrow.','success');
+      setTimeout(()=>renderOrders(_currentOrderTab),600);
     }
   }
+
+  function markOrderShipped(orderId){
+    const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
+    const i=orders.findIndex(o=>o.id===orderId);
+    if(i>=0){
+      orders[i].status='shipped';
+      orders[i].shippedAt=new Date().toISOString();
+      localStorage.setItem('rh_orders',JSON.stringify(orders));
+      showToast('Order marked as shipped! Buyer will be notified.','success');
+      setTimeout(()=>renderOrders(_currentOrderTab),600);
+    }
+  }
+
+  function releaseFundsOrder(orderId){
+    const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
+    const i=orders.findIndex(o=>o.id===orderId);
+    if(i>=0){
+      orders[i].status='funds_released';
+      orders[i].releasedAt=new Date().toISOString();
+      localStorage.setItem('rh_orders',JSON.stringify(orders));
+      showToast('Funds released to seller wallet!','success');
+      setTimeout(()=>renderOrders(_currentOrderTab),600);
+    }
+  }
+
+  function showReceiptModal(orderId){
+    const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
+    const order=orders.find(o=>o.id===orderId);
+    if(!order){showToast('Order not found','error');return;}
+    const root=document.getElementById('receipt-modal-root');
+    if(!root) return;
+    const explorerUrl=order.explorerUrl||('https://testnet.arcscan.app/tx/'+(order.txHash||''));
+    const items=order.items||[];
+    const itemsHtml=items.length
+      ? items.map(it=>'<div class="flex justify-between text-xs py-1 border-b border-slate-100"><span class="text-slate-600 truncate">'+(it.title||it.name||'Product')+'</span><span class="font-medium text-slate-700 shrink-0 ml-2">'+(it.quantity||1)+'x '+(parseFloat(it.price)||0).toFixed(2)+' '+(it.currency||it.token||'USDC')+'</span></div>').join('')
+      : '<p class="text-xs text-slate-400">No item details</p>';
+    root.innerHTML='<div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" id="receipt-overlay">'
+      +'<div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">'
+      +'<div class="flex items-center justify-between p-5 border-b border-slate-100">'
+      +'<h2 class="font-bold text-slate-800 flex items-center gap-2"><i class="fas fa-receipt text-red-500"></i> Order Receipt</h2>'
+      +'<button onclick="document.getElementById(\\'receipt-modal-root\\').innerHTML=\\'\\'" class="text-slate-400 hover:text-slate-700 text-xl w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100">&times;</button>'
+      +'</div>'
+      +'<div class="p-5 space-y-4">'
+      // Header info
+      +'<div class="bg-slate-50 rounded-xl p-4 space-y-2">'
+      +'<div class="flex justify-between"><span class="text-xs text-slate-500">Order ID</span><span class="text-xs font-mono font-bold text-slate-800">'+order.id+'</span></div>'
+      +'<div class="flex justify-between"><span class="text-xs text-slate-500">Date</span><span class="text-xs text-slate-700">'+new Date(order.createdAt).toLocaleString()+'</span></div>'
+      +'<div class="flex justify-between"><span class="text-xs text-slate-500">Status</span><span class="text-xs font-bold capitalize text-green-700">'+(order.status||'').replace(/_/g,' ')+'</span></div>'
+      +'<div class="flex justify-between"><span class="text-xs text-slate-500">Network</span><span class="text-xs text-slate-700">Arc Testnet (Chain 5042002)</span></div>'
+      +'</div>'
+      // Wallets
+      +'<div class="space-y-2">'
+      +'<p class="text-xs font-bold text-slate-700 uppercase tracking-wide">Wallets</p>'
+      +'<div class="bg-slate-50 rounded-xl p-3 space-y-2">'
+      +'<div><p class="text-xs text-slate-500 mb-0.5">Buyer</p><p class="text-xs font-mono break-all text-slate-800">'+(order.buyerAddress||'—')+'</p></div>'
+      +'<div><p class="text-xs text-slate-500 mb-0.5">Seller</p><p class="text-xs font-mono break-all text-slate-800">'+(order.sellerAddress||'—')+'</p></div>'
+      +'</div></div>'
+      // Products
+      +'<div class="space-y-2">'
+      +'<p class="text-xs font-bold text-slate-700 uppercase tracking-wide">Products</p>'
+      +'<div class="bg-slate-50 rounded-xl p-3">'+itemsHtml+'</div>'
+      +'</div>'
+      // Payment
+      +'<div class="space-y-2">'
+      +'<p class="text-xs font-bold text-slate-700 uppercase tracking-wide">Payment</p>'
+      +'<div class="bg-slate-50 rounded-xl p-3 space-y-1">'
+      +'<div class="flex justify-between"><span class="text-xs text-slate-500">Total Amount</span><span class="font-bold text-red-600">'+(order.amount||0)+' '+(order.token||'USDC')+'</span></div>'
+      +'<div class="flex justify-between"><span class="text-xs text-slate-500">Transaction Hash</span><a href="'+explorerUrl+'" target="_blank" class="text-xs font-mono text-blue-600 hover:underline break-all">'+(order.txHash||'Pending')+'</a></div>'
+      +'</div></div>'
+      +'</div>'
+      // Footer
+      +'<div class="p-4 border-t border-slate-100 flex justify-end gap-2">'
+      +'<button onclick="document.getElementById(\\'receipt-modal-root\\').innerHTML=\\'\\'" class="btn-secondary text-sm py-2">Close</button>'
+      +'<a href="'+explorerUrl+'" target="_blank" class="btn-primary text-sm py-2"><i class="fas fa-external-link-alt mr-1"></i>View on Explorer</a>'
+      +'</div>'
+      +'</div></div>';
+    document.getElementById('receipt-overlay').addEventListener('click',function(e){
+      if(e.target===this) root.innerHTML='';
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    checkNetworkStatus(document.getElementById('orders-network-status'));
+    renderOrders('purchases');
+  });
   </script>
   `)
 }
@@ -2846,6 +3015,9 @@ function orderDetailPage(id: string) {
       </div>
     </div>
   </div>
+  <!-- Receipt Modal root -->
+  <div id="receipt-modal-root"></div>
+
   <script>
   document.addEventListener('DOMContentLoaded', () => {
     const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
@@ -2855,11 +3027,29 @@ function orderDetailPage(id: string) {
       container.innerHTML='<div class="card p-8 text-center"><div class="empty-state"><i class="fas fa-box-open"></i><p class="font-medium text-slate-600">Order not found</p><a href="/orders" class="btn-primary mt-4 mx-auto">Back to Orders</a></div></div>';
       return;
     }
+    const wallet=getStoredWallet();
+    const myAddr=wallet?wallet.address.toLowerCase():'';
+    const isSeller=order.sellerAddress&&order.sellerAddress.toLowerCase()===myAddr;
+    const isBuyer=order.buyerAddress&&order.buyerAddress.toLowerCase()===myAddr;
     const statusSteps=['escrow_pending','escrow_locked','shipped','delivered','completed'];
     const statusIdx=Math.max(0,statusSteps.indexOf(order.status));
     const explorerTxUrl=order.explorerUrl||('${ARC.explorer}/tx/'+(order.txHash||''));
+
+    // Build role-based action buttons
+    let actionBtns='';
+    if(isSeller){
+      if(order.status==='escrow_locked') actionBtns+='<button data-oid="'+order.id+'" data-status="shipped" class="update-status-btn btn-primary"><i class="fas fa-shipping-fast mr-1"></i> Mark as Shipped</button>';
+      if(order.status==='completed')     actionBtns+='<button data-oid="'+order.id+'" data-status="funds_released" class="update-status-btn btn-primary bg-green-600 hover:bg-green-700"><i class="fas fa-coins mr-1"></i> Release Funds</button>';
+    }
+    if(isBuyer){
+      if(order.status==='shipped') actionBtns+='<button data-oid="'+order.id+'" data-status="completed" class="update-status-btn btn-secondary"><i class="fas fa-check-circle mr-1"></i> Confirm Delivery</button>';
+    }
+
     container.innerHTML=
       '<div class="space-y-6">'
+      // Role badge
+      +(isSeller ? '<div class="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm font-medium text-amber-800"><i class="fas fa-store"></i> You are the seller of this order</div>' : '')
+      +(isBuyer  ? '<div class="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-xl text-sm font-medium text-blue-800"><i class="fas fa-shopping-bag"></i> You are the buyer of this order</div>' : '')
       // Escrow Status
       +'<div class="card p-6">'
       +'<div class="flex items-center justify-between mb-4">'
@@ -2883,17 +3073,17 @@ function orderDetailPage(id: string) {
       +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Order ID</span><span class="font-mono font-medium text-right">'+order.id+'</span></div>'
       +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Tx Hash</span><a href="'+explorerTxUrl+'" target="_blank" class="font-mono text-xs text-blue-600 hover:underline text-right break-all">'+(order.txHash||'Pending')+'</a></div>'
       +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Buyer</span><span class="font-mono text-xs text-right break-all">'+(order.buyerAddress||'—')+'</span></div>'
+      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Seller</span><span class="font-mono text-xs text-right break-all">'+(order.sellerAddress||'—')+'</span></div>'
       +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Amount</span><span class="font-bold text-red-600">'+(order.amount||0)+' '+(order.token||'USDC')+'</span></div>'
       +'<div class="flex justify-between"><span class="text-slate-500">Network</span><span class="font-medium">Arc Testnet (Chain 5042002)</span></div>'
       +'<div class="flex justify-between"><span class="text-slate-500">Created</span><span>'+new Date(order.createdAt).toLocaleString()+'</span></div>'
       +'</div></div>'
       // Actions
       +'<div class="flex flex-wrap gap-3">'
-      +(order.status==='escrow_locked'?'<button data-oid="'+order.id+'" data-status="shipped" class="update-status-btn btn-primary">Mark Shipped</button>':'')
-      +(order.status==='shipped'?'<button data-oid="'+order.id+'" data-status="completed" class="update-status-btn btn-primary">Confirm Delivery</button>':'')
-      +'<button data-oid="'+order.id+'" class="open-dispute-btn btn-secondary"><i class="fas fa-gavel"></i> Open Dispute</button>'
-      +'<a href="'+explorerTxUrl+'" target="_blank" class="btn-secondary text-sm"><i class="fas fa-external-link-alt"></i> Arc Explorer</a>'
-      +'<button onclick="downloadReceipt()" class="btn-secondary text-sm"><i class="fas fa-file-download"></i> Receipt (JSON)</button>'
+      +actionBtns
+      +'<button data-oid="'+order.id+'" class="open-dispute-btn btn-secondary"><i class="fas fa-gavel mr-1"></i> Open Dispute</button>'
+      +'<button onclick="showReceiptModalDetail()" class="btn-secondary text-sm"><i class="fas fa-receipt mr-1"></i> View Receipt</button>'
+      +'<a href="'+explorerTxUrl+'" target="_blank" class="btn-secondary text-sm"><i class="fas fa-external-link-alt mr-1"></i> Arc Explorer</a>'
       +'</div>'
       +'</div>';
     // Attach event listeners for action buttons
@@ -2908,30 +3098,70 @@ function orderDetailPage(id: string) {
   function updateOrderStatus(id,s){
     const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
     const i=orders.findIndex(o=>o.id===id);
-    if(i>=0){orders[i].status=s;orders[i].updatedAt=new Date().toISOString();localStorage.setItem('rh_orders',JSON.stringify(orders));showToast('Status updated to '+s,'success');setTimeout(()=>location.reload(),800);}
+    if(i>=0){
+      orders[i].status=s;
+      orders[i].updatedAt=new Date().toISOString();
+      localStorage.setItem('rh_orders',JSON.stringify(orders));
+      const labels={'shipped':'Order marked as shipped!','completed':'Delivery confirmed!','funds_released':'Funds released!'};
+      showToast(labels[s]||'Status updated','success');
+      setTimeout(()=>location.reload(),800);
+    }
   }
   function openDispute(id){
     const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
     const i=orders.findIndex(o=>o.id===id);
     if(i>=0){orders[i].status='dispute';orders[i].disputedAt=new Date().toISOString();localStorage.setItem('rh_orders',JSON.stringify(orders));showToast('Dispute opened — funds remain locked in Arc escrow','info');setTimeout(()=>location.reload(),800);}
   }
-  function downloadReceipt(){
+
+  function showReceiptModalDetail(){
     const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
     const order=orders.find(o=>o.id==='${id}');
     if(!order){showToast('Order not found','error');return;}
-    const receipt={
-      ...order,
-      network:'Arc Testnet',
-      chainId:5042002,
-      explorerUrl:'${ARC.explorer}/tx/'+(order.txHash||''),
-      generatedAt:new Date().toISOString(),
-      contracts:{USDC:'${ARC.contracts.USDC}',EURC:'${ARC.contracts.EURC}'}
-    };
-    const blob=new Blob([JSON.stringify(receipt,null,2)],{type:'application/json'});
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement('a');
-    a.href=url;a.download='${id}-arc-receipt.json';a.click();
-    showToast('Receipt downloaded!','success');
+    const root=document.getElementById('receipt-modal-root');
+    if(!root) return;
+    const explorerUrl=order.explorerUrl||('${ARC.explorer}/tx/'+(order.txHash||''));
+    const items=order.items||[];
+    const itemsHtml=items.length
+      ? items.map(it=>'<div class="flex justify-between text-xs py-1 border-b border-slate-100"><span class="text-slate-600 truncate">'+(it.title||it.name||'Product')+'</span><span class="font-medium text-slate-700 shrink-0 ml-2">'+(it.quantity||1)+'x '+(parseFloat(it.price)||0).toFixed(2)+' '+(it.currency||it.token||'USDC')+'</span></div>').join('')
+      : '<p class="text-xs text-slate-400">No item details</p>';
+    root.innerHTML='<div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" id="receipt-overlay">'
+      +'<div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">'
+      +'<div class="flex items-center justify-between p-5 border-b border-slate-100">'
+      +'<h2 class="font-bold text-slate-800 flex items-center gap-2"><i class="fas fa-receipt text-red-500"></i> Order Receipt</h2>'
+      +'<button onclick="document.getElementById(\\'receipt-modal-root\\').innerHTML=\\'\\'" class="text-slate-400 hover:text-slate-700 text-xl w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100">&times;</button>'
+      +'</div>'
+      +'<div class="p-5 space-y-4">'
+      +'<div class="bg-slate-50 rounded-xl p-4 space-y-2">'
+      +'<div class="flex justify-between"><span class="text-xs text-slate-500">Order ID</span><span class="text-xs font-mono font-bold text-slate-800">'+order.id+'</span></div>'
+      +'<div class="flex justify-between"><span class="text-xs text-slate-500">Date</span><span class="text-xs text-slate-700">'+new Date(order.createdAt).toLocaleString()+'</span></div>'
+      +'<div class="flex justify-between"><span class="text-xs text-slate-500">Status</span><span class="text-xs font-bold capitalize text-green-700">'+(order.status||'').replace(/_/g,' ')+'</span></div>'
+      +'<div class="flex justify-between"><span class="text-xs text-slate-500">Network</span><span class="text-xs text-slate-700">Arc Testnet (Chain 5042002)</span></div>'
+      +'</div>'
+      +'<div class="space-y-2">'
+      +'<p class="text-xs font-bold text-slate-700 uppercase tracking-wide">Wallets</p>'
+      +'<div class="bg-slate-50 rounded-xl p-3 space-y-2">'
+      +'<div><p class="text-xs text-slate-500 mb-0.5">Buyer</p><p class="text-xs font-mono break-all text-slate-800">'+(order.buyerAddress||'—')+'</p></div>'
+      +'<div><p class="text-xs text-slate-500 mb-0.5">Seller</p><p class="text-xs font-mono break-all text-slate-800">'+(order.sellerAddress||'—')+'</p></div>'
+      +'</div></div>'
+      +'<div class="space-y-2">'
+      +'<p class="text-xs font-bold text-slate-700 uppercase tracking-wide">Products</p>'
+      +'<div class="bg-slate-50 rounded-xl p-3">'+itemsHtml+'</div>'
+      +'</div>'
+      +'<div class="space-y-2">'
+      +'<p class="text-xs font-bold text-slate-700 uppercase tracking-wide">Payment</p>'
+      +'<div class="bg-slate-50 rounded-xl p-3 space-y-1">'
+      +'<div class="flex justify-between"><span class="text-xs text-slate-500">Total Amount</span><span class="font-bold text-red-600">'+(order.amount||0)+' '+(order.token||'USDC')+'</span></div>'
+      +'<div class="flex justify-between items-start gap-2"><span class="text-xs text-slate-500 shrink-0">Transaction Hash</span><a href="'+explorerUrl+'" target="_blank" class="text-xs font-mono text-blue-600 hover:underline break-all">'+(order.txHash||'Pending')+'</a></div>'
+      +'</div></div>'
+      +'</div>'
+      +'<div class="p-4 border-t border-slate-100 flex justify-end gap-2">'
+      +'<button onclick="document.getElementById(\\'receipt-modal-root\\').innerHTML=\\'\\'" class="btn-secondary text-sm py-2">Close</button>'
+      +'<a href="'+explorerUrl+'" target="_blank" class="btn-primary text-sm py-2"><i class="fas fa-external-link-alt mr-1"></i>View on Explorer</a>'
+      +'</div>'
+      +'</div></div>';
+    document.getElementById('receipt-overlay').addEventListener('click',function(e){
+      if(e.target===this) root.innerHTML='';
+    });
   }
   </script>
   `)
@@ -3002,7 +3232,7 @@ function sellPage() {
           <div class="flex gap-1 mb-3 bg-slate-100 rounded-lg p-1 w-fit flex-wrap">
             <button type="button" id="tab-upload" onclick="switchImgTab('upload')"
               class="px-4 py-1.5 rounded-md text-xs font-semibold transition-all bg-white text-slate-800 shadow-sm">
-              <i class="fas fa-camera mr-1"></i> Carregar Foto
+              <i class="fas fa-camera mr-1"></i> Upload Photo
             </button>
             <button type="button" id="tab-url" onclick="switchImgTab('url')"
               class="px-4 py-1.5 rounded-md text-xs font-semibold transition-all text-slate-500 hover:text-slate-700">
@@ -3021,8 +3251,8 @@ function sellPage() {
               ondrop="handleImgDrop(event)">
               <div id="img-drop-content">
                 <i class="fas fa-camera text-3xl text-slate-300 mb-2 block"></i>
-                <p class="text-sm font-medium text-slate-500">Arraste a foto ou <span class="text-red-600 font-semibold">clique para escolher</span></p>
-                <p class="text-xs text-slate-400 mt-1">JPG, PNG, GIF, WEBP — máx 10 MB · Comprimida automaticamente</p>
+                <p class="text-sm font-medium text-slate-500">Drag photo here or <span class="text-red-600 font-semibold">click to choose</span></p>
+                <p class="text-xs text-slate-400 mt-1">JPG, PNG, GIF, WEBP — max 10 MB · Auto-compressed</p>
               </div>
             </div>
             <input type="file" id="img-file-input" accept="image/jpeg,image/png,image/gif,image/webp"
@@ -3032,7 +3262,7 @@ function sellPage() {
             <div id="img-upload-progress" class="hidden mt-3">
               <div class="flex items-center gap-2 mb-1">
                 <span class="loading-spinner inline-block"></span>
-                <span id="img-upload-status" class="text-xs text-slate-500">Processando imagem…</span>
+                <span id="img-upload-status" class="text-xs text-slate-500">Processing image…</span>
               </div>
               <div class="w-full bg-slate-200 rounded-full h-1.5">
                 <div id="img-upload-bar" class="bg-red-500 h-1.5 rounded-full transition-all duration-300" style="width:0%"></div>
@@ -3050,11 +3280,11 @@ function sellPage() {
                   <div class="flex gap-2 flex-wrap">
                     <button type="button" onclick="document.getElementById('img-file-input').click()"
                       class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors">
-                      <i class="fas fa-sync-alt text-xs"></i> Trocar foto
+                      <i class="fas fa-sync-alt text-xs"></i> Change photo
                     </button>
                     <button type="button" onclick="clearImgUpload()"
                       class="text-xs bg-red-50 hover:bg-red-100 text-red-500 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors">
-                      <i class="fas fa-trash-alt text-xs"></i> Remover
+                      <i class="fas fa-trash-alt text-xs"></i> Remove
                     </button>
                   </div>
                 </div>
@@ -3070,26 +3300,52 @@ function sellPage() {
                 class="w-20 h-20 rounded-xl object-cover border border-slate-200 shadow-sm"
                 onerror="this.parentElement.classList.add('hidden')"/>
               <div>
-                <p class="text-xs font-semibold text-slate-600">Pré-visualização</p>
-                <p class="text-xs text-slate-400 mt-0.5">A imagem carregará no produto</p>
+                <p class="text-xs font-semibold text-slate-600">Preview</p>
+                <p class="text-xs text-slate-400 mt-0.5">The image will load on the product</p>
               </div>
             </div>
             <p class="text-xs text-slate-400 mt-2 leading-relaxed">
               <i class="fas fa-info-circle mr-1 text-blue-400"></i>
-              Cole uma URL de imagem (<code class="bg-slate-100 px-1 rounded">https://</code>) ou um link IPFS
-              (<code class="bg-slate-100 px-1 rounded">ipfs://</code>) para armazenamento descentralizado.
+              Paste an image URL (<code class="bg-slate-100 px-1 rounded">https://</code>) or an IPFS link
+              (<code class="bg-slate-100 px-1 rounded">ipfs://</code>) for decentralized storage.
             </p>
           </div>
 
           <!-- Hidden field that always holds the final image value sent to listProduct() -->
           <input type="hidden" id="prod-img-final"/>
         </div>
+        <!-- Fee Breakdown Card -->
+        <div class="card p-5 bg-slate-50 border-slate-200" id="fee-breakdown-card">
+          <h4 class="font-bold text-slate-700 mb-3 flex items-center gap-2">
+            <i class="fas fa-calculator text-red-500"></i> Listing Fee Breakdown
+          </h4>
+          <div class="space-y-2 text-sm">
+            <div class="flex justify-between text-slate-600">
+              <span>Product Price</span>
+              <span id="fee-product-price">—</span>
+            </div>
+            <div class="flex justify-between text-slate-600">
+              <span>Platform Fee (2%)</span>
+              <span id="fee-platform" class="text-red-600 font-semibold">—</span>
+            </div>
+            <div class="flex justify-between text-slate-600">
+              <span>Arc Network Gas Fee (est.)</span>
+              <span id="fee-arc" class="text-slate-500">~0.001 USDC</span>
+            </div>
+            <div class="border-t border-slate-200 pt-2 flex justify-between font-bold text-slate-800">
+              <span>You Receive (est.)</span>
+              <span id="fee-you-receive" class="text-green-600">—</span>
+            </div>
+          </div>
+          <p class="text-xs text-slate-400 mt-3"><i class="fas fa-info-circle mr-1"></i>Platform fee is deducted from the sale amount when escrow is released.</p>
+        </div>
+        <!-- Escrow Policy -->
         <div class="card p-4 bg-red-50 border-red-100">
-          <h4 class="font-bold text-red-800 mb-1 flex items-center gap-2"><i class="fas fa-shield-alt"></i> Política de Escrow</h4>
-          <p class="text-sm text-red-700">Todas as vendas são protegidas por escrow via contrato inteligente na Arc Network. Os fundos só são liberados após confirmação de entrega pelo comprador.</p>
+          <h4 class="font-bold text-red-800 mb-1 flex items-center gap-2"><i class="fas fa-shield-alt"></i> Escrow Policy</h4>
+          <p class="text-sm text-red-700">All sales are protected by escrow via smart contract on Arc Network. Funds are only released after the buyer confirms delivery.</p>
         </div>
         <button onclick="listProduct()" class="btn-primary w-full justify-center py-3 text-base">
-          <i class="fas fa-tag mr-2"></i> Publicar Produto
+          <i class="fas fa-tag mr-2"></i> List Product
         </button>
       </div>
     </div>
@@ -3100,10 +3356,34 @@ function sellPage() {
     const w=getStoredWallet();
     const wc=document.getElementById('sell-wallet-check');
     if(!w){
-      wc.innerHTML='<div class="network-warning"><i class="fas fa-exclamation-triangle"></i>Você precisa conectar uma carteira para listar produtos. <a href="/wallet" class="underline font-bold ml-1">Conectar Carteira →</a></div>';
+      wc.innerHTML='<div class="network-warning"><i class="fas fa-exclamation-triangle"></i>You need to connect a wallet to list products. <a href="/wallet" class="underline font-bold ml-1">Connect Wallet →</a></div>';
     } else {
-      wc.innerHTML='<div class="network-ok"><i class="fas fa-check-circle text-green-600"></i>Vendedor: <span class="font-mono text-xs ml-1">'+w.address+'</span></div>';
+      wc.innerHTML='<div class="network-ok"><i class="fas fa-check-circle text-green-600"></i>Seller: <span class="font-mono text-xs ml-1">'+w.address+'</span></div>';
     }
+    // Fee breakdown live update
+    function updateFeeBreakdown(){
+      const priceEl=document.getElementById('prod-price');
+      const tokenEl=document.getElementById('prod-token');
+      if(!priceEl||!tokenEl) return;
+      const p=parseFloat(priceEl.value)||0;
+      const tok=tokenEl.value||'USDC';
+      const platformFee=p*0.02;
+      const arcFee=0.001;
+      const youReceive=Math.max(0,p-platformFee-arcFee);
+      const fpEl=document.getElementById('fee-product-price');
+      const fplatEl=document.getElementById('fee-platform');
+      const farcEl=document.getElementById('fee-arc');
+      const fyoEl=document.getElementById('fee-you-receive');
+      if(fpEl) fpEl.textContent=p>0?p.toFixed(6)+' '+tok:'—';
+      if(fplatEl) fplatEl.textContent=p>0?platformFee.toFixed(6)+' '+tok:'—';
+      if(farcEl) farcEl.textContent='~0.001 '+tok;
+      if(fyoEl) fyoEl.textContent=p>0?youReceive.toFixed(6)+' '+tok:'—';
+    }
+    const priceInput=document.getElementById('prod-price');
+    const tokenSelect=document.getElementById('prod-token');
+    if(priceInput) priceInput.addEventListener('input',updateFeeBreakdown);
+    if(tokenSelect) tokenSelect.addEventListener('change',updateFeeBreakdown);
+    updateFeeBreakdown();
     // URL field live preview
     const urlInput = document.getElementById('prod-img');
     if (urlInput) {
@@ -3124,7 +3404,7 @@ function sellPage() {
   });
   async function listProduct(){
     const w=getStoredWallet();
-    if(!w){showToast('Conecte uma carteira primeiro','error');window.location.href='/wallet';return;}
+    if(!w){showToast('Connect a wallet first','error');window.location.href='/wallet';return;}
     const name=document.getElementById('prod-name').value.trim();
     const cat=document.getElementById('prod-cat').value;
     const desc=document.getElementById('prod-desc').value.trim();
@@ -3132,12 +3412,12 @@ function sellPage() {
     const token=document.getElementById('prod-token').value;
     const stockVal=parseInt(document.getElementById('prod-stock').value)||1;
     const img=document.getElementById('prod-img-final').value.trim();
-    if(!name||!cat||!desc||!priceVal){showToast('Preencha todos os campos obrigatórios','error');return;}
-    if(priceVal<=0){showToast('O preço deve ser maior que zero','error');return;}
+    if(!name||!cat||!desc||!priceVal){showToast('Please fill in all required fields','error');return;}
+    if(priceVal<=0){showToast('Price must be greater than zero','error');return;}
 
-    // Desabilitar botão para evitar duplo envio
+    // Disable button to prevent double submit
     const btn=document.querySelector('button[onclick="listProduct()"]');
-    if(btn){btn.disabled=true;btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Publicando…';}
+    if(btn){btn.disabled=true;btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Publishing…';}
 
     try {
       const res=await fetch('/api/products',{
@@ -3151,16 +3431,16 @@ function sellPage() {
       });
       const data=await res.json();
       if(!res.ok||data.error){
-        showToast(data.error||'Erro ao publicar produto','error');
-        if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-tag mr-2"></i> Publicar Produto';}
+        showToast(data.error||'Error publishing product','error');
+        if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-tag mr-2"></i> List Product';}
         return;
       }
-      showToast('Produto publicado com sucesso!','success');
-      // Redirecionar para o marketplace após breve delay
+      showToast('Product listed successfully!','success');
+      // Redirect to marketplace after short delay
       setTimeout(()=>{ window.location.href='/marketplace'; },1200);
     } catch(err){
-      showToast('Erro de rede. Tente novamente.','error');
-      if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-tag mr-2"></i> Publicar Produto';}
+      showToast('Network error. Please try again.','error');
+      if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-tag mr-2"></i> List Product';}
     }
   }
 
@@ -3205,9 +3485,9 @@ function sellPage() {
   async function handleImgFile(input) {
     const file = input.files[0];
     if (!file) return;
-    if (!file.type.startsWith('image/')) { showToast('Por favor selecione uma imagem válida', 'error'); input.value=''; return; }
+    if (!file.type.startsWith('image/')) { showToast('Please select a valid image', 'error'); input.value=''; return; }
     const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
-    if (file.size > MAX_BYTES) { showToast('A imagem deve ter no máximo 10 MB', 'error'); input.value=''; return; }
+    if (file.size > MAX_BYTES) { showToast('Image must be at most 10 MB', 'error'); input.value=''; return; }
 
     // Mostrar barra de progresso
     const progressWrap = document.getElementById('img-upload-progress');
@@ -3220,24 +3500,24 @@ function sellPage() {
     previewWrap.classList.add('hidden');
     dropContent.classList.add('hidden');
     progressBar.style.width = '20%';
-    statusText.textContent  = 'Lendo arquivo…';
+    statusText.textContent  = 'Reading file…';
 
     try {
       progressBar.style.width = '50%';
-      statusText.textContent  = 'Comprimindo imagem…';
+      statusText.textContent  = 'Compressing image…';
 
       // Comprimir: máx 1200×1200px, qualidade 0.82 → resulta em ~100-300 KB
       let dataUrl = await compressImage(file, 1200, 1200, 0.82);
 
       // Se ainda muito grande (> 800 KB base64), comprimir mais
       if (dataUrl.length > 800 * 1024) {
-        statusText.textContent = 'Reduzindo qualidade…';
+        statusText.textContent = 'Reducing quality…';
         progressBar.style.width = '70%';
         dataUrl = await compressImage(file, 900, 900, 0.65);
       }
 
       progressBar.style.width = '90%';
-      statusText.textContent  = 'Finalizando…';
+      statusText.textContent  = 'Finalizing…';
 
       // Calcular tamanho comprimido
       const compressedBytes = Math.round(dataUrl.length * 0.75); // base64 → bytes aprox
@@ -3268,7 +3548,7 @@ function sellPage() {
     e.preventDefault();
     document.getElementById('img-drop-zone').classList.remove('border-red-400','bg-red-50');
     const file = e.dataTransfer.files[0];
-    if (!file || !file.type.startsWith('image/')) { showToast('Por favor solte um arquivo de imagem', 'error'); return; }
+    if (!file || !file.type.startsWith('image/')) { showToast('Please drop an image file', 'error'); return; }
     const dt = new DataTransfer();
     dt.items.add(file);
     const input = document.getElementById('img-file-input');
