@@ -144,6 +144,40 @@ app.delete('/api/products/:id', async (c) => {
   }
 })
 
+// PATCH /api/products/:id/status — pause, resume, delete (seller only)
+app.patch('/api/products/:id/status', async (c) => {
+  try {
+    const db = c.env.DB
+    await initDB(db)
+    const { seller_id, status } = await c.req.json() as any
+    if (!['active','paused','deleted'].includes(status))
+      return c.json({ error: 'Invalid status. Use active, paused, or deleted' }, 400)
+    const row = await db.prepare(`SELECT * FROM products WHERE id = ?`).bind(c.req.param('id')).first() as any
+    if (!row)                          return c.json({ error: 'Product not found' }, 404)
+    if (row.seller_id !== seller_id)   return c.json({ error: 'Unauthorized' }, 403)
+    await db.prepare(`UPDATE products SET status = ?, updated_at = datetime('now') WHERE id = ?`)
+      .bind(status, c.req.param('id')).run()
+    return c.json({ success: true, status })
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500)
+  }
+})
+
+// GET /api/seller/:address/products — all products (active + paused) for seller dashboard
+app.get('/api/seller/:address/products', async (c) => {
+  try {
+    const db = c.env.DB
+    await initDB(db)
+    const address = c.req.param('address')
+    const { results } = await db.prepare(
+      `SELECT * FROM products WHERE seller_id = ? AND status != 'deleted' ORDER BY created_at DESC`
+    ).bind(address).all()
+    return c.json({ products: results, total: results.length })
+  } catch (e: any) {
+    return c.json({ products: [], total: 0, error: e.message })
+  }
+})
+
 // Orders: returns empty — orders come from real escrow contract state
 app.get('/api/orders', (c) => {
   return c.json({
@@ -216,6 +250,7 @@ app.get('/wallet/import', (c) => c.html(walletImportPage()))
 app.get('/orders', (c) => c.html(ordersPage()))
 app.get('/orders/:id', (c) => c.html(orderDetailPage(c.req.param('id'))))
 app.get('/sell', (c) => c.html(sellPage()))
+app.get('/dashboard', (c) => c.html(sellerDashboardPage()))
 app.get('/profile', (c) => c.html(profilePage()))
 app.get('/register', (c) => c.html(registerPage()))
 app.get('/login', (c) => c.html(loginPage()))
@@ -846,6 +881,9 @@ function navbar() {
       <a href="/sell" class="hidden sm:flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-colors">
         <i class="fas fa-plus-circle text-xs"></i> Sell
       </a>
+      <a href="/dashboard" class="hidden sm:flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-colors">
+        <i class="fas fa-chart-line text-xs"></i> Dashboard
+      </a>
       <a href="/wallet" id="wallet-nav-btn" class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-red-50 text-red-700 hover:bg-red-100 transition-colors border border-red-100">
         <i class="fas fa-wallet text-xs"></i>
         <span id="wallet-badge">Wallet</span>
@@ -971,7 +1009,7 @@ function footer() {
         <div>
           <h4 class="font-semibold text-white mb-3">Marketplace</h4>
           <ul class="space-y-2 text-sm">
-            ${['Browse Products:/marketplace','Categories:/marketplace','Sell a Product:/sell','My Orders:/orders','Disputes:/disputes'].map(t=>{const[l,u]=t.split(':');return`<li><a href="${u}" class="hover:text-red-400 transition-colors">${l}</a></li>`}).join('')}
+            ${['Browse Products:/marketplace','Categories:/marketplace','Sell a Product:/sell','Seller Dashboard:/dashboard','My Orders:/orders','Disputes:/disputes'].map(t=>{const[l,u]=t.split(':');return`<li><a href="${u}" class="hover:text-red-400 transition-colors">${l}</a></li>`}).join('')}
           </ul>
         </div>
         <div>
@@ -2879,6 +2917,17 @@ function ordersPage() {
           : '<p class="text-slate-400 text-xs addr-mono">Seller: '+(o.sellerAddress||'—')+'</p>')
         +'<p class="text-slate-400 text-xs addr-mono">Tx: <a href="'+explorerUrl+'" target="_blank" class="text-blue-500 hover:underline">'+(o.txHash||'').substring(0,20)+'…</a></p>'
         +'</div>'
+        // Shipping info panel — visible to buyer when shippingInfo exists
+        +(!isSeller && o.shippingInfo
+          ? '<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:12px;margin-bottom:12px;">'
+            +'<p style="font-size:11px;font-weight:700;text-transform:uppercase;color:#0369a1;margin:0 0 8px;"><i class="fas fa-shipping-fast" style="margin-right:5px;"></i>Shipping Update</p>'
+            +'<div style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#1e293b;">'
+            +'<p style="margin:0;"><strong>Carrier:</strong> '+o.shippingInfo.carrier+'</p>'
+            +'<p style="margin:0;"><strong>Tracking #:</strong> <span style="font-family:monospace;">'+o.shippingInfo.trackingNumber+'</span></p>'
+            +(o.shippingInfo.trackingLink ? '<p style="margin:0;"><strong>Track:</strong> <a href="'+o.shippingInfo.trackingLink+'" target="_blank" style="color:#0369a1;text-decoration:underline;">'+o.shippingInfo.trackingLink+'</a></p>' : '')
+            +(o.shippingInfo.notes ? '<p style="margin:0;color:#475569;font-style:italic;">'+o.shippingInfo.notes+'</p>' : '')
+            +'</div></div>'
+          : '')
         +'<div class="flex gap-2 flex-wrap">'
         +'<a href="/orders/'+o.id+'" class="btn-primary text-xs py-1.5 px-3">View Details</a>'
         +'<button data-oid="'+o.id+'" class="view-receipt-btn btn-secondary text-xs py-1.5 px-3"><i class="fas fa-receipt mr-1"></i>View Receipt</button>'
@@ -2913,15 +2962,56 @@ function ordersPage() {
   }
 
   function markOrderShipped(orderId){
-    const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
-    const i=orders.findIndex(o=>o.id===orderId);
-    if(i>=0){
-      orders[i].status='shipped';
-      orders[i].shippedAt=new Date().toISOString();
-      localStorage.setItem('rh_orders',JSON.stringify(orders));
-      showToast('Order marked as shipped! Buyer will be notified.','success');
-      setTimeout(()=>renderOrders(_currentOrderTab),600);
-    }
+    // Show shipping info form modal before marking shipped
+    var root=document.getElementById('receipt-modal-root');
+    if(!root) return;
+    root.innerHTML=
+      '<div id="ship-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;">'+
+      '<div style="background:#fff;border-radius:16px;box-shadow:0 25px 60px rgba(0,0,0,0.3);width:100%;max-width:480px;max-height:90vh;overflow-y:auto;">'+
+      '<div style="display:flex;align-items:center;justify-content:space-between;padding:20px 20px 14px;border-bottom:1px solid #f1f5f9;">'+
+      '<div style="display:flex;align-items:center;gap:10px;">'+
+      '<div style="width:36px;height:36px;border-radius:8px;background:#fef2f2;display:flex;align-items:center;justify-content:center;"><i class="fas fa-shipping-fast" style="color:#ef4444;"></i></div>'+
+      '<div><p style="font-weight:700;color:#1e293b;margin:0;font-size:15px;">Shipping Information</p>'+
+      '<p style="font-size:11px;color:#94a3b8;margin:0;">Order '+orderId+'</p></div></div>'+
+      '<button id="ship-close-btn" style="width:32px;height:32px;border:none;background:#f8fafc;border-radius:8px;cursor:pointer;font-size:18px;color:#64748b;">&times;</button>'+
+      '</div>'+
+      '<div style="padding:20px;display:flex;flex-direction:column;gap:14px;">'+
+      '<div><label style="display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;">Tracking Number *</label>'+
+      '<input id="ship-tracking" type="text" placeholder="e.g. 1Z999AA10123456784" style="width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;box-sizing:border-box;"/></div>'+
+      '<div><label style="display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;">Shipping Carrier *</label>'+
+      '<input id="ship-carrier" type="text" placeholder="e.g. UPS, FedEx, DHL, USPS" style="width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;box-sizing:border-box;"/></div>'+
+      '<div><label style="display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;">Tracking Link (optional)</label>'+
+      '<input id="ship-link" type="url" placeholder="https://tracking.example.com/ABC123" style="width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;box-sizing:border-box;"/></div>'+
+      '<div><label style="display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;">Additional Notes (optional)</label>'+
+      '<textarea id="ship-notes" rows="3" placeholder="Any notes for the buyer…" style="width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;resize:none;box-sizing:border-box;"></textarea></div>'+
+      '</div>'+
+      '<div style="padding:14px 20px;border-top:1px solid #f1f5f9;display:flex;gap:8px;justify-content:flex-end;">'+
+      '<button id="ship-cancel-btn" style="padding:8px 16px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;color:#64748b;font-size:13px;cursor:pointer;">Cancel</button>'+
+      '<button id="ship-confirm-btn" style="padding:8px 20px;border:none;border-radius:8px;background:#dc2626;color:#fff;font-size:13px;font-weight:600;cursor:pointer;"><i class="fas fa-paper-plane" style="margin-right:6px;"></i>Send Shipping Info to Buyer</button>'+
+      '</div></div></div>';
+    function closeShipModal(){ root.innerHTML=''; }
+    document.getElementById('ship-close-btn').onclick=closeShipModal;
+    document.getElementById('ship-cancel-btn').onclick=closeShipModal;
+    document.getElementById('ship-overlay').addEventListener('click',function(e){ if(e.target===this) closeShipModal(); });
+    document.getElementById('ship-confirm-btn').onclick=function(){
+      var tracking=document.getElementById('ship-tracking').value.trim();
+      var carrier=document.getElementById('ship-carrier').value.trim();
+      var link=document.getElementById('ship-link').value.trim();
+      var notes=document.getElementById('ship-notes').value.trim();
+      if(!tracking){showToast('Please enter a tracking number','error');return;}
+      if(!carrier){showToast('Please enter the shipping carrier','error');return;}
+      var orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
+      var i=orders.findIndex(function(o){return o.id===orderId;});
+      if(i>=0){
+        orders[i].status='shipped';
+        orders[i].shippedAt=new Date().toISOString();
+        orders[i].shippingInfo={trackingNumber:tracking,carrier:carrier,trackingLink:link||null,notes:notes||null,sentAt:new Date().toISOString()};
+        localStorage.setItem('rh_orders',JSON.stringify(orders));
+        closeShipModal();
+        showToast('Shipping info sent to buyer! Order marked as shipped.','success');
+        setTimeout(function(){renderOrders(_currentOrderTab);},600);
+      }
+    };
   }
 
   function releaseFundsOrder(orderId){
@@ -3187,6 +3277,33 @@ function orderDetailPage(id: string) {
       +'<div class="flex justify-between"><span class="text-slate-500">Network</span><span class="font-medium">Arc Testnet (Chain 5042002)</span></div>'
       +'<div class="flex justify-between"><span class="text-slate-500">Created</span><span>'+new Date(order.createdAt).toLocaleString()+'</span></div>'
       +'</div></div>'
+      // Shipping Info — shown to buyer when available
+      +(isBuyer && order.shippingInfo
+        ? '<div class="card p-6" style="background:#f0f9ff;border:1px solid #bae6fd;">'
+          +'<h2 class="font-bold text-blue-800 mb-4 flex items-center gap-2"><i class="fas fa-shipping-fast text-blue-500"></i> Shipping Information</h2>'
+          +'<div class="space-y-3 text-sm">'
+          +'<div class="flex justify-between items-start gap-4"><span class="text-blue-700 shrink-0 font-medium">Carrier</span><span class="font-semibold text-slate-800">'+order.shippingInfo.carrier+'</span></div>'
+          +'<div class="flex justify-between items-start gap-4"><span class="text-blue-700 shrink-0 font-medium">Tracking #</span><span class="font-mono text-sm text-slate-800">'+order.shippingInfo.trackingNumber+'</span></div>'
+          +(order.shippingInfo.trackingLink
+            ? '<div class="flex justify-between items-start gap-4"><span class="text-blue-700 shrink-0 font-medium">Track Link</span><a href="'+order.shippingInfo.trackingLink+'" target="_blank" class="text-blue-600 hover:underline text-xs break-all">'+order.shippingInfo.trackingLink+'</a></div>'
+            : '')
+          +(order.shippingInfo.notes
+            ? '<div class="flex justify-between items-start gap-4"><span class="text-blue-700 shrink-0 font-medium">Notes</span><span class="text-slate-600 italic text-xs text-right">'+order.shippingInfo.notes+'</span></div>'
+            : '')
+          +'<div class="flex justify-between items-start gap-4"><span class="text-blue-700 shrink-0 font-medium">Sent at</span><span class="text-xs text-slate-500">'+new Date(order.shippingInfo.sentAt).toLocaleString()+'</span></div>'
+          +'</div></div>'
+        : '')
+      // Shipping Info — shown to seller (read-only view of what was sent)
+      +(isSeller && order.shippingInfo
+        ? '<div class="card p-6" style="background:#fffbeb;border:1px solid #fde68a;">'
+          +'<h2 class="font-bold text-amber-800 mb-4 flex items-center gap-2"><i class="fas fa-shipping-fast text-amber-500"></i> Shipping Info Sent to Buyer</h2>'
+          +'<div class="space-y-2 text-sm">'
+          +'<p class="text-slate-700"><strong>Carrier:</strong> '+order.shippingInfo.carrier+'</p>'
+          +'<p class="text-slate-700"><strong>Tracking #:</strong> <span class="font-mono">'+order.shippingInfo.trackingNumber+'</span></p>'
+          +(order.shippingInfo.trackingLink ? '<p class="text-slate-700"><strong>Link:</strong> <a href="'+order.shippingInfo.trackingLink+'" target="_blank" class="text-blue-600 hover:underline text-xs">'+order.shippingInfo.trackingLink+'</a></p>' : '')
+          +(order.shippingInfo.notes ? '<p class="text-slate-600 italic text-xs">'+order.shippingInfo.notes+'</p>' : '')
+          +'</div></div>'
+        : '')
       // Actions
       +'<div class="flex flex-wrap gap-3">'
       +actionBtns
@@ -3205,6 +3322,11 @@ function orderDetailPage(id: string) {
   });
 
   function updateOrderStatus(id,s){
+    // If marking as shipped, show shipping info form first
+    if(s==='shipped'){
+      showShippingFormDetail(id);
+      return;
+    }
     const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
     const i=orders.findIndex(o=>o.id===id);
     if(i>=0){
@@ -3215,6 +3337,59 @@ function orderDetailPage(id: string) {
       showToast(labels[s]||'Status updated','success');
       setTimeout(()=>location.reload(),800);
     }
+  }
+
+  function showShippingFormDetail(orderId){
+    var root=document.getElementById('receipt-modal-root');
+    if(!root) return;
+    root.innerHTML=
+      '<div id="ship-overlay-d" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;">'+
+      '<div style="background:#fff;border-radius:16px;box-shadow:0 25px 60px rgba(0,0,0,0.3);width:100%;max-width:480px;max-height:90vh;overflow-y:auto;">'+
+      '<div style="display:flex;align-items:center;justify-content:space-between;padding:20px 20px 14px;border-bottom:1px solid #f1f5f9;">'+
+      '<div style="display:flex;align-items:center;gap:10px;">'+
+      '<div style="width:36px;height:36px;border-radius:8px;background:#fef2f2;display:flex;align-items:center;justify-content:center;"><i class="fas fa-shipping-fast" style="color:#ef4444;"></i></div>'+
+      '<div><p style="font-weight:700;color:#1e293b;margin:0;font-size:15px;">Shipping Information</p>'+
+      '<p style="font-size:11px;color:#94a3b8;margin:0;">Order '+orderId+'</p></div></div>'+
+      '<button id="ship-close-d" style="width:32px;height:32px;border:none;background:#f8fafc;border-radius:8px;cursor:pointer;font-size:18px;color:#64748b;">&times;</button>'+
+      '</div>'+
+      '<div style="padding:20px;display:flex;flex-direction:column;gap:14px;">'+
+      '<div><label style="display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;">Tracking Number *</label>'+
+      '<input id="ship-tracking-d" type="text" placeholder="e.g. 1Z999AA10123456784" style="width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;box-sizing:border-box;"/></div>'+
+      '<div><label style="display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;">Shipping Carrier *</label>'+
+      '<input id="ship-carrier-d" type="text" placeholder="e.g. UPS, FedEx, DHL, USPS" style="width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;box-sizing:border-box;"/></div>'+
+      '<div><label style="display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;">Tracking Link (optional)</label>'+
+      '<input id="ship-link-d" type="url" placeholder="https://tracking.example.com/ABC123" style="width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;box-sizing:border-box;"/></div>'+
+      '<div><label style="display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;">Additional Notes (optional)</label>'+
+      '<textarea id="ship-notes-d" rows="3" placeholder="Any notes for the buyer…" style="width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;resize:none;box-sizing:border-box;"></textarea></div>'+
+      '</div>'+
+      '<div style="padding:14px 20px;border-top:1px solid #f1f5f9;display:flex;gap:8px;justify-content:flex-end;">'+
+      '<button id="ship-cancel-d" style="padding:8px 16px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;color:#64748b;font-size:13px;cursor:pointer;">Cancel</button>'+
+      '<button id="ship-confirm-d" style="padding:8px 20px;border:none;border-radius:8px;background:#dc2626;color:#fff;font-size:13px;font-weight:600;cursor:pointer;"><i class="fas fa-paper-plane" style="margin-right:6px;"></i>Send Shipping Info to Buyer</button>'+
+      '</div></div></div>';
+    function closeD(){ root.innerHTML=''; }
+    document.getElementById('ship-close-d').onclick=closeD;
+    document.getElementById('ship-cancel-d').onclick=closeD;
+    document.getElementById('ship-overlay-d').addEventListener('click',function(e){ if(e.target===this) closeD(); });
+    document.getElementById('ship-confirm-d').onclick=function(){
+      var tracking=document.getElementById('ship-tracking-d').value.trim();
+      var carrier=document.getElementById('ship-carrier-d').value.trim();
+      var link=document.getElementById('ship-link-d').value.trim();
+      var notes=document.getElementById('ship-notes-d').value.trim();
+      if(!tracking){showToast('Please enter a tracking number','error');return;}
+      if(!carrier){showToast('Please enter the shipping carrier','error');return;}
+      var orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
+      var i=orders.findIndex(function(o){return o.id===orderId;});
+      if(i>=0){
+        orders[i].status='shipped';
+        orders[i].shippedAt=new Date().toISOString();
+        orders[i].updatedAt=new Date().toISOString();
+        orders[i].shippingInfo={trackingNumber:tracking,carrier:carrier,trackingLink:link||null,notes:notes||null,sentAt:new Date().toISOString()};
+        localStorage.setItem('rh_orders',JSON.stringify(orders));
+        closeD();
+        showToast('Shipping info sent to buyer! Order marked as shipped.','success');
+        setTimeout(function(){location.reload();},800);
+      }
+    };
   }
   function openDispute(id){
     const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
@@ -3633,6 +3808,229 @@ function sellPage() {
   </script>
   `)
 }
+
+// ─── PAGE: SELLER DASHBOARD ──────────────────────────────────────────────
+function sellerDashboardPage() {
+  return shell('Seller Dashboard', `
+  <div class="max-w-5xl mx-auto px-4 py-8">
+
+    <!-- Header -->
+    <div class="flex items-center gap-4 mb-8">
+      <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-red-500 to-red-800 flex items-center justify-center text-white text-xl shadow-lg">
+        <i class="fas fa-chart-line"></i>
+      </div>
+      <div>
+        <h1 class="text-2xl font-extrabold text-slate-800">Seller Dashboard</h1>
+        <p class="text-slate-500 text-sm">Manage your listings on Arc Network</p>
+      </div>
+      <a href="/sell" class="ml-auto btn-primary text-sm"><i class="fas fa-plus-circle mr-1"></i> New Listing</a>
+    </div>
+
+    <!-- Wallet check -->
+    <div id="dash-wallet-check" class="mb-6"></div>
+
+    <!-- Stats row -->
+    <div id="dash-stats" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8"></div>
+
+    <!-- Products table -->
+    <div class="card p-6">
+      <div class="flex items-center justify-between mb-5">
+        <h2 class="font-bold text-slate-800 text-lg flex items-center gap-2">
+          <i class="fas fa-boxes text-red-500"></i> My Products
+        </h2>
+        <div class="flex gap-2">
+          <button onclick="filterDashProducts('all')" id="df-all" class="dash-filter-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-600 text-white">All</button>
+          <button onclick="filterDashProducts('active')" id="df-active" class="dash-filter-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200">Active</button>
+          <button onclick="filterDashProducts('paused')" id="df-paused" class="dash-filter-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200">Paused</button>
+        </div>
+      </div>
+      <div id="dash-products-container">
+        <div class="text-center py-12">
+          <div class="loading-spinner-lg mx-auto mb-4"></div>
+          <p class="text-slate-400 text-sm">Loading your products…</p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+  var _dashProducts = [];
+  var _dashFilter = 'all';
+
+  document.addEventListener('DOMContentLoaded', async function(){
+    const wallet = getStoredWallet();
+    const wc = document.getElementById('dash-wallet-check');
+    if(!wallet){
+      wc.innerHTML = '<div class="card p-8 text-center"><div class="empty-state"><i class="fas fa-wallet"></i><h3 class="font-bold text-slate-600 mb-2">Connect Wallet</h3><p class="text-sm mb-4">Connect your wallet to access your seller dashboard.</p><a href="/wallet" class="btn-primary mx-auto"><i class="fas fa-wallet mr-1"></i> Connect Wallet</a></div></div>';
+      document.getElementById('dash-products-container').innerHTML = '';
+      document.getElementById('dash-stats').innerHTML = '';
+      return;
+    }
+    checkNetworkStatus && checkNetworkStatus(document.createElement('div'));
+    await loadDashboardProducts(wallet.address);
+  });
+
+  async function loadDashboardProducts(address){
+    try {
+      const res = await fetch('/api/seller/'+address+'/products');
+      const data = await res.json();
+      _dashProducts = data.products || [];
+      renderDashStats();
+      renderDashProducts();
+    } catch(e) {
+      document.getElementById('dash-products-container').innerHTML =
+        '<div class="card p-8 text-center text-red-500"><i class="fas fa-exclamation-circle mr-2"></i>Could not load products. Please try again.</div>';
+    }
+  }
+
+  function renderDashStats(){
+    const total = _dashProducts.length;
+    const active = _dashProducts.filter(function(p){return p.status==='active';}).length;
+    const paused = _dashProducts.filter(function(p){return p.status==='paused';}).length;
+    // Count sales from localStorage orders
+    const wallet = getStoredWallet();
+    const myAddr = wallet ? wallet.address.toLowerCase() : '';
+    const allOrders = JSON.parse(localStorage.getItem('rh_orders')||'[]');
+    const mySales = allOrders.filter(function(o){ return o.sellerAddress && o.sellerAddress.toLowerCase()===myAddr; });
+    const stats = [
+      {icon:'fas fa-boxes',label:'Total Listings',value:total,color:'text-red-600'},
+      {icon:'fas fa-check-circle',label:'Active',value:active,color:'text-green-600'},
+      {icon:'fas fa-pause-circle',label:'Paused',value:paused,color:'text-amber-600'},
+      {icon:'fas fa-shopping-bag',label:'Total Sales',value:mySales.length,color:'text-blue-600'},
+    ];
+    document.getElementById('dash-stats').innerHTML = stats.map(function(s){
+      return '<div class="card p-5 text-center">'
+        +'<div class="'+s.color+' text-2xl font-extrabold mb-1">'+s.value+'</div>'
+        +'<div class="text-xs text-slate-500 font-medium"><i class="'+s.icon+' mr-1"></i>'+s.label+'</div>'
+        +'</div>';
+    }).join('');
+  }
+
+  function filterDashProducts(f){
+    _dashFilter = f;
+    document.querySelectorAll('.dash-filter-btn').forEach(function(b){
+      b.className = 'dash-filter-btn px-3 py-1.5 rounded-lg text-xs font-semibold '
+        +(b.id==='df-'+f ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200');
+    });
+    renderDashProducts();
+  }
+
+  function renderDashProducts(){
+    const container = document.getElementById('dash-products-container');
+    const list = _dashFilter==='all'
+      ? _dashProducts
+      : _dashProducts.filter(function(p){return p.status===_dashFilter;});
+
+    if(_dashProducts.length===0){
+      container.innerHTML = '<div class="text-center py-12"><div class="empty-state"><i class="fas fa-store"></i>'
+        +'<h3 class="font-bold text-slate-600 mb-2">No products listed yet</h3>'
+        +'<p class="text-sm text-slate-400 mb-4">Start selling by listing your first product.</p>'
+        +'<a href="/sell" class="btn-primary mx-auto"><i class="fas fa-plus-circle mr-1"></i> List a Product</a></div></div>';
+      return;
+    }
+    if(list.length===0){
+      container.innerHTML = '<div class="text-center py-10 text-slate-400 text-sm">No '+_dashFilter+' products found.</div>';
+      return;
+    }
+
+    // Responsive table / card list
+    container.innerHTML = '<div class="overflow-x-auto">'
+      +'<table class="w-full text-sm border-collapse">'
+      +'<thead><tr class="border-b border-slate-100">'
+      +'<th class="text-left py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Product</th>'
+      +'<th class="text-left py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wide hidden md:table-cell">Category</th>'
+      +'<th class="text-right py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Price</th>'
+      +'<th class="text-center py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Stock</th>'
+      +'<th class="text-center py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>'
+      +'<th class="text-right py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Actions</th>'
+      +'</tr></thead>'
+      +'<tbody>'
+      +list.map(function(p){
+        var statusBadge = p.status==='active'
+          ? '<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">Active</span>'
+          : p.status==='paused'
+            ? '<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700">Paused</span>'
+            : '<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700">Deleted</span>';
+        var imgEl = p.image
+          ? '<img src="'+p.image+'" class="w-10 h-10 rounded-lg object-cover mr-3 shrink-0" onerror="this.style.display=\'none\'">'
+          : '<div class="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center mr-3 shrink-0"><i class="fas fa-image text-slate-300"></i></div>';
+        var actionBtns = '';
+        if(p.status==='active'){
+          actionBtns += '<button onclick="dashPauseProduct(\''+p.id+'\')" class="text-amber-600 hover:text-amber-800 text-xs font-semibold px-2 py-1 rounded hover:bg-amber-50" title="Pause Listing"><i class="fas fa-pause mr-1"></i>Pause</button>';
+        }
+        if(p.status==='paused'){
+          actionBtns += '<button onclick="dashResumeProduct(\''+p.id+'\')" class="text-green-600 hover:text-green-800 text-xs font-semibold px-2 py-1 rounded hover:bg-green-50" title="Resume Listing"><i class="fas fa-play mr-1"></i>Resume</button>';
+        }
+        actionBtns += '<a href="/product/'+p.id+'" class="text-blue-600 hover:text-blue-800 text-xs font-semibold px-2 py-1 rounded hover:bg-blue-50" title="View Product"><i class="fas fa-eye mr-1"></i>View</a>';
+        actionBtns += '<button onclick="dashDeleteProduct(\''+p.id+'\')" class="text-red-500 hover:text-red-700 text-xs font-semibold px-2 py-1 rounded hover:bg-red-50" title="Delete Product"><i class="fas fa-trash mr-1"></i>Delete</button>';
+        return '<tr class="border-b border-slate-50 hover:bg-slate-50 transition-colors">'
+          +'<td class="py-3 px-2"><div class="flex items-center">'+imgEl+'<div><p class="font-semibold text-slate-800 text-xs leading-tight line-clamp-2 max-w-xs">'+((p.title||'').replace(/</g,'&lt;'))+'</p>'
+          +'<p class="text-slate-400 text-xs font-mono">'+p.id+'</p></div></div></td>'
+          +'<td class="py-3 px-2 text-slate-500 text-xs hidden md:table-cell">'+(p.category||'Other')+'</td>'
+          +'<td class="py-3 px-2 text-right font-bold text-red-600">'+parseFloat(p.price||0).toFixed(2)+' <span class="text-xs font-normal text-slate-500">'+(p.token||'USDC')+'</span></td>'
+          +'<td class="py-3 px-2 text-center text-slate-600">'+(p.stock||0)+'</td>'
+          +'<td class="py-3 px-2 text-center">'+statusBadge+'</td>'
+          +'<td class="py-3 px-2 text-right"><div class="flex items-center justify-end gap-1">'+actionBtns+'</div></td>'
+          +'</tr>';
+      }).join('')
+      +'</tbody></table></div>';
+  }
+
+  async function dashPauseProduct(productId){
+    if(!confirm('Pause this listing? It will be hidden from the marketplace but not deleted.')) return;
+    const wallet = getStoredWallet();
+    if(!wallet){ showToast('Connect wallet first','error'); return; }
+    try {
+      const res = await fetch('/api/products/'+productId+'/status',{
+        method:'PATCH',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({seller_id:wallet.address, status:'paused'})
+      });
+      const data = await res.json();
+      if(!res.ok){ showToast(data.error||'Failed to pause','error'); return; }
+      showToast('Listing paused — hidden from marketplace','info');
+      await loadDashboardProducts(wallet.address);
+    } catch(e){ showToast('Network error','error'); }
+  }
+
+  async function dashResumeProduct(productId){
+    if(!confirm('Resume this listing? It will be visible in the marketplace again.')) return;
+    const wallet = getStoredWallet();
+    if(!wallet){ showToast('Connect wallet first','error'); return; }
+    try {
+      const res = await fetch('/api/products/'+productId+'/status',{
+        method:'PATCH',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({seller_id:wallet.address, status:'active'})
+      });
+      const data = await res.json();
+      if(!res.ok){ showToast(data.error||'Failed to resume','error'); return; }
+      showToast('Listing is now active on the marketplace','success');
+      await loadDashboardProducts(wallet.address);
+    } catch(e){ showToast('Network error','error'); }
+  }
+
+  async function dashDeleteProduct(productId){
+    if(!confirm('Delete this product? It will be permanently removed from the marketplace. This cannot be undone.')) return;
+    const wallet = getStoredWallet();
+    if(!wallet){ showToast('Connect wallet first','error'); return; }
+    try {
+      const res = await fetch('/api/products/'+productId,{
+        method:'DELETE',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({seller_id:wallet.address})
+      });
+      const data = await res.json();
+      if(!res.ok){ showToast(data.error||'Failed to delete','error'); return; }
+      showToast('Product deleted successfully','success');
+      await loadDashboardProducts(wallet.address);
+    } catch(e){ showToast('Network error','error'); }
+  }
+  </script>
+  `)
+}
+
 
 // ─── PAGE: PROFILE ──────────────────────────────────────────────────────
 function profilePage() {
