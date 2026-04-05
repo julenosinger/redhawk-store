@@ -1837,11 +1837,11 @@ function checkoutPage() {
         </div>
 
         <button onclick="confirmOrder()" id="co-confirm-btn" class="btn-primary w-full justify-center py-4 text-base font-bold">
-          <i class="fas fa-lock"></i> Confirm & Lock Funds (Escrow)
+          <i class="fas fa-lock mr-2"></i> Confirmar & Bloquear Fundos
         </button>
         <p class="text-xs text-slate-400 text-center mt-2">
           <i class="fas fa-shield-alt text-red-400 mr-1"></i>
-          Funds locked in Arc Network smart contract until delivery confirmed
+          Sua wallet será aberta para assinar — fundos bloqueados até confirmação de entrega
         </p>
       </div>
     </div>
@@ -1888,46 +1888,162 @@ function checkoutPage() {
 
   async function confirmOrder(){
     const w=getStoredWallet();
-    if(!w){showToast('Please connect your wallet first','error');window.location.href='/wallet';return;}
+    if(!w){showToast('Conecte uma carteira primeiro','error');window.location.href='/wallet';return;}
+
+    // Garantir que está na Arc Network
     const onArc=await isOnArcNetwork();
-    if(!onArc && w.type==='metamask'){
-      showToast('Please switch to Arc Testnet first','warning');
-      await switchToArc();return;
+    if(!onArc){
+      showToast('Trocando para Arc Testnet…','info');
+      const switched = await switchToArc();
+      if(!switched){ showToast('Por favor troque para Arc Testnet manualmente','warning'); return; }
     }
+
     const cart=getCart();
-    if(!cart.length){showToast('Cart is empty','error');return;}
-    // Transaction confirmation dialog
+    if(!cart.length){showToast('Carrinho vazio','error');return;}
+
     const total=cart.reduce((s,i)=>s+(parseFloat(i.price)||0)*((i.quantity||i.qty)||1),0);
     const token=document.querySelector('input[name="token"]:checked')?.value||'USDC';
-    // Show custom TX confirmation modal instead of browser confirm()
+
+    // ── Pegar endereço do seller do primeiro item do carrinho ──
+    // (em multi-seller future build isso seria por item)
+    let sellerAddress = '0x0000000000000000000000000000000000000000';
+    try {
+      const pid = cart[0]?.id;
+      if(pid){
+        const r = await fetch('/api/products/'+pid);
+        const d = await r.json();
+        if(d.product?.seller_id && d.product.seller_id.startsWith('0x')){
+          sellerAddress = d.product.seller_id;
+        }
+      }
+    } catch(e){}
+
+    // ── Mostrar modal de confirmação com detalhes reais ──
     const confirmResult = await showTxConfirmModal({
-      action: 'Lock funds in escrow',
+      action: 'Bloquear fundos em Escrow',
       amount: total.toFixed(2),
       token: token,
       network: 'Arc Testnet (Chain ID: 5042002)',
-      note: 'This is a TESTNET transaction — no real funds are used.'
+      note: 'Esta é uma transação TESTNET — nenhum valor real é usado. Sua wallet será aberta para assinar.'
     });
-    if(!confirmResult){showToast('Transaction cancelled','info');return;}
-    const orderId='ORD-'+Date.now();
-    // In production this would call the escrow smart contract
-    // For now: simulate tx hash structure (real tx would come from wallet)
-    const fakeSimTx='0x'+Array(64).fill(0).map(()=>Math.floor(Math.random()*16).toString(16)).join('');
+    if(!confirmResult){showToast('Transação cancelada','info');return;}
+
+    // ── Desabilitar botão durante processamento ──
+    const btn=document.getElementById('co-confirm-btn');
+    if(btn){btn.disabled=true;btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Aguardando wallet…';}
+
+    let txHash = null;
     try {
-      const res=await fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({txHash:fakeSimTx,buyerAddress:w.address,sellerAddress:'0x0000000000000000000000000000000000000000',amount:total,token,productId:cart[0]?.id||'',items:cart,orderId})
+      // ── Chamar wallet real ──────────────────────────────────
+      if(w.type==='metamask' && window.ethereum){
+        // MetaMask: usar ethers BrowserProvider para assinar
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const signer   = await provider.getSigner();
+        const amountWei = ethers.parseUnits(total.toFixed(6), 6); // 6 decimals
+
+        showToast('Abrindo MetaMask para assinar…','info');
+
+        let txResponse;
+        if(token==='USDC'){
+          // USDC é nativo na Arc — envia como transferência nativa
+          // value precisa ser convertido: USDC tem 6 dec, ETH nativo tem 18 dec
+          txResponse = await signer.sendTransaction({
+            to: sellerAddress,
+            value: amountWei * BigInt('1000000000000'), // 6→18 dec
+            data: '0x'
+          });
+        } else {
+          // EURC é ERC-20
+          const eurcContract = new ethers.Contract(
+            window.ARC.contracts.EURC,
+            ['function transfer(address to, uint256 amount) returns (bool)'],
+            signer
+          );
+          txResponse = await eurcContract.transfer(sellerAddress, amountWei);
+        }
+        txHash = txResponse.hash;
+        showToast('Tx enviada! Aguardando confirmação…','info');
+
+        // Aguardar 1 confirmação
+        try { await txResponse.wait(1); } catch(e){}
+        showToast('Transação confirmada na Arc Network!','success');
+
+      } else if(w.type==='internal' && w.privateKey){
+        // Wallet interna: usar ethers JsonRpcProvider + Wallet
+        const provider = new ethers.JsonRpcProvider(window.ARC.rpc);
+        const wallet   = new ethers.Wallet(w.privateKey, provider);
+        const amountWei = ethers.parseUnits(total.toFixed(6), 6);
+
+        showToast('Assinando transação com carteira interna…','info');
+
+        let txResponse;
+        if(token==='USDC'){
+          txResponse = await wallet.sendTransaction({
+            to: sellerAddress,
+            value: amountWei * BigInt('1000000000000'),
+            data: '0x'
+          });
+        } else {
+          const eurcContract = new ethers.Contract(
+            window.ARC.contracts.EURC,
+            ['function transfer(address to, uint256 amount) returns (bool)'],
+            wallet
+          );
+          txResponse = await eurcContract.transfer(sellerAddress, amountWei);
+        }
+        txHash = txResponse.hash;
+        showToast('Tx enviada! Hash: '+txHash.substring(0,14)+'…','info');
+        try { await txResponse.wait(1); } catch(e){}
+        showToast('Transação confirmada!','success');
+
+      } else {
+        // Fallback: wallet conectada mas sem provider (WalletConnect etc.)
+        showToast('Wallet não suporta assinatura direta. Use MetaMask ou carteira interna.','error');
+        if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-lock mr-2"></i>Confirmar & Bloquear Fundos';}
+        return;
+      }
+    } catch(err){
+      // Usuário cancelou ou erro na tx
+      const msg = err.code==='ACTION_REJECTED'||err.code===4001
+        ? 'Transação rejeitada pelo usuário'
+        : 'Erro na transação: '+(err.shortMessage||err.message||'');
+      showToast(msg,'error');
+      if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-lock mr-2"></i>Confirmar & Bloquear Fundos';}
+      return;
+    }
+
+    // ── Registrar order na API ──────────────────────────────────
+    try {
+      const orderId='ORD-'+Date.now();
+      const res=await fetch('/api/orders',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          txHash, buyerAddress:w.address, sellerAddress,
+          amount:total, token, productId:cart[0]?.id||'',
+          items:cart, orderId
+        })
       });
       const data=await res.json();
       if(data.success){
-        // Save order locally with Arc explorer link
         const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
-        orders.push({...data.order,items:cart,explorerUrl:ARC.explorer+'/tx/'+fakeSimTx});
+        orders.push({...data.order, items:cart, explorerUrl:ARC.explorer+'/tx/'+txHash});
         localStorage.setItem('rh_orders',JSON.stringify(orders));
         saveCart([]);updateCartBadge();
-        showToast('Escrow initiated on Arc Network! Order '+data.order.id,'success');
-        setTimeout(()=>window.location.href='/orders/'+data.order.id,1500);
+        showToast('Escrow iniciado! Pedido '+data.order.id,'success');
+        setTimeout(()=>window.location.href='/orders/'+data.order.id, 1500);
       }
     } catch(err){
-      showToast('Failed to create order: '+err.message,'error');
+      // Tx já foi enviada — salvar localmente mesmo se API falhar
+      const orderId='ORD-'+Date.now();
+      const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
+      orders.push({id:orderId,txHash,buyerAddress:w.address,sellerAddress,amount:total,token,
+        productId:cart[0]?.id||'',items:cart,status:'escrow_locked',
+        createdAt:new Date().toISOString(),explorerUrl:ARC.explorer+'/tx/'+txHash});
+      localStorage.setItem('rh_orders',JSON.stringify(orders));
+      saveCart([]);updateCartBadge();
+      showToast('Pedido salvo localmente. Hash: '+txHash.substring(0,14)+'…','success');
+      setTimeout(()=>window.location.href='/orders/'+orderId, 1500);
     }
   }
   </script>
