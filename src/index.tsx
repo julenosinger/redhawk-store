@@ -1077,12 +1077,16 @@ function footer() {
 // ─── PAGE: HOME ────────────────────────────────────────────────────────
 function homePage() {
   const categories = [
-    { name:'Electronics', icon:'fas fa-laptop', color:'bg-blue-50 text-blue-600' },
-    { name:'Gaming', icon:'fas fa-gamepad', color:'bg-purple-50 text-purple-600' },
-    { name:'Audio', icon:'fas fa-headphones', color:'bg-green-50 text-green-600' },
-    { name:'Photography', icon:'fas fa-camera', color:'bg-yellow-50 text-yellow-600' },
-    { name:'Wearables', icon:'fas fa-watch', color:'bg-pink-50 text-pink-600' },
-    { name:'Accessories', icon:'fas fa-keyboard', color:'bg-red-50 text-red-600' },
+    { name:'Electronics',           icon:'fas fa-laptop',       color:'bg-blue-50 text-blue-600' },
+    { name:'Gaming',                icon:'fas fa-gamepad',       color:'bg-purple-50 text-purple-600' },
+    { name:'Audio',                 icon:'fas fa-headphones',    color:'bg-green-50 text-green-600' },
+    { name:'Photography',           icon:'fas fa-camera',        color:'bg-yellow-50 text-yellow-600' },
+    { name:'Wearables',             icon:'fas fa-watch',         color:'bg-pink-50 text-pink-600' },
+    { name:'Accessories',           icon:'fas fa-keyboard',      color:'bg-red-50 text-red-600' },
+    { name:'Pet Shop',              icon:'fas fa-paw',           color:'bg-orange-50 text-orange-600' },
+    { name:'Baby & Kids',           icon:'fas fa-baby',          color:'bg-sky-50 text-sky-600' },
+    { name:'Beauty & Personal Care',icon:'fas fa-spa',           color:'bg-rose-50 text-rose-600' },
+    { name:'Fashion & Accessories', icon:'fas fa-tshirt',        color:'bg-violet-50 text-violet-600' },
   ]
   const catCards = categories.map(c => `
     <a href="/marketplace?cat=${c.name}" class="card p-5 flex flex-col items-center gap-3 hover:border-red-200 hover:bg-red-50/30 transition-all cursor-pointer group text-center">
@@ -1368,7 +1372,7 @@ function marketplacePage() {
           <div class="mb-5">
             <p class="font-semibold text-slate-700 text-sm mb-2">Category</p>
             <div class="space-y-1.5">
-              ${['All','Electronics','Gaming','Audio','Photography','Wearables','Accessories'].map((cat,i) => `
+              ${['All','Electronics','Gaming','Audio','Photography','Wearables','Accessories','Pet Shop','Baby & Kids','Beauty & Personal Care','Fashion & Accessories'].map((cat,i) => `
                 <label class="flex items-center gap-2 cursor-pointer hover:text-red-600 text-sm text-slate-600">
                   <input type="checkbox" data-cat="${cat}" ${i===0?'checked':''} class="cat-filter accent-red-600 w-3.5 h-3.5"/> ${cat}
                 </label>`).join('')}
@@ -3437,7 +3441,10 @@ function sellPage() {
             <select id="prod-cat" class="select">
               <option value="">Select category</option>
               <option>Electronics</option><option>Gaming</option><option>Audio</option>
-              <option>Photography</option><option>Wearables</option><option>Accessories</option><option>Other</option>
+              <option>Photography</option><option>Wearables</option><option>Accessories</option>
+              <option>Pet Shop</option><option>Baby &amp; Kids</option>
+              <option>Beauty &amp; Personal Care</option><option>Fashion &amp; Accessories</option>
+              <option>Other</option>
             </select>
           </div>
         </div>
