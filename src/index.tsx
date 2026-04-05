@@ -3412,24 +3412,43 @@ function walletImportPage() {
 function ordersPage() {
   return shell('My Orders', `
   <div class="max-w-4xl mx-auto px-4 py-8">
-    <h1 class="text-3xl font-bold text-slate-800 mb-2 flex items-center gap-3">
-      <i class="fas fa-box text-red-500"></i> My Orders
-    </h1>
+    <div class="flex items-center justify-between gap-4 mb-2 flex-wrap">
+      <h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3">
+        <i class="fas fa-box text-red-500"></i> My Orders
+      </h1>
+      <div id="orders-summary-badge" class="text-xs text-slate-400 font-mono bg-slate-100 px-3 py-1 rounded-full"></div>
+    </div>
     <p class="text-slate-500 mb-2">Escrow-protected orders on Arc Network.</p>
-    <div id="orders-network-status" class="mb-6"></div>
+    <div id="orders-network-status" class="mb-4"></div>
+
+    <!-- Wallet indicator -->
+    <div id="orders-wallet-bar" class="mb-4 hidden">
+      <div class="flex items-center gap-2 text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+        <i class="fas fa-wallet text-red-400"></i>
+        <span>Showing orders for wallet: <span id="orders-wallet-addr" class="font-mono text-slate-700"></span></span>
+      </div>
+    </div>
+
     <!-- Tabs: Purchases / Sales -->
     <div class="flex gap-2 mb-6">
-      <button id="tab-purchases" onclick="switchOrderTab('purchases')" class="px-4 py-2 rounded-lg text-sm font-semibold bg-red-600 text-white shadow-sm">
+      <button id="tab-purchases" onclick="switchOrderTab('purchases')"
+        class="px-4 py-2 rounded-lg text-sm font-semibold bg-red-600 text-white shadow-sm transition-all">
         <i class="fas fa-shopping-bag mr-1"></i> My Purchases
       </button>
-      <button id="tab-sales" onclick="switchOrderTab('sales')" class="px-4 py-2 rounded-lg text-sm font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200">
+      <button id="tab-sales" onclick="switchOrderTab('sales')"
+        class="px-4 py-2 rounded-lg text-sm font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all">
         <i class="fas fa-store mr-1"></i> My Sales
       </button>
     </div>
-    <div id="orders-container"></div>
+    <div id="orders-container">
+      <div class="card p-8 text-center">
+        <div class="loading-spinner-lg mx-auto mb-3"></div>
+        <p class="text-slate-400 text-sm">Loading your orders…</p>
+      </div>
+    </div>
   </div>
 
-  <!-- Receipt Modal -->
+  <!-- Receipt / Shipping Modal root -->
   <div id="receipt-modal-root"></div>
 
   <script>
@@ -3452,68 +3471,144 @@ function ordersPage() {
   }
 
   function renderOrders(tab){
-    const container=document.getElementById('orders-container');
-    const wallet=getStoredWallet();
+    var container=document.getElementById('orders-container');
+    if(!container) return;
+
+    /* Safety guard: globalScript may not have loaded yet — retry once */
+    if(typeof getStoredWallet !== 'function'){
+      container.innerHTML='<div class="card p-8 text-center"><div class="loading-spinner-lg mx-auto mb-3"></div><p class="text-slate-400 text-sm">Initializing wallet…</p></div>';
+      setTimeout(function(){ renderOrders(tab); }, 300);
+      return;
+    }
+
+    var wallet=getStoredWallet();
     if(!wallet){
       container.innerHTML='<div class="card p-12 text-center"><div class="empty-state"><i class="fas fa-wallet"></i><h3 class="font-bold text-slate-600 mb-2">Connect Wallet</h3><p class="text-sm mb-4">Connect your wallet to view orders associated with your Arc address.</p><a href="/wallet" class="btn-primary mx-auto"><i class="fas fa-wallet"></i> Connect Wallet</a></div></div>';
       return;
     }
-    const myAddr = wallet.address.toLowerCase();
-    const allOrders = JSON.parse(localStorage.getItem('rh_orders')||'[]');
-    const orders = tab==='purchases'
-      ? allOrders.filter(o => o.buyerAddress && o.buyerAddress.toLowerCase()===myAddr)
-      : allOrders.filter(o => o.sellerAddress && o.sellerAddress.toLowerCase()===myAddr);
+    var myAddr = wallet.address.toLowerCase();
+    var rawOrders = localStorage.getItem('rh_orders');
+    var allOrders = [];
+    try { allOrders = JSON.parse(rawOrders || '[]'); } catch(e){ allOrders = []; }
+
+    /* Normalise field names — some orders may store buyer/seller differently */
+    allOrders = allOrders.map(function(o){
+      return {
+        id: o.id || o.orderId || ('ORD-'+Date.now()),
+        txHash: o.txHash || o.tx_hash || '',
+        buyerAddress: (o.buyerAddress || o.buyer_address || o.buyer || '').toLowerCase(),
+        sellerAddress: (o.sellerAddress || o.seller_address || o.seller || '').toLowerCase(),
+        amount: o.amount || 0,
+        token: o.token || 'USDC',
+        status: o.status || 'escrow_locked',
+        createdAt: o.createdAt || o.created_at || new Date().toISOString(),
+        explorerUrl: o.explorerUrl || ('https://testnet.arcscan.app/tx/'+(o.txHash||'')),
+        items: o.items || [],
+        shippingInfo: o.shippingInfo || null,
+        shippedAt: o.shippedAt || null,
+        deliveredAt: o.deliveredAt || null,
+        releasedAt: o.releasedAt || null
+      };
+    });
+
+    var orders = tab==='purchases'
+      ? allOrders.filter(function(o){ return o.buyerAddress === myAddr; })
+      : allOrders.filter(function(o){ return o.sellerAddress === myAddr; });
+
     if(!orders.length){
-      const msg = tab==='purchases' ? 'No purchases yet.' : 'No sales yet.';
-      container.innerHTML='<div class="card p-12 text-center"><div class="empty-state"><i class="fas fa-box-open"></i><h3 class="font-bold text-slate-600 mb-2">'+msg+'</h3><p class="text-sm mb-4">Orders will appear here once created.</p><a href="/marketplace" class="btn-primary mx-auto"><i class="fas fa-store"></i> Browse Marketplace</a></div></div>';
+      var msg = tab==='purchases' ? 'No purchases yet.' : 'No sales yet.';
+      var subMsg = tab==='purchases'
+        ? 'When you buy a product, your order will appear here.'
+        : 'When a buyer purchases your product, the sale will appear here.';
+      container.innerHTML='<div class="card p-12 text-center">'
+        +'<div class="empty-state">'
+        +'<i class="fas fa-box-open"></i>'
+        +'<h3 class="font-bold text-slate-600 mb-2">'+msg+'</h3>'
+        +'<p class="text-sm mb-1 text-slate-400">'+subMsg+'</p>'
+        +'<p class="text-xs text-slate-300 mb-4 font-mono">Wallet: '+wallet.address.substring(0,14)+'…</p>'
+        +(tab==='purchases'
+          ? '<a href="/marketplace" class="btn-primary mx-auto"><i class="fas fa-store"></i> Browse Marketplace</a>'
+          : '<a href="/sell" class="btn-primary mx-auto"><i class="fas fa-plus-circle"></i> List a Product</a>')
+        +'</div></div>';
       return;
     }
-    const statusColors={'escrow_locked':'bg-yellow-100 text-yellow-700','escrow_pending':'bg-blue-100 text-blue-700','shipped':'bg-indigo-100 text-indigo-700','delivered':'bg-teal-100 text-teal-700','completed':'bg-green-100 text-green-700','funds_released':'bg-emerald-100 text-emerald-800','dispute':'bg-red-100 text-red-700'};
-    const isSeller = tab==='sales';
-    container.innerHTML=orders.slice().reverse().map(o=>{
-      const sc=statusColors[o.status]||'bg-slate-100 text-slate-700';
-      const explorerUrl=o.explorerUrl||('https://testnet.arcscan.app/tx/'+(o.txHash||''));
-      // Role-based action buttons
-      let actionBtns='';
+    var statusColors={
+      'escrow_locked':'bg-yellow-100 text-yellow-700',
+      'escrow_pending':'bg-blue-100 text-blue-700',
+      'shipped':'bg-indigo-100 text-indigo-700',
+      'delivered':'bg-teal-100 text-teal-700',
+      'completed':'bg-green-100 text-green-700',
+      'funds_released':'bg-emerald-100 text-emerald-800',
+      'dispute':'bg-red-100 text-red-700'
+    };
+    var statusLabels={
+      'escrow_locked':'Escrow Locked',
+      'escrow_pending':'Pending',
+      'shipped':'Shipped',
+      'delivered':'Delivered',
+      'completed':'Confirmed',
+      'funds_released':'Funds Released',
+      'dispute':'Dispute'
+    };
+    var isSeller = tab==='sales';
+    container.innerHTML=orders.slice().reverse().map(function(o){
+      var sc=statusColors[o.status]||'bg-slate-100 text-slate-700';
+      var sl=statusLabels[o.status]||o.status.replace(/_/g,' ');
+      var explorerUrl=o.explorerUrl||('https://testnet.arcscan.app/tx/'+(o.txHash||''));
+      /* Product name from items */
+      var productName = '';
+      if(o.items && o.items.length){
+        productName = (o.items[0].title||o.items[0].name||'Product');
+        if(o.items.length>1) productName += ' +' + (o.items.length-1) + ' more';
+      } else if(o.productId){
+        productName = 'Product #'+o.productId.substring(0,8);
+      }
+      /* Role-based action buttons */
+      var actionBtns='';
       if(isSeller){
-        // Seller sees: Mark Shipped (when escrow_locked), Release Funds (when completed)
-        if(o.status==='escrow_locked') actionBtns+='<button data-oid="'+o.id+'" class="mark-shipped-btn btn-primary text-xs py-1.5 px-3"><i class=\\"fas fa-shipping-fast mr-1\\"></i>Mark as Shipped</button>';
-        if(o.status==='completed')     actionBtns+='<button data-oid="'+o.id+'" class="release-funds-btn btn-primary text-xs py-1.5 px-3 bg-green-600 hover:bg-green-700"><i class=\\"fas fa-coins mr-1\\"></i>Release Funds</button>';
+        if(o.status==='escrow_locked') actionBtns+='<button data-oid="'+o.id+'" class="mark-shipped-btn btn-primary text-xs py-1.5 px-3"><i class="fas fa-shipping-fast mr-1"></i>Mark as Shipped</button>';
+        if(o.status==='completed')     actionBtns+='<button data-oid="'+o.id+'" class="release-funds-btn btn-primary text-xs py-1.5 px-3" style="background:#16a34a;border-color:#16a34a;"><i class="fas fa-coins mr-1"></i>Release Funds</button>';
       } else {
-        // Buyer sees: Confirm Delivery (when shipped)
-        if(o.status==='shipped') actionBtns+='<button data-oid="'+o.id+'" class="confirm-delivery-btn btn-secondary text-xs py-1.5 px-3"><i class=\\"fas fa-check-circle mr-1\\"></i>Confirm Delivery</button>';
+        if(o.status==='shipped') actionBtns+='<button data-oid="'+o.id+'" class="confirm-delivery-btn btn-secondary text-xs py-1.5 px-3"><i class="fas fa-check-circle mr-1"></i>Confirm Delivery</button>';
+      }
+      /* Shipping info panel for buyer */
+      var shippingPanel='';
+      if(!isSeller && o.shippingInfo){
+        shippingPanel='<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:12px;margin-bottom:12px;">'
+          +'<p style="font-size:11px;font-weight:700;text-transform:uppercase;color:#0369a1;margin:0 0 8px;"><i class="fas fa-shipping-fast" style="margin-right:5px;"></i>Shipping Update</p>'
+          +'<div style="display:flex;flex-direction:column;gap:5px;font-size:12px;color:#1e293b;">'
+          +'<p style="margin:0;"><strong>Carrier:</strong> '+o.shippingInfo.carrier+'</p>'
+          +'<p style="margin:0;"><strong>Tracking #:</strong> <span style="font-family:monospace;">'+o.shippingInfo.trackingNumber+'</span></p>'
+          +(o.shippingInfo.trackingLink?'<p style="margin:0;"><strong>Track:</strong> <a href="'+o.shippingInfo.trackingLink+'" target="_blank" style="color:#0369a1;text-decoration:underline;">'+o.shippingInfo.trackingLink+'</a></p>':'')
+          +(o.shippingInfo.notes?'<p style="margin:0;color:#475569;font-style:italic;">'+o.shippingInfo.notes+'</p>':'')
+          +'</div></div>';
       }
       return '<div class="card p-5 mb-4 hover:shadow-md transition-shadow">'
         +'<div class="flex items-start justify-between gap-4 mb-3">'
-        +'<div><p class="font-bold text-slate-800">'+o.id+'</p>'
-        +'<p class="text-slate-400 text-xs">'+new Date(o.createdAt).toLocaleString()+'</p></div>'
-        +'<span class="px-3 py-1 rounded-full text-xs font-bold '+sc+' capitalize">'+(o.status||'').replace(/_/g,' ')+'</span>'
+        +'<div>'
+        +'<p class="font-bold text-slate-800 text-sm font-mono">'+o.id+'</p>'
+        +(productName?'<p class="text-slate-700 font-semibold text-sm mt-0.5">'+productName+'</p>':'')
+        +'<p class="text-slate-400 text-xs mt-0.5">'+new Date(o.createdAt).toLocaleString()+'</p>'
         +'</div>'
-        +'<div class="text-sm mb-3">'
-        +'<p class="text-slate-600">Amount: <strong class="text-red-600">'+(o.amount||0)+' '+(o.token||'USDC')+'</strong></p>'
+        +'<span class="px-3 py-1 rounded-full text-xs font-bold '+sc+' capitalize shrink-0">'+sl+'</span>'
+        +'</div>'
+        +'<div class="text-sm mb-3 flex flex-col gap-1">'
+        +'<p class="text-slate-600">Amount: <strong class="text-red-600">'+o.amount+' '+(o.token||'USDC')+'</strong></p>'
         +(isSeller
-          ? '<p class="text-slate-400 text-xs addr-mono">Buyer: '+(o.buyerAddress||'—')+'</p>'
-          : '<p class="text-slate-400 text-xs addr-mono">Seller: '+(o.sellerAddress||'—')+'</p>')
-        +'<p class="text-slate-400 text-xs addr-mono">Tx: <a href="'+explorerUrl+'" target="_blank" class="text-blue-500 hover:underline">'+(o.txHash||'').substring(0,20)+'…</a></p>'
+          ?'<p class="text-slate-400 text-xs addr-mono">Buyer: '+(o.buyerAddress||'—')+'</p>'
+          :'<p class="text-slate-400 text-xs addr-mono">Seller: '+(o.sellerAddress||'—')+'</p>')
+        +(o.txHash?'<p class="text-slate-400 text-xs addr-mono">Tx: <a href="'+explorerUrl+'" target="_blank" class="text-blue-500 hover:underline">'+o.txHash.substring(0,20)+'…</a></p>':'')
         +'</div>'
-        // Shipping info panel — visible to buyer when shippingInfo exists
-        +(!isSeller && o.shippingInfo
-          ? '<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:12px;margin-bottom:12px;">'
-            +'<p style="font-size:11px;font-weight:700;text-transform:uppercase;color:#0369a1;margin:0 0 8px;"><i class="fas fa-shipping-fast" style="margin-right:5px;"></i>Shipping Update</p>'
-            +'<div style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#1e293b;">'
-            +'<p style="margin:0;"><strong>Carrier:</strong> '+o.shippingInfo.carrier+'</p>'
-            +'<p style="margin:0;"><strong>Tracking #:</strong> <span style="font-family:monospace;">'+o.shippingInfo.trackingNumber+'</span></p>'
-            +(o.shippingInfo.trackingLink ? '<p style="margin:0;"><strong>Track:</strong> <a href="'+o.shippingInfo.trackingLink+'" target="_blank" style="color:#0369a1;text-decoration:underline;">'+o.shippingInfo.trackingLink+'</a></p>' : '')
-            +(o.shippingInfo.notes ? '<p style="margin:0;color:#475569;font-style:italic;">'+o.shippingInfo.notes+'</p>' : '')
-            +'</div></div>'
-          : '')
+        +shippingPanel
         +'<div class="flex gap-2 flex-wrap">'
-        +'<a href="/orders/'+o.id+'" class="btn-primary text-xs py-1.5 px-3">View Details</a>'
-        +'<button data-oid="'+o.id+'" class="view-receipt-btn btn-secondary text-xs py-1.5 px-3"><i class="fas fa-receipt mr-1"></i>View Receipt</button>'
+        +'<a href="/orders/'+o.id+'" class="btn-primary text-xs py-1.5 px-3"><i class="fas fa-eye mr-1"></i>View Details</a>'
+        +'<button data-oid="'+o.id+'" class="view-receipt-btn btn-secondary text-xs py-1.5 px-3"><i class="fas fa-receipt mr-1"></i>Receipt</button>'
         +actionBtns
-        +'</div></div>';
+        +'</div>'
+        +'</div>';
     }).join('');
-    // Attach event listeners
+
+    /* Attach event listeners */
     document.querySelectorAll('.confirm-delivery-btn').forEach(function(b){
       b.addEventListener('click',function(){ confirmDeliveryOrder(this.dataset.oid); });
     });
@@ -3760,10 +3855,38 @@ function ordersPage() {
     };
   }
 
-  document.addEventListener('DOMContentLoaded', async () => {
-    checkNetworkStatus(document.getElementById('orders-network-status'));
+  /* ── Robust initializer: handles both "already loaded" and "not yet loaded" ── */
+  function _ordersInit() {
+    if(typeof checkNetworkStatus === 'function'){
+      checkNetworkStatus(document.getElementById('orders-network-status'));
+    }
+    /* Show wallet bar and order count badge */
+    if(typeof getStoredWallet === 'function'){
+      var w = getStoredWallet();
+      if(w){
+        var bar = document.getElementById('orders-wallet-bar');
+        var addr = document.getElementById('orders-wallet-addr');
+        if(bar){ bar.classList.remove('hidden'); }
+        if(addr){ addr.textContent = w.address.substring(0,10)+'…'+w.address.slice(-6); }
+        /* Update summary badge */
+        try {
+          var all = JSON.parse(localStorage.getItem('rh_orders')||'[]');
+          var myAddr = w.address.toLowerCase();
+          var buys = all.filter(function(o){ return (o.buyerAddress||'').toLowerCase()===myAddr; }).length;
+          var sells = all.filter(function(o){ return (o.sellerAddress||'').toLowerCase()===myAddr; }).length;
+          var badge = document.getElementById('orders-summary-badge');
+          if(badge) badge.textContent = buys+' purchase'+(buys!==1?'s':'')+' · '+sells+' sale'+(sells!==1?'s':'');
+        } catch(e){}
+      }
+    }
     renderOrders('purchases');
-  });
+  }
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', _ordersInit);
+  } else {
+    /* DOM already ready — setTimeout(0) lets globalScript functions finish registering */
+    setTimeout(_ordersInit, 0);
+  }
   </script>
   `)
 }
@@ -3787,21 +3910,21 @@ function orderDetailPage(id: string) {
   <div id="receipt-modal-root"></div>
 
   <script>
-  document.addEventListener('DOMContentLoaded', () => {
-    const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
-    const order=orders.find(o=>o.id==='${id}');
-    const container=document.getElementById('order-detail-container');
+  function _orderDetailInit(){
+    var orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
+    var order=orders.find(function(o){ return o.id==='${id}'; });
+    var container=document.getElementById('order-detail-container');
     if(!order){
       container.innerHTML='<div class="card p-8 text-center"><div class="empty-state"><i class="fas fa-box-open"></i><p class="font-medium text-slate-600">Order not found</p><a href="/orders" class="btn-primary mt-4 mx-auto">Back to Orders</a></div></div>';
       return;
     }
-    const wallet=getStoredWallet();
-    const myAddr=wallet?wallet.address.toLowerCase():'';
-    const isSeller=order.sellerAddress&&order.sellerAddress.toLowerCase()===myAddr;
-    const isBuyer=order.buyerAddress&&order.buyerAddress.toLowerCase()===myAddr;
-    const statusSteps=['escrow_pending','escrow_locked','shipped','delivered','completed','funds_released'];
-    const statusIdx=Math.max(0,statusSteps.indexOf(order.status));
-    const explorerTxUrl=order.explorerUrl||('${ARC.explorer}/tx/'+(order.txHash||''));
+    var wallet = typeof getStoredWallet==='function' ? getStoredWallet() : null;
+    var myAddr=wallet?wallet.address.toLowerCase():'';
+    var isSeller=order.sellerAddress&&order.sellerAddress.toLowerCase()===myAddr;
+    var isBuyer=order.buyerAddress&&order.buyerAddress.toLowerCase()===myAddr;
+    var statusSteps=['escrow_pending','escrow_locked','shipped','delivered','completed','funds_released'];
+    var statusIdx=Math.max(0,statusSteps.indexOf(order.status));
+    var explorerTxUrl=order.explorerUrl||('${ARC.explorer}/tx/'+(order.txHash||''));
 
     // Build role-based action buttons
     let actionBtns='';
@@ -3898,7 +4021,7 @@ function orderDetailPage(id: string) {
     document.querySelectorAll('.open-dispute-btn').forEach(function(b){
       b.addEventListener('click',function(){ openDispute(this.dataset.oid); });
     });
-  });
+  } /* end _orderDetailInit */
 
   function updateOrderStatus(id,s){
     // If marking as shipped, show shipping info form first
@@ -3979,6 +4102,12 @@ function orderDetailPage(id: string) {
   function showReceiptModalDetail(){
     // Delegate to the shared showReceiptModal function
     showReceiptModal('${id}');
+  }
+  /* Robust init for order detail page */
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', _orderDetailInit);
+  } else {
+    setTimeout(_orderDetailInit, 0);
   }
   </script>
   `)
