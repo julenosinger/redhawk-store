@@ -989,86 +989,87 @@ async function sendChatMessage(overrideText) {
 
 // ─── Footer ───────────────────────────────────────────────────────────
 function footer() {
-  return `<footer>
+  return `<footer style="background:#0f172a;border-top:1px solid #1e293b;padding:32px 0 0;">
     <div class="max-w-7xl mx-auto px-4">
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-8 pb-8 border-b border-slate-700">
-        <div>
-          <div class="flex items-center gap-2 mb-4">
-            <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-red-500 to-red-800 flex items-center justify-center">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="white"/></svg>
+
+      <!-- Main grid: brand + 3 link columns -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-6 pb-6 border-b border-slate-800">
+
+        <!-- Brand -->
+        <div class="col-span-2 md:col-span-1">
+          <div class="flex items-center gap-2 mb-2">
+            <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-red-500 to-red-800 flex items-center justify-center shrink-0">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="white"/></svg>
             </div>
-            <span class="font-bold text-white">redhawk-store</span>
+            <span class="font-bold text-white text-sm">redhawk<span class="text-red-500">-store</span></span>
           </div>
-          <p class="text-sm leading-relaxed mb-3">Decentralized marketplace powered by Arc Network — stablecoin-native L1 blockchain built by Circle.</p>
-          <div class="space-y-1.5 text-xs">
-            <div class="flex items-center gap-2"><div class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></div><span class="text-green-400">Arc Testnet Live</span></div>
-            <div class="text-slate-500">Chain ID: 5042002</div>
-            <div class="text-slate-500">Gas token: USDC (native)</div>
+          <p class="text-xs text-slate-500 leading-relaxed mb-3 max-w-xs">Decentralized marketplace on Arc Network — Circle's stablecoin-native L1.</p>
+          <div class="flex items-center gap-3 text-xs">
+            <span class="flex items-center gap-1.5 text-green-400"><span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse inline-block"></span>Arc Testnet</span>
+            <span class="text-slate-600">·</span>
+            <span class="text-slate-500">Chain 5042002</span>
           </div>
         </div>
+
+        <!-- Marketplace -->
         <div>
-          <h4 class="font-semibold text-white mb-3">Marketplace</h4>
-          <ul class="space-y-2 text-sm">
-            ${['Browse Products:/marketplace','Categories:/marketplace','Sell a Product:/sell','Seller Dashboard:/dashboard','My Orders:/orders','Disputes:/disputes'].map(t=>{const[l,u]=t.split(':');return`<li><a href="${u}" class="hover:text-red-400 transition-colors">${l}</a></li>`}).join('')}
+          <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Marketplace</p>
+          <ul class="space-y-1.5">
+            ${['Browse:/marketplace','Sell:/sell','Dashboard:/dashboard','My Orders:/orders','Disputes:/disputes'].map(t=>{const[l,u]=t.split(':');return`<li><a href="${u}" class="text-xs text-slate-500 hover:text-red-400 transition-colors">${l}</a></li>`}).join('')}
           </ul>
         </div>
+
+        <!-- Wallet -->
         <div>
-          <h4 class="font-semibold text-white mb-3">Wallet</h4>
-          <ul class="space-y-2 text-sm">
-            ${['My Wallet:/wallet','Create Wallet:/wallet/create','Import Wallet:/wallet/import','Wallet Profile:/profile'].map(t=>{const[l,u]=t.split(':');return`<li><a href="${u}" class="hover:text-red-400 transition-colors">${l}</a></li>`}).join('')}
+          <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Wallet</p>
+          <ul class="space-y-1.5">
+            ${['My Wallet:/wallet','Create:/wallet/create','Import:/wallet/import','Profile:/profile'].map(t=>{const[l,u]=t.split(':');return`<li><a href="${u}" class="text-xs text-slate-500 hover:text-red-400 transition-colors">${l}</a></li>`}).join('')}
           </ul>
         </div>
+
+        <!-- Arc Network -->
         <div>
-          <h4 class="font-semibold text-white mb-3">Arc Network</h4>
-          <ul class="space-y-2 text-sm">
-            <li><a href="https://docs.arc.network" target="_blank" class="hover:text-red-400 transition-colors">Arc Docs</a></li>
-            <li><a href="https://testnet.arcscan.app" target="_blank" class="hover:text-red-400 transition-colors">Arc Explorer</a></li>
-            <li><a href="https://faucet.circle.com" target="_blank" class="hover:text-red-400 transition-colors">Get Test USDC</a></li>
-            <li><a href="https://arc.network" target="_blank" class="hover:text-red-400 transition-colors">arc.network</a></li>
+          <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Arc Network</p>
+          <ul class="space-y-1.5">
+            <li><a href="https://docs.arc.network" target="_blank" class="text-xs text-slate-500 hover:text-red-400 transition-colors">Docs</a></li>
+            <li><a href="https://testnet.arcscan.app" target="_blank" class="text-xs text-slate-500 hover:text-red-400 transition-colors">Explorer</a></li>
+            <li><a href="https://faucet.circle.com" target="_blank" class="text-xs text-slate-500 hover:text-green-400 transition-colors">Get Test USDC</a></li>
+            <li><a href="https://arc.network" target="_blank" class="text-xs text-slate-500 hover:text-red-400 transition-colors">arc.network</a></li>
           </ul>
         </div>
       </div>
 
-      <!-- Legal + Trust row -->
-      <div class="py-5 border-b border-slate-700">
-        <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div class="text-xs text-slate-500 space-y-1 max-w-xl">
-            <p><i class="fas fa-exclamation-circle text-yellow-500 mr-1"></i><strong class="text-slate-400">Testnet disclaimer:</strong> This is a testnet application. No real funds are used. All transactions are for testing purposes only.</p>
-            <p><i class="fas fa-info-circle text-blue-400 mr-1"></i><strong class="text-slate-400">Demo notice:</strong> This marketplace is for demonstration purposes only. All listed products are illustrative.</p>
-            <p><i class="fas fa-shield-alt text-green-400 mr-1"></i><strong class="text-slate-400">Security:</strong> We never access your private keys. Transactions are signed locally in your wallet.</p>
-          </div>
-          <div class="flex flex-wrap gap-3 text-xs shrink-0">
-            <a href="/terms" class="text-slate-400 hover:text-white transition-colors">Terms of Service</a>
-            <span class="text-slate-600">·</span>
-            <a href="/privacy" class="text-slate-400 hover:text-white transition-colors">Privacy Policy</a>
-            <span class="text-slate-600">·</span>
-            <a href="/disclaimer" class="text-slate-400 hover:text-white transition-colors">Disclaimer</a>
-            <span class="text-slate-600">·</span>
-            <a href="/about" class="text-slate-400 hover:text-white transition-colors">About</a>
-          </div>
+      <!-- Notices row — compact alert strip -->
+      <div class="py-3 border-b border-slate-800">
+        <div class="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-500">
+          <span><i class="fas fa-exclamation-circle text-yellow-500 mr-1"></i><strong class="text-slate-400">Testnet:</strong> No real funds. Testing only.</span>
+          <span><i class="fas fa-info-circle text-blue-400 mr-1"></i><strong class="text-slate-400">Demo:</strong> Illustrative products only.</span>
+          <span><i class="fas fa-shield-alt text-green-400 mr-1"></i><strong class="text-slate-400">Security:</strong> Keys never leave your device.</span>
         </div>
       </div>
 
-      <div class="pt-5 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
-        <p class="text-slate-500">© 2024 redhawk-store. Built on Arc Network (Circle's stablecoin-native L1). Open-source demo project.</p>
+      <!-- Bottom bar -->
+      <div class="py-3 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-600">
+        <span>© 2024 redhawk-store · Built on Arc Network (Circle)</span>
         <div class="flex items-center gap-3 flex-wrap justify-center">
-          <a href="https://github.com/julenosinger/redhawk-store" target="_blank" class="flex items-center gap-1 text-slate-400 hover:text-white">
-            <i class="fab fa-github text-sm"></i> GitHub
-          </a>
-          <span class="text-slate-600">·</span>
-          <a href="https://testnet.arcscan.app/address/${ARC.contracts.FxEscrow}" target="_blank" class="flex items-center gap-1 text-slate-400 hover:text-red-400">
-            <i class="fas fa-file-contract text-xs"></i> Escrow Contract
-          </a>
-          <span class="text-slate-600">·</span>
-          <a href="https://testnet.arcscan.app" target="_blank" class="flex items-center gap-1 text-slate-400 hover:text-red-400">
-            <i class="fas fa-external-link-alt text-xs"></i> Explorer
-          </a>
-          <span class="text-slate-600">·</span>
-          <a href="https://faucet.circle.com" target="_blank" class="flex items-center gap-1 text-slate-400 hover:text-green-400">
-            <i class="fas fa-faucet text-xs"></i> Faucet
-          </a>
+          <a href="https://github.com/julenosinger/redhawk-store" target="_blank" class="flex items-center gap-1 hover:text-white transition-colors"><i class="fab fa-github"></i> GitHub</a>
+          <span class="text-slate-700">·</span>
+          <a href="https://testnet.arcscan.app/address/${ARC.contracts.FxEscrow}" target="_blank" class="flex items-center gap-1 hover:text-red-400 transition-colors"><i class="fas fa-file-contract text-xs"></i> Escrow</a>
+          <span class="text-slate-700">·</span>
+          <a href="https://testnet.arcscan.app" target="_blank" class="flex items-center gap-1 hover:text-red-400 transition-colors"><i class="fas fa-external-link-alt text-xs"></i> Explorer</a>
+          <span class="text-slate-700">·</span>
+          <a href="https://faucet.circle.com" target="_blank" class="flex items-center gap-1 hover:text-green-400 transition-colors"><i class="fas fa-faucet text-xs"></i> Faucet</a>
+          <span class="text-slate-700">·</span>
+          <a href="/terms" class="hover:text-white transition-colors">Terms</a>
+          <span class="text-slate-700">·</span>
+          <a href="/privacy" class="hover:text-white transition-colors">Privacy</a>
+          <span class="text-slate-700">·</span>
+          <a href="/disclaimer" class="hover:text-white transition-colors">Disclaimer</a>
+          <span class="text-slate-700">·</span>
+          <a href="/about" class="hover:text-white transition-colors">About</a>
         </div>
       </div>
+
     </div>
   </footer>`
 }
@@ -3845,61 +3846,114 @@ function sellerDashboardPage() {
         </div>
       </div>
       <div id="dash-products-container">
-        <div class="text-center py-12">
-          <div class="loading-spinner-lg mx-auto mb-4"></div>
-          <p class="text-slate-400 text-sm">Loading your products…</p>
-        </div>
+        <!-- populated by JS — no static spinner to avoid permanent loading state -->
       </div>
     </div>
 
   </div>
 
   <script>
+  // ── Seller Dashboard — fully functional logic ──────────────────────────
   var _dashProducts = [];
-  var _dashFilter = 'all';
+  var _dashFilter   = 'all';
+  var _dashAddress  = null;
 
-  document.addEventListener('DOMContentLoaded', async function(){
-    const wallet = getStoredWallet();
-    const wc = document.getElementById('dash-wallet-check');
-    if(!wallet){
-      wc.innerHTML = '<div class="card p-8 text-center"><div class="empty-state"><i class="fas fa-wallet"></i><h3 class="font-bold text-slate-600 mb-2">Connect Wallet</h3><p class="text-sm mb-4">Connect your wallet to access your seller dashboard.</p><a href="/wallet" class="btn-primary mx-auto"><i class="fas fa-wallet mr-1"></i> Connect Wallet</a></div></div>';
-      document.getElementById('dash-products-container').innerHTML = '';
-      document.getElementById('dash-stats').innerHTML = '';
+  // ── helpers ──────────────────────────────────────────────────────────
+  function _dashShowLoading(){
+    var c = document.getElementById('dash-products-container');
+    if(c) c.innerHTML =
+      '<div class="text-center py-12">'
+      +'<div class="loading-spinner-lg mx-auto mb-4"></div>'
+      +'<p class="text-slate-400 text-sm">Loading your products…</p>'
+      +'</div>';
+  }
+
+  function _dashShowError(msg){
+    var c = document.getElementById('dash-products-container');
+    if(c) c.innerHTML =
+      '<div class="p-8 text-center">'
+      +'<i class="fas fa-exclamation-circle text-red-400 text-3xl mb-3"></i>'
+      +'<p class="text-red-500 font-medium mb-1">Failed to load products</p>'
+      +'<p class="text-slate-400 text-sm mb-4">'+(msg||'Network error. Please try again.')+'</p>'
+      +'<button onclick="loadDashboardProducts(_dashAddress)" class="btn-primary text-sm mx-auto"><i class="fas fa-redo mr-1"></i> Retry</button>'
+      +'</div>';
+  }
+
+  function _dashClearStats(){
+    var s = document.getElementById('dash-stats');
+    if(s) s.innerHTML = '';
+  }
+
+  // ── init ──────────────────────────────────────────────────────────────
+  function _dashInit(){
+    var wallet = (typeof getStoredWallet === 'function') ? getStoredWallet() : null;
+    var wc = document.getElementById('dash-wallet-check');
+    var container = document.getElementById('dash-products-container');
+
+    if(!wallet || !wallet.address){
+      // No wallet — clear spinner, show connect prompt
+      if(container) container.innerHTML = '';
+      _dashClearStats();
+      if(wc) wc.innerHTML =
+        '<div class="card p-8 text-center">'
+        +'<div class="empty-state">'
+        +'<i class="fas fa-wallet"></i>'
+        +'<h3 class="font-bold text-slate-600 mb-2">Connect Wallet</h3>'
+        +'<p class="text-sm text-slate-400 mb-4">Connect your wallet to manage your listings on Arc Network.</p>'
+        +'<a href="/wallet" class="btn-primary mx-auto"><i class="fas fa-wallet mr-1"></i> Connect Wallet</a>'
+        +'</div></div>';
       return;
     }
-    checkNetworkStatus && checkNetworkStatus(document.createElement('div'));
-    await loadDashboardProducts(wallet.address);
-  });
 
+    // Wallet connected — clear wallet-check banner if any
+    if(wc) wc.innerHTML = '';
+    _dashAddress = wallet.address;
+    _dashShowLoading();
+    loadDashboardProducts(wallet.address);
+  }
+
+  // Fire on DOMContentLoaded — guard against globalScript timing
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', _dashInit);
+  } else {
+    _dashInit();
+  }
+
+  // ── fetch products ────────────────────────────────────────────────────
   async function loadDashboardProducts(address){
+    if(!address){ _dashShowError('No wallet address.'); return; }
+    _dashAddress = address;
+    _dashShowLoading();
     try {
-      const res = await fetch('/api/seller/'+address+'/products');
-      const data = await res.json();
-      _dashProducts = data.products || [];
+      var res  = await fetch('/api/seller/'+encodeURIComponent(address)+'/products');
+      if(!res.ok){ _dashShowError('Server returned '+res.status); return; }
+      var data = await res.json();
+      _dashProducts = Array.isArray(data.products) ? data.products : [];
       renderDashStats();
       renderDashProducts();
-    } catch(e) {
-      document.getElementById('dash-products-container').innerHTML =
-        '<div class="card p-8 text-center text-red-500"><i class="fas fa-exclamation-circle mr-2"></i>Could not load products. Please try again.</div>';
+    } catch(e){
+      _dashShowError(e && e.message ? e.message : 'Could not reach server.');
     }
   }
 
+  // ── stats ─────────────────────────────────────────────────────────────
   function renderDashStats(){
-    const total = _dashProducts.length;
-    const active = _dashProducts.filter(function(p){return p.status==='active';}).length;
-    const paused = _dashProducts.filter(function(p){return p.status==='paused';}).length;
-    // Count sales from localStorage orders
-    const wallet = getStoredWallet();
-    const myAddr = wallet ? wallet.address.toLowerCase() : '';
-    const allOrders = JSON.parse(localStorage.getItem('rh_orders')||'[]');
-    const mySales = allOrders.filter(function(o){ return o.sellerAddress && o.sellerAddress.toLowerCase()===myAddr; });
-    const stats = [
-      {icon:'fas fa-boxes',label:'Total Listings',value:total,color:'text-red-600'},
-      {icon:'fas fa-check-circle',label:'Active',value:active,color:'text-green-600'},
-      {icon:'fas fa-pause-circle',label:'Paused',value:paused,color:'text-amber-600'},
-      {icon:'fas fa-shopping-bag',label:'Total Sales',value:mySales.length,color:'text-blue-600'},
+    var total  = _dashProducts.length;
+    var active = _dashProducts.filter(function(p){return p.status==='active';}).length;
+    var paused = _dashProducts.filter(function(p){return p.status==='paused';}).length;
+    var wallet = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
+    var myAddr = wallet ? wallet.address.toLowerCase() : '';
+    var allOrders = JSON.parse(localStorage.getItem('rh_orders')||'[]');
+    var mySales = allOrders.filter(function(o){ return o.sellerAddress && o.sellerAddress.toLowerCase()===myAddr; });
+    var stats = [
+      {icon:'fas fa-boxes',    label:'Total Listings', value:total,          color:'text-red-600'},
+      {icon:'fas fa-check-circle', label:'Active',     value:active,         color:'text-green-600'},
+      {icon:'fas fa-pause-circle', label:'Paused',     value:paused,         color:'text-amber-600'},
+      {icon:'fas fa-shopping-bag', label:'Total Sales',value:mySales.length, color:'text-blue-600'},
     ];
-    document.getElementById('dash-stats').innerHTML = stats.map(function(s){
+    var el = document.getElementById('dash-stats');
+    if(!el) return;
+    el.innerHTML = stats.map(function(s){
       return '<div class="card p-5 text-center">'
         +'<div class="'+s.color+' text-2xl font-extrabold mb-1">'+s.value+'</div>'
         +'<div class="text-xs text-slate-500 font-medium"><i class="'+s.icon+' mr-1"></i>'+s.label+'</div>'
@@ -3907,6 +3961,7 @@ function sellerDashboardPage() {
     }).join('');
   }
 
+  // ── filter buttons ────────────────────────────────────────────────────
   function filterDashProducts(f){
     _dashFilter = f;
     document.querySelectorAll('.dash-filter-btn').forEach(function(b){
@@ -3916,26 +3971,38 @@ function sellerDashboardPage() {
     renderDashProducts();
   }
 
+  // ── render table ──────────────────────────────────────────────────────
   function renderDashProducts(){
-    const container = document.getElementById('dash-products-container');
-    const list = _dashFilter==='all'
-      ? _dashProducts
-      : _dashProducts.filter(function(p){return p.status===_dashFilter;});
+    var container = document.getElementById('dash-products-container');
+    if(!container) return;
 
+    var list = _dashFilter==='all'
+      ? _dashProducts
+      : _dashProducts.filter(function(p){ return p.status===_dashFilter; });
+
+    // Empty states
     if(_dashProducts.length===0){
-      container.innerHTML = '<div class="text-center py-12"><div class="empty-state"><i class="fas fa-store"></i>'
+      container.innerHTML =
+        '<div class="text-center py-12">'
+        +'<div class="empty-state">'
+        +'<i class="fas fa-store"></i>'
         +'<h3 class="font-bold text-slate-600 mb-2">No products listed yet</h3>'
-        +'<p class="text-sm text-slate-400 mb-4">Start selling by listing your first product.</p>'
-        +'<a href="/sell" class="btn-primary mx-auto"><i class="fas fa-plus-circle mr-1"></i> List a Product</a></div></div>';
+        +'<p class="text-sm text-slate-400 mb-4">Start selling by listing your first product on Arc Network.</p>'
+        +'<a href="/sell" class="btn-primary mx-auto"><i class="fas fa-plus-circle mr-1"></i> List a Product</a>'
+        +'</div></div>';
       return;
     }
     if(list.length===0){
-      container.innerHTML = '<div class="text-center py-10 text-slate-400 text-sm">No '+_dashFilter+' products found.</div>';
+      container.innerHTML =
+        '<div class="text-center py-10 text-slate-400 text-sm">'
+        +'<i class="fas fa-filter mr-2"></i>No <strong>'+_dashFilter+'</strong> products found.'
+        +'</div>';
       return;
     }
 
-    // Responsive table / card list
-    container.innerHTML = '<div class="overflow-x-auto">'
+    // Responsive table
+    container.innerHTML =
+      '<div class="overflow-x-auto">'
       +'<table class="w-full text-sm border-collapse">'
       +'<thead><tr class="border-b border-slate-100">'
       +'<th class="text-left py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Product</th>'
@@ -3965,10 +4032,12 @@ function sellerDashboardPage() {
         actionBtns += '<a href="/product/'+p.id+'" class="text-blue-600 hover:text-blue-800 text-xs font-semibold px-2 py-1 rounded hover:bg-blue-50" title="View Product"><i class="fas fa-eye mr-1"></i>View</a>';
         actionBtns += '<button onclick="dashDeleteProduct(\''+p.id+'\')" class="text-red-500 hover:text-red-700 text-xs font-semibold px-2 py-1 rounded hover:bg-red-50" title="Delete Product"><i class="fas fa-trash mr-1"></i>Delete</button>';
         return '<tr class="border-b border-slate-50 hover:bg-slate-50 transition-colors">'
-          +'<td class="py-3 px-2"><div class="flex items-center">'+imgEl+'<div><p class="font-semibold text-slate-800 text-xs leading-tight line-clamp-2 max-w-xs">'+((p.title||'').replace(/</g,'&lt;'))+'</p>'
+          +'<td class="py-3 px-2"><div class="flex items-center">'+imgEl
+          +'<div><p class="font-semibold text-slate-800 text-xs leading-tight line-clamp-2 max-w-xs">'+((p.title||'Untitled').replace(/</g,'&lt;'))+'</p>'
           +'<p class="text-slate-400 text-xs font-mono">'+p.id+'</p></div></div></td>'
           +'<td class="py-3 px-2 text-slate-500 text-xs hidden md:table-cell">'+(p.category||'Other')+'</td>'
-          +'<td class="py-3 px-2 text-right font-bold text-red-600">'+parseFloat(p.price||0).toFixed(2)+' <span class="text-xs font-normal text-slate-500">'+(p.token||'USDC')+'</span></td>'
+          +'<td class="py-3 px-2 text-right font-bold text-red-600">'+parseFloat(p.price||0).toFixed(2)
+          +' <span class="text-xs font-normal text-slate-500">'+(p.token||'USDC')+'</span></td>'
           +'<td class="py-3 px-2 text-center text-slate-600">'+(p.stock||0)+'</td>'
           +'<td class="py-3 px-2 text-center">'+statusBadge+'</td>'
           +'<td class="py-3 px-2 text-right"><div class="flex items-center justify-end gap-1">'+actionBtns+'</div></td>'
@@ -3977,17 +4046,17 @@ function sellerDashboardPage() {
       +'</tbody></table></div>';
   }
 
+  // ── action handlers ───────────────────────────────────────────────────
   async function dashPauseProduct(productId){
     if(!confirm('Pause this listing? It will be hidden from the marketplace but not deleted.')) return;
-    const wallet = getStoredWallet();
+    var wallet = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
     if(!wallet){ showToast('Connect wallet first','error'); return; }
     try {
-      const res = await fetch('/api/products/'+productId+'/status',{
-        method:'PATCH',
-        headers:{'Content-Type':'application/json'},
+      var res = await fetch('/api/products/'+productId+'/status',{
+        method:'PATCH', headers:{'Content-Type':'application/json'},
         body:JSON.stringify({seller_id:wallet.address, status:'paused'})
       });
-      const data = await res.json();
+      var data = await res.json();
       if(!res.ok){ showToast(data.error||'Failed to pause','error'); return; }
       showToast('Listing paused — hidden from marketplace','info');
       await loadDashboardProducts(wallet.address);
@@ -3996,15 +4065,14 @@ function sellerDashboardPage() {
 
   async function dashResumeProduct(productId){
     if(!confirm('Resume this listing? It will be visible in the marketplace again.')) return;
-    const wallet = getStoredWallet();
+    var wallet = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
     if(!wallet){ showToast('Connect wallet first','error'); return; }
     try {
-      const res = await fetch('/api/products/'+productId+'/status',{
-        method:'PATCH',
-        headers:{'Content-Type':'application/json'},
+      var res = await fetch('/api/products/'+productId+'/status',{
+        method:'PATCH', headers:{'Content-Type':'application/json'},
         body:JSON.stringify({seller_id:wallet.address, status:'active'})
       });
-      const data = await res.json();
+      var data = await res.json();
       if(!res.ok){ showToast(data.error||'Failed to resume','error'); return; }
       showToast('Listing is now active on the marketplace','success');
       await loadDashboardProducts(wallet.address);
@@ -4012,16 +4080,15 @@ function sellerDashboardPage() {
   }
 
   async function dashDeleteProduct(productId){
-    if(!confirm('Delete this product? It will be permanently removed from the marketplace. This cannot be undone.')) return;
-    const wallet = getStoredWallet();
+    if(!confirm('Delete this product? It will be permanently removed. This cannot be undone.')) return;
+    var wallet = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
     if(!wallet){ showToast('Connect wallet first','error'); return; }
     try {
-      const res = await fetch('/api/products/'+productId,{
-        method:'DELETE',
-        headers:{'Content-Type':'application/json'},
+      var res = await fetch('/api/products/'+productId,{
+        method:'DELETE', headers:{'Content-Type':'application/json'},
         body:JSON.stringify({seller_id:wallet.address})
       });
-      const data = await res.json();
+      var data = await res.json();
       if(!res.ok){ showToast(data.error||'Failed to delete','error'); return; }
       showToast('Product deleted successfully','success');
       await loadDashboardProducts(wallet.address);
