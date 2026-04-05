@@ -1266,14 +1266,6 @@ function homePage() {
   </section>
 
   <!-- ══════════════════════════════════════════════════
-       DEMO NOTICE
-  ══════════════════════════════════════════════════ -->
-  <div class="home-demo-notice">
-    <i class="fas fa-info-circle" style="color:#d97706;flex-shrink:0;font-size:15px;"></i>
-    <span><strong>Demonstration only:</strong> This marketplace is for demonstration purposes only. All products listed are illustrative and not real.</span>
-  </div>
-
-  <!-- ══════════════════════════════════════════════════
        CATEGORIES — Large premium cards
   ══════════════════════════════════════════════════ -->
   <section class="home-section">
@@ -1290,6 +1282,14 @@ function homePage() {
       ${catCards}
     </div>
   </section>
+
+  <!-- ══════════════════════════════════════════════════
+       DEMO NOTICE
+  ══════════════════════════════════════════════════ -->
+  <div class="home-demo-notice">
+    <i class="fas fa-info-circle" style="color:#d97706;flex-shrink:0;font-size:15px;"></i>
+    <span><strong>Demonstration only:</strong> This marketplace is for demonstration purposes only. All products listed are illustrative and not real.</span>
+  </div>
 
   <!-- ══════════════════════════════════════════════════
        FEATURED PRODUCTS
