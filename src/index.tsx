@@ -1890,12 +1890,14 @@ function checkoutPage() {
     const w=getStoredWallet();
     if(!w){showToast('Conecte uma carteira primeiro','error');window.location.href='/wallet';return;}
 
-    // Garantir que está na Arc Network
-    const onArc=await isOnArcNetwork();
-    if(!onArc){
-      showToast('Trocando para Arc Testnet…','info');
-      const switched = await switchToArc();
-      if(!switched){ showToast('Por favor troque para Arc Testnet manualmente','warning'); return; }
+    // Verificar rede apenas para MetaMask (carteira interna usa RPC direto)
+    if(w.type==='metamask' && window.ethereum){
+      const onArc=await isOnArcNetwork();
+      if(!onArc){
+        showToast('Trocando para Arc Testnet…','info');
+        const switched = await switchToArc();
+        if(!switched){ showToast('Por favor troque para Arc Testnet na MetaMask','warning'); return; }
+      }
     }
 
     const cart=getCart();
@@ -1934,22 +1936,24 @@ function checkoutPage() {
 
     let txHash = null;
     try {
+      // Arredondar total para no máximo 6 casas decimais (USDC/EURC têm 6 dec)
+      const totalRounded = Math.round(total * 1_000_000) / 1_000_000;
+      const amountStr = totalRounded.toFixed(6);
+
       // ── Chamar wallet real ──────────────────────────────────
       if(w.type==='metamask' && window.ethereum){
-        // MetaMask: usar ethers BrowserProvider para assinar
         const provider = new ethers.BrowserProvider(window.ethereum);
         const signer   = await provider.getSigner();
-        const amountWei = ethers.parseUnits(total.toFixed(6), 6); // 6 decimals
+        const amountWei = ethers.parseUnits(amountStr, 6);
 
         showToast('Abrindo MetaMask para assinar…','info');
 
         let txResponse;
         if(token==='USDC'){
-          // USDC é nativo na Arc — envia como transferência nativa
-          // value precisa ser convertido: USDC tem 6 dec, ETH nativo tem 18 dec
+          // USDC nativo na Arc: value em 18 decimais (multiply 6-dec by 1e12)
           txResponse = await signer.sendTransaction({
             to: sellerAddress,
-            value: amountWei * BigInt('1000000000000'), // 6→18 dec
+            value: amountWei * BigInt('1000000000000'),
             data: '0x'
           });
         } else {
@@ -1962,19 +1966,17 @@ function checkoutPage() {
           txResponse = await eurcContract.transfer(sellerAddress, amountWei);
         }
         txHash = txResponse.hash;
-        showToast('Tx enviada! Aguardando confirmação…','info');
-
-        // Aguardar 1 confirmação
+        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Confirmando na rede…';
+        showToast('Tx enviada! Hash: '+txHash.substring(0,14)+'…','info');
         try { await txResponse.wait(1); } catch(e){}
-        showToast('Transação confirmada na Arc Network!','success');
+        showToast('Confirmado na Arc Network!','success');
 
-      } else if(w.type==='internal' && w.privateKey){
-        // Wallet interna: usar ethers JsonRpcProvider + Wallet
-        const provider = new ethers.JsonRpcProvider(window.ARC.rpc);
-        const wallet   = new ethers.Wallet(w.privateKey, provider);
-        const amountWei = ethers.parseUnits(total.toFixed(6), 6);
+      } else if((w.type==='internal'||w.type==='imported') && w.privateKey && !w.privateKey.startsWith('[')){
+        const provider  = new ethers.JsonRpcProvider(window.ARC.rpc);
+        const wallet    = new ethers.Wallet(w.privateKey, provider);
+        const amountWei = ethers.parseUnits(amountStr, 6);
 
-        showToast('Assinando transação com carteira interna…','info');
+        showToast('Assinando com carteira interna…','info');
 
         let txResponse;
         if(token==='USDC'){
@@ -1992,13 +1994,16 @@ function checkoutPage() {
           txResponse = await eurcContract.transfer(sellerAddress, amountWei);
         }
         txHash = txResponse.hash;
+        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Confirmando na rede…';
         showToast('Tx enviada! Hash: '+txHash.substring(0,14)+'…','info');
         try { await txResponse.wait(1); } catch(e){}
         showToast('Transação confirmada!','success');
 
       } else {
-        // Fallback: wallet conectada mas sem provider (WalletConnect etc.)
-        showToast('Wallet não suporta assinatura direta. Use MetaMask ou carteira interna.','error');
+        const hasKey = w.privateKey && !w.privateKey.startsWith('[');
+        showToast(hasKey
+          ? 'Use MetaMask ou carteira interna para assinar.'
+          : 'Chave privada indisponível. Recrie ou reimporte a carteira com seed phrase.','error');
         if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-lock mr-2"></i>Confirmar & Bloquear Fundos';}
         return;
       }
