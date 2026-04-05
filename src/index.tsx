@@ -1077,259 +1077,833 @@ function footer() {
 // ─── PAGE: HOME ────────────────────────────────────────────────────────
 function homePage() {
   const categories = [
-    { name:'Electronics',           icon:'fas fa-laptop',       color:'bg-blue-50 text-blue-600' },
-    { name:'Gaming',                icon:'fas fa-gamepad',       color:'bg-purple-50 text-purple-600' },
-    { name:'Audio',                 icon:'fas fa-headphones',    color:'bg-green-50 text-green-600' },
-    { name:'Photography',           icon:'fas fa-camera',        color:'bg-yellow-50 text-yellow-600' },
-    { name:'Wearables',             icon:'fas fa-watch',         color:'bg-pink-50 text-pink-600' },
-    { name:'Accessories',           icon:'fas fa-keyboard',      color:'bg-red-50 text-red-600' },
-    { name:'Pet Shop',              icon:'fas fa-paw',           color:'bg-orange-50 text-orange-600' },
-    { name:'Baby & Kids',           icon:'fas fa-baby',          color:'bg-sky-50 text-sky-600' },
-    { name:'Beauty & Personal Care',icon:'fas fa-spa',           color:'bg-rose-50 text-rose-600' },
-    { name:'Fashion & Accessories', icon:'fas fa-tshirt',        color:'bg-violet-50 text-violet-600' },
+    { name:'Electronics',            icon:'fas fa-laptop',       accent:'#3b82f6', bg:'#eff6ff' },
+    { name:'Gaming',                 icon:'fas fa-gamepad',       accent:'#8b5cf6', bg:'#f5f3ff' },
+    { name:'Audio',                  icon:'fas fa-headphones',    accent:'#10b981', bg:'#ecfdf5' },
+    { name:'Photography',            icon:'fas fa-camera',        accent:'#f59e0b', bg:'#fffbeb' },
+    { name:'Wearables',              icon:'fas fa-watch',         accent:'#ec4899', bg:'#fdf2f8' },
+    { name:'Accessories',            icon:'fas fa-keyboard',      accent:'#ef4444', bg:'#fef2f2' },
+    { name:'Pet Shop',               icon:'fas fa-paw',           accent:'#f97316', bg:'#fff7ed' },
+    { name:'Baby & Kids',            icon:'fas fa-baby',          accent:'#0ea5e9', bg:'#f0f9ff' },
+    { name:'Beauty & Personal Care', icon:'fas fa-spa',           accent:'#fb7185', bg:'#fff1f2' },
+    { name:'Fashion & Accessories',  icon:'fas fa-tshirt',        accent:'#7c3aed', bg:'#f5f3ff' },
   ]
+
   const catCards = categories.map(c => `
-    <a href="/marketplace?cat=${c.name}" class="card p-5 flex flex-col items-center gap-3 hover:border-red-200 hover:bg-red-50/30 transition-all cursor-pointer group text-center">
-      <div class="w-12 h-12 rounded-xl ${c.color} flex items-center justify-center text-xl group-hover:scale-110 transition-transform">
-        <i class="${c.icon}"></i>
+    <a href="/marketplace?cat=${encodeURIComponent(c.name)}" class="home-cat-card"
+       style="--cat-accent:${c.accent};--cat-bg:${c.bg};"
+       data-accent="${c.accent}">
+      <div class="home-cat-icon" style="background:${c.bg};">
+        <i class="${c.icon}" style="color:${c.accent};"></i>
       </div>
-      <p class="font-semibold text-slate-800 text-sm">${c.name}</p>
+      <span class="home-cat-label">${c.name}</span>
+      <i class="fas fa-arrow-right home-cat-arrow" style="color:${c.accent};"></i>
     </a>`).join('')
 
   return shell('Home', `
-  <!-- Hero -->
-  <section class="hero-gradient">
-    <div class="max-w-7xl mx-auto px-4 py-16 flex flex-col lg:flex-row items-center gap-12">
-      <div class="flex-1">
-        <div class="inline-flex items-center gap-2 bg-red-100 text-red-700 px-3 py-1.5 rounded-full text-xs font-semibold mb-4">
-          <i class="fas fa-shield-alt"></i> Escrow-Protected · Arc Network
+
+  <!-- ══════════════════════════════════════════════════
+       HERO — Premium dark with depth layers
+  ══════════════════════════════════════════════════ -->
+  <section class="home-hero">
+    <!-- Noise texture overlay -->
+    <div class="home-hero-noise"></div>
+    <!-- Grid -->
+    <div class="home-hero-grid"></div>
+    <!-- Radial glow right -->
+    <div class="home-hero-glow-r"></div>
+    <!-- Radial glow left -->
+    <div class="home-hero-glow-l"></div>
+    <!-- Horizontal accent line -->
+    <div class="home-hero-line"></div>
+
+    <div class="home-hero-inner">
+      <!-- LEFT column -->
+      <div class="home-hero-left">
+
+        <!-- Pill badge -->
+        <div class="home-hero-pill">
+          <span class="home-hero-dot"></span>
+          <span>LIVE ON ARC NETWORK</span>
+          <span class="home-hero-pill-sep">·</span>
+          <span>CHAIN ID 5042002</span>
         </div>
-        <h1 class="text-5xl font-extrabold text-slate-900 leading-tight mb-4">
-          Shop the <span class="text-red-600">Future</span><br/>of Decentralized<br/>Commerce
+
+        <!-- Headline -->
+        <h1 class="home-hero-h1">
+          Shop the
+          <span class="home-hero-gradient-text">Future</span>
+          <br/>of Decentralized<br/>
+          <span class="home-hero-muted">Commerce.</span>
         </h1>
-        <p class="text-slate-500 text-lg mb-6 max-w-md">
-          Buy and sell with confidence using <strong>USDC & EURC</strong>. Smart contract escrow protects every transaction on Circle's stablecoin-native L1 blockchain.
+
+        <!-- Sub-headline -->
+        <p class="home-hero-sub">
+          Buy and sell with confidence using <strong>USDC &amp; EURC</strong>.
+          Every transaction is protected by smart contract escrow on Circle's
+          stablecoin-native L1 blockchain.
         </p>
-        <div class="flex flex-wrap gap-3 mb-6">
-          <a href="/marketplace" class="btn-primary text-base px-6 py-3">
+
+        <!-- CTA buttons -->
+        <div class="home-hero-ctas">
+          <a href="/marketplace" class="home-btn-primary">
             <i class="fas fa-store"></i> Browse Marketplace
           </a>
-          <a href="/wallet" class="btn-secondary text-base px-6 py-3">
+          <a href="/wallet" class="home-btn-ghost">
             <i class="fas fa-wallet"></i> Connect Wallet
           </a>
         </div>
-        <!-- Wallet transparency micro-notice -->
-        <div class="trust-box text-xs max-w-md mb-4">
-          <i class="fas fa-shield-alt" style="color:#16a34a;flex-shrink:0;margin-top:1px"></i>
-          <span><strong>We never access your private keys.</strong> All transactions are signed locally in your wallet.</span>
+
+        <!-- Trust chips -->
+        <div class="home-trust-chips">
+          ${[
+            ['fas fa-shield-alt','#22c55e','Non-Custodial'],
+            ['fas fa-lock','#60a5fa','Zero Key Access'],
+            ['fas fa-file-contract','#a78bfa','Open Contracts'],
+            ['fas fa-receipt','#fb7185','On-Chain Receipts'],
+          ].map(([icon,col,label]) => `
+            <div class="home-trust-chip">
+              <i class="${icon}" style="color:${col};"></i>
+              <span>${label}</span>
+            </div>`).join('')}
         </div>
-        <!-- Real-time network status -->
-        <div id="home-network-status" class="text-xs text-slate-400">
-          <div class="loading-spinner" style="width:12px;height:12px;border-width:1.5px;display:inline-block;vertical-align:middle;margin-right:6px"></div>
-          Checking Arc Network connection…
+
+        <!-- Network status -->
+        <div id="home-network-status" class="home-network-status">
+          <span class="home-network-dot"></span>Checking Arc Network…
         </div>
       </div>
-      <div class="flex-1 flex justify-center">
-        <div class="relative w-72 h-72">
-          <div class="absolute inset-0 bg-gradient-to-br from-red-500 to-red-800 rounded-[40%_60%_60%_40%/40%_40%_60%_60%] opacity-10 animate-pulse"></div>
-          <div class="absolute inset-0 flex items-center justify-center">
-            <div class="text-center">
-              <div class="w-24 h-24 mx-auto bg-gradient-to-br from-red-500 to-red-800 rounded-2xl flex items-center justify-center shadow-2xl mb-4">
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="none">
-                  <path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="white" opacity=".9"/>
-                  <path d="M9 14l3-3 3 3" stroke="white" stroke-width="2" stroke-linecap="round"/>
-                </svg>
-              </div>
-              <p class="font-extrabold text-slate-800 text-xl">redhawk-store</p>
-              <p class="text-slate-500 text-sm mt-1">On Arc Network</p>
-              <div class="mt-2 space-y-1 text-xs text-slate-400">
-                <div>Chain ID: <span class="font-mono font-bold text-slate-600">5042002</span></div>
-                <div>Gas: <span class="font-bold text-blue-600">USDC native</span></div>
-              </div>
+
+      <!-- RIGHT column — glass card -->
+      <div class="home-hero-right">
+        <!-- Floating green badge -->
+        <div class="home-float-badge home-float-badge-top">
+          <div class="home-float-badge-icon" style="background:#d1fae5;">
+            <i class="fas fa-shield-alt" style="color:#059669;"></i>
+          </div>
+          <div>
+            <p class="home-float-title">Escrow Protected</p>
+            <p class="home-float-sub">Every transaction</p>
+          </div>
+        </div>
+
+        <!-- Main glass card -->
+        <div class="home-glass-card">
+          <div class="home-glass-header">
+            <div class="home-glass-logo">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="white" opacity=".95"/></svg>
             </div>
+            <div>
+              <p class="home-glass-name">redhawk-store</p>
+              <p class="home-glass-net">On Arc Network</p>
+            </div>
+            <div class="home-live-badge">
+              <span class="home-live-dot"></span>
+              <span>Live</span>
+            </div>
+          </div>
+
+          <div class="home-glass-grid">
+            ${[
+              ['fas fa-coins',         'USDC / EURC', 'Native Stablecoin','#fbbf24'],
+              ['fas fa-shield-alt',    'Escrow',       'Smart Contract',   '#60a5fa'],
+              ['fas fa-network-wired', 'Arc L1',       'Chain 5042002',    '#818cf8'],
+              ['fas fa-lock',          'Trustless',    'Non-Custodial',    '#4ade80'],
+            ].map(([icon,title,sub,col]) => `
+              <div class="home-glass-stat">
+                <i class="${icon}" style="color:${col};font-size:15px;margin-bottom:8px;display:block;"></i>
+                <p class="home-glass-stat-title">${title}</p>
+                <p class="home-glass-stat-sub">${sub}</p>
+              </div>`).join('')}
+          </div>
+
+          <a href="/sell" class="home-glass-cta">
+            <i class="fas fa-plus-circle"></i> Start Selling — Earn USDC
+          </a>
+        </div>
+
+        <!-- Floating yellow badge -->
+        <div class="home-float-badge home-float-badge-bot">
+          <div class="home-float-badge-icon" style="background:#fef3c7;">
+            <i class="fas fa-bolt" style="color:#d97706;"></i>
+          </div>
+          <div>
+            <p class="home-float-title">Instant Transfers</p>
+            <p class="home-float-sub">USDC &amp; EURC</p>
           </div>
         </div>
       </div>
     </div>
+
+    <!-- Scroll cue -->
+    <div class="home-scroll-cue">
+      <span>Scroll</span>
+      <i class="fas fa-chevron-down home-bounce"></i>
+    </div>
   </section>
 
-  <!-- Trust Badges -->
-  <section class="bg-white border-y border-slate-100">
-    <div class="max-w-7xl mx-auto px-4 py-6 flex flex-wrap gap-8 justify-center">
+  <!-- ══════════════════════════════════════════════════
+       TRUST BAR
+  ══════════════════════════════════════════════════ -->
+  <section class="home-trust-bar">
+    <div class="home-trust-bar-inner">
       ${[
-        ['fas fa-shield-alt','Escrow Protected','Smart contract locked'],
-        ['fas fa-coins','USDC & EURC Only','No fiat payments'],
-        ['fas fa-network-wired','Arc Network','Circle\'s L1 chain'],
-        ['fas fa-lock','Non-Custodial','You own your keys'],
-        ['fas fa-receipt','On-chain Receipts','Real tx hashes'],
-      ].map(([icon,title,sub]) => `
-        <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center text-red-600">
-            <i class="${icon}"></i>
+        ['fas fa-shield-alt','#22c55e','Escrow Protected','Smart contract locked'],
+        ['fas fa-coins',      '#f59e0b','USDC &amp; EURC', 'Stablecoin payments only'],
+        ['fas fa-network-wired','#6366f1','Arc Network',   'Circle\'s L1 blockchain'],
+        ['fas fa-lock',       '#3b82f6','Non-Custodial',   'You own your keys'],
+        ['fas fa-receipt',    '#ec4899','On-Chain Receipts','Real tx hashes'],
+        ['fas fa-file-contract','#8b5cf6','Smart Contracts','Open source escrow'],
+      ].map(([icon,col,title,sub]) => `
+        <div class="home-trust-item">
+          <div class="home-trust-icon" style="background:${col}18;">
+            <i class="${icon}" style="color:${col};"></i>
           </div>
-          <div><p class="font-semibold text-slate-800 text-sm">${title}</p><p class="text-slate-400 text-xs">${sub}</p></div>
+          <div>
+            <p class="home-trust-title">${title}</p>
+            <p class="home-trust-sub">${sub}</p>
+          </div>
         </div>`).join('')}
     </div>
   </section>
 
-
-  <!-- Demo Disclaimer — Homepage -->
-  <div class="max-w-7xl mx-auto px-4 pb-4">
-    <div class="demo-disclaimer">
-      <i class="fas fa-info-circle" style="color:#d97706;flex-shrink:0"></i>
-      <span><strong>Demonstration only:</strong> This marketplace is for demonstration purposes only. All products listed are illustrative and not real.</span>
-    </div>
+  <!-- ══════════════════════════════════════════════════
+       DEMO NOTICE
+  ══════════════════════════════════════════════════ -->
+  <div class="home-demo-notice">
+    <i class="fas fa-info-circle" style="color:#d97706;flex-shrink:0;font-size:15px;"></i>
+    <span><strong>Demonstration only:</strong> This marketplace is for demonstration purposes only. All products listed are illustrative and not real.</span>
   </div>
 
-  <!-- Categories -->
-  <section class="max-w-7xl mx-auto px-4 pb-8">
-    <div class="flex items-center justify-between mb-6">
-      <h2 class="text-2xl font-bold text-slate-800">Browse Categories</h2>
-      <a href="/marketplace" class="text-red-600 text-sm font-medium hover:underline">View all →</a>
+  <!-- ══════════════════════════════════════════════════
+       CATEGORIES — Large premium cards
+  ══════════════════════════════════════════════════ -->
+  <section class="home-section">
+    <div class="home-section-header">
+      <div>
+        <p class="home-section-eyebrow">EXPLORE</p>
+        <h2 class="home-section-title">Browse Categories</h2>
+      </div>
+      <a href="/marketplace" class="home-view-all">
+        View all <i class="fas fa-arrow-right" style="font-size:11px;"></i>
+      </a>
     </div>
-    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+    <div class="home-cat-grid">
       ${catCards}
     </div>
   </section>
 
-  <!-- Featured Products — live from Arc Network -->
-  <section class="max-w-7xl mx-auto px-4 pb-12">
-    <div class="flex items-center justify-between mb-6">
-      <h2 class="text-2xl font-bold text-slate-800">🏪 Latest Products</h2>
-      <a href="/marketplace" class="text-red-600 text-sm font-medium hover:underline">View all →</a>
+  <!-- ══════════════════════════════════════════════════
+       FEATURED PRODUCTS
+  ══════════════════════════════════════════════════ -->
+  <section class="home-section home-section-products">
+    <div class="home-section-header">
+      <div>
+        <p class="home-section-eyebrow">MARKETPLACE</p>
+        <h2 class="home-section-title">Latest Products</h2>
+      </div>
+      <a href="/marketplace" class="home-view-all">
+        View all <i class="fas fa-arrow-right" style="font-size:11px;"></i>
+      </a>
     </div>
     <div id="home-products-container">
-      <div class="text-center py-8">
-        <div class="loading-spinner-lg mx-auto mb-4"></div>
-        <p class="text-slate-400">Loading products from Arc Network…</p>
+      <div class="home-loading">
+        <div class="loading-spinner-lg"></div>
+        <p>Loading products from Arc Network…</p>
       </div>
     </div>
   </section>
 
-  <!-- How It Works -->
-  <section class="bg-white border-y border-slate-100 py-16">
-    <div class="max-w-7xl mx-auto px-4">
-      <h2 class="text-2xl font-bold text-slate-800 text-center mb-10">How redhawk-store Works</h2>
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-8">
+  <!-- ══════════════════════════════════════════════════
+       HOW IT WORKS — Dark premium section
+  ══════════════════════════════════════════════════ -->
+  <section class="home-how">
+    <div class="home-how-grid-bg"></div>
+    <div class="home-how-inner">
+      <div class="home-how-header">
+        <p class="home-section-eyebrow" style="color:#ef4444;">PROCESS</p>
+        <h2 class="home-section-title" style="color:#fff;">How redhawk-store Works</h2>
+        <p style="color:#64748b;font-size:15px;max-width:520px;margin:0 auto;line-height:1.7;">
+          A trustless escrow marketplace powered by Arc Network smart contracts.
+          No intermediaries. No custodians. Just code.
+        </p>
+      </div>
+      <div class="home-how-steps">
         ${[
-          ['1','fas fa-search','Find Products','Browse real listings from sellers on Arc Network'],
-          ['2','fas fa-wallet','Connect Wallet','Use MetaMask on Arc Testnet (Chain ID: 5042002)'],
-          ['3','fas fa-lock','Escrow Lock','USDC/EURC locked in smart contract — trustless'],
-          ['4','fas fa-check-circle','Confirm & Release','Confirm delivery → funds auto-released on-chain'],
-        ].map(([n,icon,title,desc]) => `
-          <div class="text-center">
-            <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-red-500 to-red-800 text-white flex items-center justify-center text-xl mx-auto mb-4 shadow-lg">
-              <i class="${icon}"></i>
+          ['01','fas fa-search',      '#ef4444','Find Products',     'Browse real listings from verified sellers on Arc Network'],
+          ['02','fas fa-wallet',      '#3b82f6','Connect Wallet',    'Use MetaMask or our internal wallet on Arc Testnet (Chain 5042002)'],
+          ['03','fas fa-lock',        '#8b5cf6','Escrow Lock',       'USDC/EURC locked in smart contract — fully trustless and transparent'],
+          ['04','fas fa-check-circle','#22c55e','Confirm & Release', 'Confirm delivery → funds automatically released on-chain'],
+        ].map(([n,icon,col,title,desc]) => `
+          <div class="home-how-step">
+            <div class="home-how-step-num">${n}</div>
+            <div class="home-how-step-icon" style="background:${col}22;border:1px solid ${col}33;">
+              <i class="${icon}" style="color:${col};font-size:20px;"></i>
             </div>
-            <div class="text-xs font-bold text-red-500 mb-1">STEP ${n}</div>
-            <h3 class="font-bold text-slate-800 mb-2">${title}</h3>
-            <p class="text-slate-500 text-sm">${desc}</p>
+            <h3 class="home-how-step-title">${title}</h3>
+            <p class="home-how-step-desc">${desc}</p>
           </div>`).join('')}
       </div>
+      <!-- Connector line (desktop) -->
+      <div class="home-how-connector"></div>
     </div>
   </section>
 
-  <!-- About Section -->
-  <section class="max-w-7xl mx-auto px-4 py-12">
-    <div class="card p-8 bg-gradient-to-br from-slate-50 to-white">
-      <div class="flex flex-col md:flex-row gap-8 items-start">
-        <div class="flex-1">
-          <div class="flex items-center gap-3 mb-4">
-            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-red-500 to-red-800 flex items-center justify-center shadow">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="white" opacity=".9"/></svg>
-            </div>
-            <h2 class="text-2xl font-extrabold text-slate-800">About redhawk-store</h2>
+  <!-- ══════════════════════════════════════════════════
+       ABOUT + TRUST SIGNALS — Two-column card
+  ══════════════════════════════════════════════════ -->
+  <section class="home-section home-about-section">
+    <div class="home-about-card">
+
+      <!-- Left: About text -->
+      <div class="home-about-left">
+        <div class="home-about-logo-row">
+          <div class="home-about-logo-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="white" opacity=".95"/></svg>
           </div>
-          <p class="text-slate-600 text-sm leading-relaxed mb-4">
-            <strong>redhawk-store</strong> is a decentralized marketplace powered by <strong>Arc Network</strong> — Circle's stablecoin-native Layer 1 blockchain. It uses escrow smart contracts to protect every transaction: funds are locked on-chain until the buyer confirms delivery, then automatically released to the seller.
-          </p>
-          <p class="text-slate-600 text-sm leading-relaxed mb-4">
-            All payments are made exclusively in <strong>USDC</strong> (native on Arc) or <strong>EURC</strong> — no fiat, no credit cards, no custodians. The internal wallet is generated entirely client-side using BIP39 standards; private keys never leave your browser.
-          </p>
-          <div class="demo-disclaimer mt-2">
-            <i class="fas fa-flask" style="color:#d97706;flex-shrink:0"></i>
-            <span>This is an open-source <strong>testnet demo</strong>. No real funds are involved. Smart contracts run on Arc Testnet (Chain ID: 5042002).</span>
-          </div>
+          <h2 class="home-about-title">About redhawk-store</h2>
         </div>
-        <div class="w-full md:w-64 space-y-3 shrink-0">
-          <div class="card p-4 text-sm">
-            <p class="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Trust Signals</p>
-            <ul class="space-y-2">
-              <li class="flex items-center gap-2 text-slate-700"><i class="fas fa-lock text-green-500 w-4"></i> Non-custodial wallet</li>
-              <li class="flex items-center gap-2 text-slate-700"><i class="fas fa-file-contract text-blue-500 w-4"></i> Open escrow contracts</li>
-              <li class="flex items-center gap-2 text-slate-700"><i class="fab fa-github text-slate-600 w-4"></i> <a href="https://github.com/julenosinger/redhawk-store" target="_blank" class="text-blue-600 hover:underline">Open-source on GitHub</a></li>
-              <li class="flex items-center gap-2 text-slate-700"><i class="fas fa-network-wired text-indigo-500 w-4"></i> Arc Testnet · Chain 5042002</li>
-              <li class="flex items-center gap-2 text-slate-700"><i class="fas fa-shield-alt text-red-500 w-4"></i> Zero key custody</li>
-            </ul>
-          </div>
-          <div class="flex gap-2">
-            <a href="/about" class="btn-secondary text-xs py-2 flex-1 justify-center"><i class="fas fa-info-circle"></i> Learn More</a>
-            <a href="/terms" class="btn-secondary text-xs py-2 flex-1 justify-center"><i class="fas fa-file-alt"></i> Terms</a>
-          </div>
+        <p class="home-about-body">
+          <strong>redhawk-store</strong> is a decentralized marketplace powered by
+          <strong>Arc Network</strong> — Circle's stablecoin-native Layer 1 blockchain.
+          It uses escrow smart contracts to protect every transaction: funds are locked
+          on-chain until the buyer confirms delivery, then automatically released to the seller.
+        </p>
+        <p class="home-about-body">
+          All payments are made exclusively in <strong>USDC</strong> (native on Arc) or
+          <strong>EURC</strong> — no fiat, no credit cards, no custodians. The internal wallet
+          is generated entirely client-side using BIP39 standards; private keys never leave
+          your browser.
+        </p>
+        <div class="demo-disclaimer" style="margin-bottom:20px;">
+          <i class="fas fa-flask" style="color:#d97706;flex-shrink:0"></i>
+          <span>This is an open-source <strong>testnet demo</strong>. No real funds involved. Smart contracts run on Arc Testnet (Chain ID: 5042002).</span>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <a href="/about" class="btn-secondary" style="font-size:13px;padding:9px 18px;"><i class="fas fa-info-circle"></i> Learn More</a>
+          <a href="/terms" class="btn-secondary" style="font-size:13px;padding:9px 18px;"><i class="fas fa-file-alt"></i> Terms</a>
         </div>
       </div>
+
+      <!-- Right: Trust signals -->
+      <div class="home-about-right">
+        <p class="home-about-signals-label">TRUST SIGNALS</p>
+        <div class="home-about-signals">
+          ${[
+            ['fas fa-lock',          '#22c55e','Non-custodial wallet', 'Your keys never leave your device'],
+            ['fas fa-file-contract', '#3b82f6','Open escrow contracts','Fully auditable on-chain'],
+            ['fab fa-github',        '#1e293b','Open-source',          'Inspect the code on GitHub','https://github.com/julenosinger/redhawk-store'],
+            ['fas fa-network-wired', '#8b5cf6','Arc Testnet',          'Chain ID: 5042002'],
+            ['fas fa-shield-alt',    '#ef4444','Zero key custody',     '100% self-sovereign'],
+            ['fas fa-coins',         '#f59e0b','USDC &amp; EURC',      'Stablecoin native L1'],
+          ].map(([icon,col,title,sub,link]) => `
+            <div class="home-signal-item">
+              <div class="home-signal-icon" style="background:${col}14;">
+                <i class="${icon}" style="color:${col};font-size:14px;"></i>
+              </div>
+              <div>
+                <p class="home-signal-title">${link ? `<a href="${link}" target="_blank" style="color:#3b82f6;text-decoration:none;">${title}</a>` : title}</p>
+                <p class="home-signal-sub">${sub}</p>
+              </div>
+            </div>`).join('')}
+        </div>
+      </div>
+
     </div>
   </section>
 
   ${footer()}
 
+  <!-- ══════════════════════════════════════════════════
+       HOME PAGE STYLES
+  ══════════════════════════════════════════════════ -->
+  <style>
+  /* ─── Animations ─── */
+  @keyframes home-bounce {
+    0%,100%{transform:translateY(0) translateX(-50%)}
+    50%{transform:translateY(7px) translateX(-50%)}
+  }
+  @keyframes home-pulse {
+    0%,100%{opacity:1;transform:scale(1)}
+    50%{opacity:.5;transform:scale(.85)}
+  }
+  @keyframes home-float {
+    0%,100%{transform:translateY(0)}
+    50%{transform:translateY(-8px)}
+  }
+  @keyframes home-shimmer {
+    0%{background-position:-400px 0}
+    100%{background-position:400px 0}
+  }
+
+  /* ─── Hero ─── */
+  .home-hero {
+    position:relative;overflow:hidden;
+    background:linear-gradient(145deg,#080c14 0%,#0d1425 30%,#130d2e 60%,#1a0808 100%);
+    min-height:100vh;display:flex;align-items:center;
+  }
+  .home-hero-noise {
+    position:absolute;inset:0;pointer-events:none;opacity:.025;
+    background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='1'/%3E%3C/svg%3E");
+  }
+  .home-hero-grid {
+    position:absolute;inset:0;pointer-events:none;
+    background-image:
+      linear-gradient(rgba(220,38,38,.06) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(220,38,38,.06) 1px,transparent 1px);
+    background-size:72px 72px;
+    mask-image:radial-gradient(ellipse 80% 80% at 50% 50%,black 40%,transparent 100%);
+  }
+  .home-hero-glow-r {
+    position:absolute;top:-200px;right:-150px;width:700px;height:700px;border-radius:50%;
+    background:radial-gradient(circle,rgba(220,38,38,.18) 0%,transparent 65%);
+    pointer-events:none;
+  }
+  .home-hero-glow-l {
+    position:absolute;bottom:-150px;left:-100px;width:550px;height:550px;border-radius:50%;
+    background:radial-gradient(circle,rgba(99,102,241,.14) 0%,transparent 65%);
+    pointer-events:none;
+  }
+  .home-hero-line {
+    position:absolute;bottom:0;left:0;right:0;height:1px;
+    background:linear-gradient(90deg,transparent,rgba(220,38,38,.25),rgba(99,102,241,.2),transparent);
+  }
+  .home-hero-inner {
+    max-width:1320px;margin:0 auto;padding:100px 32px 120px;
+    width:100%;position:relative;z-index:1;
+    display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:center;
+  }
+  @media(max-width:960px){
+    .home-hero-inner{grid-template-columns:1fr;gap:48px;padding:80px 20px 100px;}
+    .home-hero-right{display:none;}
+  }
+
+  /* Pill */
+  .home-hero-pill {
+    display:inline-flex;align-items:center;gap:8px;
+    background:rgba(220,38,38,.12);border:1px solid rgba(220,38,38,.25);
+    color:#fca5a5;padding:6px 16px;border-radius:999px;
+    font-size:11px;font-weight:700;margin-bottom:32px;
+    letter-spacing:.06em;backdrop-filter:blur(4px);
+  }
+  .home-hero-dot {
+    width:7px;height:7px;border-radius:50%;background:#ef4444;
+    display:inline-block;animation:home-pulse 2s infinite;flex-shrink:0;
+  }
+  .home-hero-pill-sep{opacity:.4;}
+
+  /* H1 */
+  .home-hero-h1 {
+    font-size:clamp(2.8rem,5.5vw,4.4rem);font-weight:900;color:#fff;
+    line-height:1.05;letter-spacing:-.035em;margin-bottom:28px;
+  }
+  .home-hero-gradient-text {
+    background:linear-gradient(135deg,#ef4444 0%,#f97316 50%,#fbbf24 100%);
+    -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+  }
+  .home-hero-muted{color:#475569;}
+
+  /* Sub */
+  .home-hero-sub {
+    font-size:1.1rem;color:#64748b;line-height:1.75;
+    max-width:500px;margin-bottom:40px;
+  }
+  .home-hero-sub strong{color:#cbd5e1;font-weight:600;}
+
+  /* CTAs */
+  .home-hero-ctas{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:40px;}
+  .home-btn-primary {
+    display:inline-flex;align-items:center;gap:9px;
+    background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;
+    padding:15px 30px;border-radius:14px;font-weight:700;font-size:15px;
+    text-decoration:none;box-shadow:0 4px 24px rgba(220,38,38,.45);
+    transition:all .25s;letter-spacing:.01em;
+  }
+  .home-btn-primary:hover{transform:translateY(-3px);box-shadow:0 10px 36px rgba(220,38,38,.55);}
+  .home-btn-ghost {
+    display:inline-flex;align-items:center;gap:9px;
+    background:rgba(255,255,255,.06);color:#cbd5e1;
+    padding:15px 30px;border-radius:14px;font-weight:600;font-size:15px;
+    text-decoration:none;border:1px solid rgba(255,255,255,.1);
+    backdrop-filter:blur(12px);transition:all .25s;
+  }
+  .home-btn-ghost:hover{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.2);color:#fff;}
+
+  /* Trust chips */
+  .home-trust-chips{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:24px;}
+  .home-trust-chip {
+    display:inline-flex;align-items:center;gap:7px;
+    background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);
+    padding:6px 14px;border-radius:999px;font-size:12px;color:#94a3b8;
+    font-weight:500;backdrop-filter:blur(4px);
+  }
+  .home-trust-chip i{font-size:12px;}
+
+  /* Network status */
+  .home-network-status{font-size:12px;color:#334155;display:flex;align-items:center;gap:8px;}
+  .home-network-dot{width:8px;height:8px;border-radius:50%;background:#334155;display:inline-block;flex-shrink:0;}
+
+  /* Glass card */
+  .home-glass-card {
+    background:rgba(255,255,255,.04);backdrop-filter:blur(24px);
+    border:1px solid rgba(255,255,255,.09);border-radius:28px;
+    padding:32px;width:100%;max-width:400px;
+    box-shadow:0 40px 80px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.07);
+    animation:home-float 6s ease-in-out infinite;
+  }
+  .home-glass-header{display:flex;align-items:center;gap:12px;margin-bottom:24px;}
+  .home-glass-logo {
+    width:42px;height:42px;border-radius:13px;flex-shrink:0;
+    background:linear-gradient(135deg,#dc2626,#7c3aed);
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 4px 14px rgba(220,38,38,.35);
+  }
+  .home-glass-name{font-weight:700;color:#f8fafc;font-size:14px;margin:0;}
+  .home-glass-net{font-size:11px;color:#475569;margin:0;}
+  .home-live-badge {
+    margin-left:auto;display:flex;align-items:center;gap:6px;
+    background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.25);
+    padding:4px 11px;border-radius:999px;font-size:11px;color:#4ade80;font-weight:600;
+  }
+  .home-live-dot{width:6px;height:6px;border-radius:50%;background:#22c55e;display:inline-block;animation:home-pulse 2s infinite;}
+  .home-glass-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px;}
+  .home-glass-stat {
+    background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06);
+    border-radius:14px;padding:16px;
+  }
+  .home-glass-stat-title{font-weight:700;color:#f1f5f9;font-size:13px;margin:0 0 3px;}
+  .home-glass-stat-sub{font-size:11px;color:#475569;margin:0;}
+  .home-glass-cta {
+    display:flex;align-items:center;justify-content:center;gap:8px;
+    background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;
+    padding:13px;border-radius:14px;font-weight:600;font-size:13px;
+    text-decoration:none;width:100%;box-sizing:border-box;
+    box-shadow:0 4px 16px rgba(220,38,38,.4);transition:all .2s;
+  }
+  .home-glass-cta:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(220,38,38,.5);}
+
+  /* Hero right column */
+  .home-hero-right{display:flex;justify-content:center;align-items:center;position:relative;}
+
+  /* Floating badges */
+  .home-float-badge {
+    position:absolute;background:#fff;border-radius:16px;padding:12px 16px;
+    box-shadow:0 12px 32px rgba(0,0,0,.18);
+    display:flex;align-items:center;gap:10px;
+    animation:home-float 5s ease-in-out infinite;
+    z-index:2;
+  }
+  .home-float-badge-top{top:-20px;right:-16px;animation-delay:.5s;}
+  .home-float-badge-bot{bottom:-18px;left:-16px;animation-delay:1.2s;}
+  .home-float-badge-icon{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .home-float-title{font-size:12px;font-weight:700;color:#1e293b;margin:0;}
+  .home-float-sub{font-size:11px;color:#64748b;margin:0;}
+
+  /* Scroll cue */
+  .home-scroll-cue {
+    position:absolute;bottom:32px;left:50%;transform:translateX(-50%);
+    display:flex;flex-direction:column;align-items:center;gap:6px;opacity:.3;
+    font-size:10px;color:#94a3b8;letter-spacing:.1em;text-transform:uppercase;
+    animation:home-bounce 2s ease-in-out infinite;
+  }
+  .home-bounce{font-size:13px;}
+
+  /* ─── Trust bar ─── */
+  .home-trust-bar{background:#fff;border-bottom:1px solid #f0f4f8;}
+  .home-trust-bar-inner {
+    max-width:1320px;margin:0 auto;padding:0 24px;
+    display:flex;flex-wrap:wrap;justify-content:center;
+  }
+  .home-trust-item {
+    display:flex;align-items:center;gap:14px;
+    padding:18px 28px;border-right:1px solid #f0f4f8;
+    transition:background .2s;
+  }
+  .home-trust-item:hover{background:#fafbfc;}
+  .home-trust-icon{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:15px;}
+  .home-trust-title{font-weight:700;color:#1e293b;font-size:13px;margin:0;}
+  .home-trust-sub{color:#94a3b8;font-size:11px;margin:0;}
+
+  /* ─── Demo notice ─── */
+  .home-demo-notice {
+    max-width:1320px;margin:40px auto 0;padding:0 24px;
+    background:#fffbeb;border:1px solid #fde68a;border-radius:14px;
+    padding:14px 20px;font-size:13px;color:#92400e;
+    display:flex;align-items:flex-start;gap:12px;line-height:1.5;
+    max-width:calc(1320px - 48px);margin:40px auto 0;
+  }
+
+  /* ─── Section layout ─── */
+  .home-section{max-width:1320px;margin:0 auto;padding:80px 24px;}
+  .home-section-products{padding-bottom:100px;}
+  .home-section-header {
+    display:flex;align-items:flex-end;justify-content:space-between;
+    margin-bottom:44px;gap:16px;flex-wrap:wrap;
+  }
+  .home-section-eyebrow{
+    font-size:11px;font-weight:800;color:#ef4444;
+    text-transform:uppercase;letter-spacing:.12em;margin-bottom:8px;
+  }
+  .home-section-title{
+    font-size:clamp(1.7rem,3vw,2.2rem);font-weight:900;
+    color:#0f172a;letter-spacing:-.025em;margin:0;line-height:1.15;
+  }
+  .home-view-all {
+    display:inline-flex;align-items:center;gap:7px;color:#ef4444;
+    font-size:13px;font-weight:700;text-decoration:none;
+    border:1.5px solid #fecaca;padding:9px 20px;border-radius:12px;
+    transition:all .2s;white-space:nowrap;flex-shrink:0;
+  }
+  .home-view-all:hover{background:#fef2f2;border-color:#ef4444;}
+
+  /* ─── Category cards ─── */
+  .home-cat-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(140px,1fr));
+    gap:16px;
+  }
+  @media(max-width:600px){.home-cat-grid{grid-template-columns:repeat(2,1fr);}}
+  .home-cat-card {
+    background:#fff;border-radius:20px;border:1.5px solid #f0f4f8;
+    padding:24px 16px 20px;
+    display:flex;flex-direction:column;align-items:center;gap:14px;
+    text-decoration:none;transition:all .28s cubic-bezier(.34,1.56,.64,1);
+    cursor:pointer;text-align:center;
+    box-shadow:0 1px 4px rgba(0,0,0,.04);
+    position:relative;overflow:hidden;
+  }
+  .home-cat-card::before {
+    content:'';position:absolute;inset:0;opacity:0;
+    background:linear-gradient(135deg,var(--cat-bg),transparent);
+    transition:opacity .28s;
+  }
+  .home-cat-card:hover{
+    transform:translateY(-6px) scale(1.02);
+    box-shadow:0 20px 44px rgba(0,0,0,.1);
+    border-color:var(--cat-accent,#ef4444);
+  }
+  .home-cat-card:hover::before{opacity:1;}
+  .home-cat-icon {
+    width:60px;height:60px;border-radius:18px;
+    display:flex;align-items:center;justify-content:center;
+    font-size:24px;transition:transform .28s;
+    flex-shrink:0;position:relative;z-index:1;
+  }
+  .home-cat-card:hover .home-cat-icon{transform:scale(1.1) rotate(-4deg);}
+  .home-cat-label {
+    font-weight:700;color:#1e293b;font-size:12px;line-height:1.35;
+    position:relative;z-index:1;
+  }
+  .home-cat-arrow{
+    font-size:10px;opacity:0;transform:translateX(-4px);
+    transition:all .2s;position:relative;z-index:1;
+  }
+  .home-cat-card:hover .home-cat-arrow{opacity:1;transform:translateX(0);}
+
+  /* ─── Loading state ─── */
+  .home-loading{text-align:center;padding:72px 0;}
+  .home-loading .loading-spinner-lg{margin:0 auto 20px;}
+  .home-loading p{color:#94a3b8;font-size:14px;}
+
+  /* ─── How it Works ─── */
+  .home-how {
+    background:linear-gradient(155deg,#080c14 0%,#0e1425 40%,#160a28 70%,#1a0808 100%);
+    padding:112px 24px;position:relative;overflow:hidden;
+  }
+  .home-how-grid-bg{
+    position:absolute;inset:0;pointer-events:none;
+    background-image:
+      linear-gradient(rgba(220,38,38,.04) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(220,38,38,.04) 1px,transparent 1px);
+    background-size:56px 56px;
+    mask-image:radial-gradient(ellipse 90% 80% at 50% 50%,black 30%,transparent 100%);
+  }
+  .home-how-inner{max-width:1320px;margin:0 auto;position:relative;z-index:1;}
+  .home-how-header{text-align:center;margin-bottom:72px;}
+  .home-how-header p:first-child{margin-bottom:12px;}
+  .home-how-steps{
+    display:grid;grid-template-columns:repeat(4,1fr);gap:40px;
+    position:relative;
+  }
+  @media(max-width:900px){.home-how-steps{grid-template-columns:repeat(2,1fr);}}
+  @media(max-width:500px){.home-how-steps{grid-template-columns:1fr;gap:32px;}}
+  .home-how-step{position:relative;padding-top:8px;}
+  .home-how-step-num{
+    font-size:10px;font-weight:800;letter-spacing:.14em;
+    color:rgba(220,38,38,.35);margin-bottom:20px;
+  }
+  .home-how-step-icon{
+    width:60px;height:60px;border-radius:20px;
+    display:flex;align-items:center;justify-content:center;
+    margin-bottom:20px;
+    box-shadow:0 8px 24px rgba(0,0,0,.25);
+    transition:transform .2s;
+  }
+  .home-how-step:hover .home-how-step-icon{transform:translateY(-4px);}
+  .home-how-step-title{font-weight:800;color:#f1f5f9;font-size:16px;margin:0 0 10px;}
+  .home-how-step-desc{color:#475569;font-size:13px;line-height:1.7;margin:0;}
+  .home-how-connector{
+    display:none;
+    position:absolute;top:62px;left:calc(12.5% + 30px);right:calc(12.5% + 30px);
+    height:1px;background:linear-gradient(90deg,#dc2626,#7c3aed,#22c55e);
+    opacity:.25;pointer-events:none;
+  }
+  @media(min-width:901px){.home-how-connector{display:block;}}
+
+  /* ─── About section ─── */
+  .home-about-section{padding-bottom:100px;}
+  .home-about-card{
+    background:#fff;border-radius:28px;border:1px solid #f0f4f8;
+    box-shadow:0 6px 32px rgba(0,0,0,.06);overflow:hidden;
+    display:grid;grid-template-columns:1fr 320px;
+  }
+  @media(max-width:800px){.home-about-card{grid-template-columns:1fr;}}
+  .home-about-left{padding:56px;border-right:1px solid #f0f4f8;}
+  @media(max-width:800px){.home-about-left{padding:36px;border-right:none;border-bottom:1px solid #f0f4f8;}}
+  .home-about-right{padding:48px 40px;background:#fafbfc;}
+  @media(max-width:800px){.home-about-right{padding:36px;}}
+  .home-about-logo-row{display:flex;align-items:center;gap:14px;margin-bottom:24px;}
+  .home-about-logo-icon{
+    width:46px;height:46px;border-radius:15px;flex-shrink:0;
+    background:linear-gradient(135deg,#dc2626,#7c3aed);
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 6px 16px rgba(220,38,38,.3);
+  }
+  .home-about-title{font-size:1.5rem;font-weight:900;color:#0f172a;margin:0;letter-spacing:-.02em;}
+  .home-about-body{color:#475569;font-size:14px;line-height:1.85;margin-bottom:16px;}
+  .home-about-body strong{color:#1e293b;font-weight:700;}
+  .home-about-signals-label{font-size:11px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.1em;margin-bottom:24px;}
+  .home-about-signals{display:flex;flex-direction:column;gap:18px;}
+  .home-signal-item{display:flex;align-items:center;gap:12px;}
+  .home-signal-icon{width:36px;height:36px;border-radius:11px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .home-signal-title{font-weight:700;color:#1e293b;font-size:13px;margin:0;}
+  .home-signal-sub{color:#94a3b8;font-size:11px;margin:0;}
+
+  /* ─── Product cards (home) ─── */
+  .home-product-card {
+    background:#fff;border-radius:22px;border:1.5px solid #f0f4f8;
+    overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,.05);
+    transition:all .3s cubic-bezier(.34,1.56,.64,1);cursor:pointer;
+  }
+  .home-product-card:hover{
+    transform:translateY(-8px);
+    box-shadow:0 24px 56px rgba(0,0,0,.13);
+    border-color:#fecaca;
+  }
+  .home-product-img{position:relative;overflow:hidden;}
+  .home-product-img img,.home-product-img .home-product-placeholder{
+    width:100%;height:220px;object-fit:cover;display:block;
+    transition:transform .4s ease;
+  }
+  .home-product-card:hover .home-product-img img{transform:scale(1.05);}
+  .home-product-placeholder{
+    background:linear-gradient(135deg,#f8fafc,#e2e8f0);
+    display:flex;align-items:center;justify-content:center;
+    color:#cbd5e1;font-size:44px;
+  }
+  .home-product-escrow-badge{
+    position:absolute;top:12px;left:12px;
+    background:linear-gradient(135deg,#dc2626,#b91c1c);
+    color:#fff;padding:4px 11px;border-radius:999px;
+    font-size:11px;font-weight:700;
+    display:flex;align-items:center;gap:5px;
+    box-shadow:0 2px 8px rgba(220,38,38,.4);
+  }
+  .home-product-body{padding:22px;}
+  .home-product-cat{
+    display:inline-block;background:#fef2f2;color:#dc2626;
+    padding:3px 11px;border-radius:8px;font-size:11px;font-weight:700;
+    margin-bottom:10px;
+  }
+  .home-product-title{
+    font-weight:700;color:#1e293b;font-size:15px;
+    margin:0 0 14px;line-height:1.45;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+  }
+  .home-product-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+  .home-product-price{font-size:1.45rem;font-weight:900;color:#dc2626;margin:0;}
+  .home-product-token{font-size:12px;font-weight:600;color:#94a3b8;margin-left:3px;}
+  .home-shop-btn {
+    display:inline-flex;align-items:center;gap:6px;
+    background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;
+    padding:10px 20px;border-radius:12px;font-weight:700;font-size:13px;
+    text-decoration:none;white-space:nowrap;
+    box-shadow:0 4px 12px rgba(220,38,38,.35);
+    transition:all .2s;
+  }
+  .home-shop-btn:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(220,38,38,.45);}
+  </style>
+
   <script>
   document.addEventListener('DOMContentLoaded', async () => {
-    // Check network status
+    /* Network status */
     await checkNetworkStatus(document.getElementById('home-network-status'));
 
-    // Load products from API
+    /* Products */
     try {
-      const res = await fetch('/api/products');
+      const res  = await fetch('/api/products');
       const data = await res.json();
-      const container = document.getElementById('home-products-container');
+      const el   = document.getElementById('home-products-container');
       if (!data.products || data.products.length === 0) {
-        container.innerHTML = \`
-          <div class="card p-12 text-center">
-            <div class="empty-state">
+        el.innerHTML = \`
+          <div style="background:#fff;border-radius:24px;border:1.5px solid #f0f4f8;padding:80px 24px;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,.05);">
+            <div style="width:80px;height:80px;border-radius:24px;background:linear-gradient(135deg,#fef2f2,#fee2e2);display:flex;align-items:center;justify-content:center;margin:0 auto 24px;font-size:32px;color:#fca5a5;box-shadow:0 4px 20px rgba(220,38,38,.1);">
               <i class="fas fa-store"></i>
-              <h3 class="font-bold text-slate-600 text-lg mb-2">No Products Yet</h3>
-              <p class="text-sm max-w-sm mx-auto mb-4">Be the first seller — list your product now and start earning USDC or EURC!</p>
-              <a href="/sell" class="btn-primary mx-auto">
-                <i class="fas fa-plus-circle"></i> List the First Product
-              </a>
             </div>
+            <h3 style="font-size:1.3rem;font-weight:900;color:#1e293b;margin:0 0 10px;letter-spacing:-.01em;">No Products Listed Yet</h3>
+            <p style="color:#94a3b8;font-size:14px;max-width:380px;margin:0 auto 32px;line-height:1.7;">Be the first seller — list your product and start earning USDC or EURC through smart contract escrow.</p>
+            <a href="/sell" class="btn-primary" style="display:inline-flex;margin:0 auto;">
+              <i class="fas fa-plus-circle"></i> List the First Product
+            </a>
           </div>\`;
       } else {
         const latest = data.products.slice(0, 4);
-        container.innerHTML = '<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">'
-          + latest.map(renderProductCard).join('')
+        el.innerHTML =
+          '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:28px;">'
+          + latest.map(renderHomeProductCard).join('')
           + '</div>'
           + (data.products.length > 4
-              ? \`<div class="text-center mt-6"><a href="/marketplace" class="btn-secondary">View all \${data.products.length} products →</a></div>\`
+              ? \`<div style="text-align:center;margin-top:40px;"><a href="/marketplace" class="btn-secondary">View all \${data.products.length} products &nbsp;<i class="fas fa-arrow-right"></i></a></div>\`
               : '');
       }
-    } catch (err) {
+    } catch (e) {
       document.getElementById('home-products-container').innerHTML =
-        '<div class="card p-8 text-center text-red-500"><i class="fas fa-exclamation-circle mr-2"></i>Failed to load products. Check your connection.</div>';
+        '<div style="text-align:center;padding:56px 24px;color:#ef4444;">'
+        +'<i class="fas fa-exclamation-circle" style="font-size:36px;margin-bottom:16px;display:block;opacity:.6;"></i>'
+        +'<p style="font-size:14px;color:#64748b;">Failed to load products. Check your connection.</p></div>';
     }
   });
 
-  function renderProductCard(p) {
+  function renderHomeProductCard(p) {
     const name  = (p.title || p.name || 'Untitled').replace(/</g,'&lt;');
-    const price = parseFloat(p.price||0).toFixed(2);
-    return '<div class="product-card">'
-      + '<div class="relative">'
-      + (p.image ? '<img src="' + p.image + '" alt="' + name + '" class="w-full h-48 object-cover">'
-                 : '<div class="w-full h-48 bg-slate-100 flex items-center justify-center text-slate-300"><i class="fas fa-image text-4xl"></i></div>')
-      + '<span class="absolute top-2 left-2 badge-escrow"><i class="fas fa-shield-alt mr-1"></i>Escrow</span>'
-      + '</div>'
-      + '<div class="p-4">'
-      + '<span class="tag">' + (p.category||'Other') + '</span>'
-      + '<h3 class="font-semibold text-slate-800 mt-2 mb-2 text-sm leading-tight">' + name + '</h3>'
-      + '<p class="text-xl font-extrabold text-red-600 mb-3">' + price + ' <span class="text-sm font-semibold">' + (p.token||'USDC') + '</span></p>'
-      + '<a href="/product/' + p.id + '" class="btn-primary w-full justify-center text-xs py-2">'
-      + '<i class="fas fa-bolt"></i> View & Buy</a>'
-      + '</div></div>';
+    const price = parseFloat(p.price || 0).toFixed(2);
+    const tok   = p.token || 'USDC';
+    const cat   = p.category || 'Other';
+    const imgEl = p.image
+      ? '<img src="' + p.image + '" alt="' + name + '">'
+      : '<div class="home-product-placeholder"><i class="fas fa-image"></i></div>';
+    return \`
+      <div class="home-product-card" onclick="location.href='/product/\${p.id}'">
+        <div class="home-product-img">
+          \${imgEl}
+          <div class="home-product-escrow-badge"><i class="fas fa-shield-alt"></i> Escrow</div>
+        </div>
+        <div class="home-product-body">
+          <div class="home-product-cat">\${cat}</div>
+          <h3 class="home-product-title">\${name}</h3>
+          <div class="home-product-footer">
+            <p class="home-product-price">\${price}<span class="home-product-token">\${tok}</span></p>
+            <a href="/product/\${p.id}" class="home-shop-btn" onclick="event.stopPropagation()">
+              <i class="fas fa-bolt"></i> Shop Now
+            </a>
+          </div>
+        </div>
+      </div>\`;
   }
   </script>
   `)
 }
+
 
 // ─── PAGE: MARKETPLACE ─────────────────────────────────────────────────
 function marketplacePage() {
