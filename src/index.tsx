@@ -3455,41 +3455,35 @@ function ordersPage() {
 
   <script>
   /* ═══════════════════════════════════════════════════════════════════════════
-     ORDERS PAGE — Complete rewrite v3
-     Root-cause fix: eliminated _waitForWallet polling entirely.
-     getStoredWallet is read directly from localStorage as fallback so the
-     page never hangs waiting for globalScript to register the function.
-     All paths guaranteed to clear the loading state via finally blocks.
+     ORDERS PAGE — Complete rewrite v4
+     Key fix: renderOrders runs IMMEDIATELY (synchronous, no setTimeout/polling).
+     The spinner is replaced right away — no async waiting, no polling loops.
+     All paths clear loading state via finally blocks.
+     Safety timeout added as belt-and-suspenders in case of unexpected throws.
   ═══════════════════════════════════════════════════════════════════════════ */
 
   var _currentOrderTab = 'purchases';
   var _ordersLoading   = false;   /* concurrency guard — reset in finally     */
   var _safetyTimer     = null;    /* 9-second hard-stop handle                */
 
-  /* ── get wallet — works even before globalScript registers ──── */
+  /* ── get wallet — reads localStorage directly, no dependency on globalScript */
   function _getWallet() {
-    /* Prefer the registered helper if available */
+    /* 1. Try the registered helper if it's already available */
     if (typeof getStoredWallet === 'function') {
-      try { return getStoredWallet(); } catch(e) {}
+      try { var w = getStoredWallet(); if (w) return w; } catch(e) {}
     }
-    /* Direct localStorage fallback */
-    try { return JSON.parse(localStorage.getItem('rh_wallet') || 'null'); } catch(e) {}
+    /* 2. Direct localStorage fallback — always available */
+    try {
+      var raw = localStorage.getItem('rh_wallet');
+      if (raw) return JSON.parse(raw);
+    } catch(e) {}
     return null;
   }
 
-  /* ── loading / error UI ──────────────────────────────────────── */
+  /* ── DOM helpers ─────────────────────────────────────────────── */
   function _setContainer(html) {
     var c = document.getElementById('orders-container');
     if (c) c.innerHTML = html;
-  }
-
-  function _showSpinner(msg) {
-    _setContainer(
-      '<div class="card p-8 text-center">'
-      + '<div class="loading-spinner-lg mx-auto mb-3"></div>'
-      + '<p class="text-slate-400 text-sm">' + (msg || 'Loading your orders\u2026') + '</p>'
-      + '</div>'
-    );
   }
 
   function _showError(msg) {
@@ -3554,18 +3548,16 @@ function ordersPage() {
     if (_ordersLoading) return;
     _ordersLoading = true;
 
-    /* Safety hard-stop: 9 s */
+    /* Safety hard-stop: 9 s (belt-and-suspenders; renderOrders is synchronous) */
     if (_safetyTimer) clearTimeout(_safetyTimer);
     _safetyTimer = setTimeout(function() {
       _ordersLoading = false;
       _safetyTimer   = null;
-      _showError('Timed out loading orders. Please try again.');
+      _showError('Timed out. Please refresh and try again.');
     }, 9000);
 
-    _showSpinner('Loading your orders\u2026');
-
     try {
-      /* Get wallet — no async polling needed */
+      /* Get wallet synchronously — no async polling */
       var wallet = _getWallet();
 
       if (!wallet) {
@@ -3978,12 +3970,30 @@ function ordersPage() {
     renderOrders('purchases');
   }
 
-  /* Run after DOM is ready */
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', _ordersInit);
-  } else {
-    setTimeout(_ordersInit, 0);
-  }
+  /* ── Bootstrap: run _ordersInit as soon as possible ────────────
+     Since renderOrders is fully synchronous (reads localStorage, no
+     network calls), we can call it directly without setTimeout.
+     If the DOM element isn't ready yet we defer only to DOMContentLoaded.
+  ─────────────────────────────────────────────────────────────── */
+  (function() {
+    function _run() {
+      /* Safety: ensure the container element actually exists before rendering */
+      if (!document.getElementById('orders-container')) {
+        /* Extremely unlikely but guard it anyway */
+        document.addEventListener('DOMContentLoaded', _ordersInit);
+        return;
+      }
+      _ordersInit();
+    }
+
+    if (document.readyState === 'loading') {
+      /* Script executed in <head> or mid-parse — wait for DOM */
+      document.addEventListener('DOMContentLoaded', _run);
+    } else {
+      /* DOM is already parsed (script is inline after the container div) */
+      _run();
+    }
+  })();
   </script>
   `)
 }
@@ -4234,7 +4244,7 @@ function sellPage() {
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label class="block text-sm font-semibold text-slate-700 mb-1">Product Name *</label>
-            <input type="text" id="prod-name" placeholder="e.g. MacBook Pro M3" class="input"/>
+            <input type="text" id="prod-name" placeholder="e.g. Vintage Sneakers, Handmade Bracelet…" class="input"/>
           </div>
           <div>
             <label class="block text-sm font-semibold text-slate-700 mb-1">Category *</label>
