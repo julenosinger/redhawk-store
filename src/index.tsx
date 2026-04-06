@@ -1,36 +1,173 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 
-type Bindings = { DB: D1Database }
+type Bindings = { DB?: D1Database; PRODUCTS_KV?: KVNamespace }
 const app = new Hono<{ Bindings: Bindings }>()
 app.use('*', cors())
 
-// ─── DB helpers ─────────────────────────────────────────────────────────────
+// ─── Product type ────────────────────────────────────────────────────────────
+interface Product {
+  id: string; title: string; description: string; price: number
+  token: string; image: string; category: string; stock: number
+  seller_id: string; status: string; created_at: string; updated_at: string
+}
+
+// ─── Storage Adapter — D1 when available, KV fallback, memory last resort ────
+// This prevents "Cannot read properties of undefined (reading 'prepare')" when
+// the D1 binding is not configured on the Cloudflare Pages project.
+
+// In-memory fallback (per-isolate, cleared on redeploy — only used when neither D1 nor KV is bound)
+let _memProducts: Product[] = []
+
+function nowISO() { return new Date().toISOString() }
+
+// KV helpers — products stored as JSON array under key 'products_v1'
+async function kvGetAll(kv: KVNamespace): Promise<Product[]> {
+  try {
+    const raw = await kv.get('products_v1')
+    return raw ? JSON.parse(raw) : []
+  } catch { return [] }
+}
+async function kvSaveAll(kv: KVNamespace, products: Product[]): Promise<void> {
+  await kv.put('products_v1', JSON.stringify(products))
+}
+
+// ─── Unified product store ────────────────────────────────────────────────────
+const store = {
+  // List products with optional filters
+  async list(env: Bindings, opts: { category?: string; seller?: string; q?: string }): Promise<{ products: Product[]; source: string }> {
+    if (env.DB) {
+      try {
+        let sql  = `SELECT * FROM products WHERE status = 'active'`
+        const params: string[] = []
+        if (opts.category) { sql += ` AND category = ?`; params.push(opts.category) }
+        if (opts.seller)   { sql += ` AND seller_id = ?`; params.push(opts.seller) }
+        if (opts.q)        { sql += ` AND (title LIKE ? OR description LIKE ?)`; params.push(`%${opts.q}%`, `%${opts.q}%`) }
+        sql += ` ORDER BY created_at DESC`
+        const stmt = env.DB.prepare(sql)
+        const { results } = await (params.length ? stmt.bind(...params) : stmt).all()
+        return { products: results as Product[], source: 'D1' }
+      } catch (e: any) {
+        console.error('D1 list error:', e.message)
+      }
+    }
+    // KV fallback
+    let all: Product[] = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts
+    let filtered = all.filter(p => p.status === 'active')
+    if (opts.category) filtered = filtered.filter(p => p.category === opts.category)
+    if (opts.seller)   filtered = filtered.filter(p => p.seller_id === opts.seller)
+    if (opts.q) {
+      const qLow = opts.q.toLowerCase()
+      filtered = filtered.filter(p =>
+        p.title.toLowerCase().includes(qLow) || p.description.toLowerCase().includes(qLow))
+    }
+    filtered.sort((a,b) => b.created_at.localeCompare(a.created_at))
+    return { products: filtered, source: env.PRODUCTS_KV ? 'KV' : 'memory' }
+  },
+
+  // Get single product by id
+  async get(env: Bindings, id: string): Promise<Product | null> {
+    if (env.DB) {
+      try {
+        const row = await env.DB.prepare(`SELECT * FROM products WHERE id = ? AND status = 'active'`).bind(id).first()
+        return (row as Product) || null
+      } catch (e: any) { console.error('D1 get error:', e.message) }
+    }
+    const all: Product[] = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts
+    return all.find(p => p.id === id && p.status === 'active') || null
+  },
+
+  // Get product by id (any status) — for seller operations
+  async getAny(env: Bindings, id: string): Promise<Product | null> {
+    if (env.DB) {
+      try {
+        const row = await env.DB.prepare(`SELECT * FROM products WHERE id = ?`).bind(id).first()
+        return (row as Product) || null
+      } catch (e: any) { console.error('D1 getAny error:', e.message) }
+    }
+    const all: Product[] = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts
+    return all.find(p => p.id === id) || null
+  },
+
+  // List products for a seller (all statuses except deleted)
+  async listBySeller(env: Bindings, address: string): Promise<Product[]> {
+    if (env.DB) {
+      try {
+        const { results } = await env.DB.prepare(
+          `SELECT * FROM products WHERE seller_id = ? AND status != 'deleted' ORDER BY created_at DESC`
+        ).bind(address).all()
+        return results as Product[]
+      } catch (e: any) { console.error('D1 listBySeller error:', e.message) }
+    }
+    const all: Product[] = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts
+    return all.filter(p => p.seller_id === address && p.status !== 'deleted')
+              .sort((a,b) => b.created_at.localeCompare(a.created_at))
+  },
+
+  // Create a product
+  async create(env: Bindings, data: Omit<Product,'id'|'status'|'created_at'|'updated_at'>): Promise<Product> {
+    const id = nanoid()
+    const now = nowISO()
+    const product: Product = { ...data, id, status: 'active', created_at: now, updated_at: now }
+
+    if (env.DB) {
+      try {
+        await env.DB.prepare(`
+          INSERT INTO products (id,title,description,price,token,image,category,stock,seller_id)
+          VALUES (?,?,?,?,?,?,?,?,?)
+        `).bind(id, data.title, data.description, data.price, data.token, data.image, data.category, data.stock, data.seller_id).run()
+        const row = await env.DB.prepare(`SELECT * FROM products WHERE id = ?`).bind(id).first()
+        return (row as Product) || product
+      } catch (e: any) { console.error('D1 create error:', e.message) }
+    }
+    // KV / memory
+    const all: Product[] = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts
+    all.unshift(product)
+    if (env.PRODUCTS_KV) await kvSaveAll(env.PRODUCTS_KV, all)
+    else _memProducts = all
+    return product
+  },
+
+  // Update product status
+  async setStatus(env: Bindings, id: string, status: string): Promise<boolean> {
+    if (env.DB) {
+      try {
+        await env.DB.prepare(`UPDATE products SET status = ?, updated_at = datetime('now') WHERE id = ?`).bind(status, id).run()
+        return true
+      } catch (e: any) { console.error('D1 setStatus error:', e.message) }
+    }
+    const all: Product[] = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts
+    const idx = all.findIndex(p => p.id === id)
+    if (idx < 0) return false
+    all[idx].status = status
+    all[idx].updated_at = nowISO()
+    if (env.PRODUCTS_KV) await kvSaveAll(env.PRODUCTS_KV, all)
+    else _memProducts = all
+    return true
+  }
+}
+
+// ─── DB init (only when D1 is bound) ─────────────────────────────────────────
 let _dbReady = false
-async function initDB(db: D1Database) {
-  if (_dbReady) return
-  // D1 exec() only supports single statements — run each DDL separately
-  await db.prepare(`CREATE TABLE IF NOT EXISTS products (
-    id          TEXT PRIMARY KEY,
-    title       TEXT NOT NULL,
-    description TEXT NOT NULL,
-    price       REAL NOT NULL,
-    token       TEXT NOT NULL DEFAULT 'USDC',
-    image       TEXT,
-    category    TEXT NOT NULL DEFAULT 'Other',
-    stock       INTEGER NOT NULL DEFAULT 1,
-    seller_id   TEXT NOT NULL,
-    status      TEXT NOT NULL DEFAULT 'active',
-    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
-  )`).run()
-  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_products_seller  ON products(seller_id)`).run()
-  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_products_status  ON products(status)`).run()
-  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_products_cat     ON products(category)`).run()
-  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_products_created ON products(created_at DESC)`).run()
-  // Remove demo/seed products that were inserted during development
-  await db.prepare(`DELETE FROM products WHERE id IN ('prod_mnkzpek5esosxt','prod_mnkywrj7334nbp','prod_mnkywrhf8wo1sl')`).run()
-  _dbReady = true
+async function initDB(db?: D1Database) {
+  if (!db || _dbReady) return
+  try {
+    await db.prepare(`CREATE TABLE IF NOT EXISTS products (
+      id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL,
+      price REAL NOT NULL, token TEXT NOT NULL DEFAULT 'USDC', image TEXT,
+      category TEXT NOT NULL DEFAULT 'Other', stock INTEGER NOT NULL DEFAULT 1,
+      seller_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`).run()
+    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_products_seller ON products(seller_id)`).run()
+    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_products_status ON products(status)`).run()
+    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_products_cat ON products(category)`).run()
+    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_products_created ON products(created_at DESC)`).run()
+    _dbReady = true
+  } catch (e: any) {
+    console.error('initDB error (non-fatal):', e.message)
+  }
 }
 
 function nanoid(): string {
@@ -75,33 +212,25 @@ app.get('/api/arc-config', (c) => {
 // GET /api/products — list all active products (optional ?category=&seller=&q=)
 app.get('/api/products', async (c) => {
   try {
-    const db = c.env.DB
-    await initDB(db)
-    const cat    = c.req.query('category') || ''
-    const seller = c.req.query('seller')   || ''
-    const q      = c.req.query('q')        || ''
-    let sql  = `SELECT * FROM products WHERE status = 'active'`
-    const params: string[] = []
-    if (cat)    { sql += ` AND category = ?`;              params.push(cat) }
-    if (seller) { sql += ` AND seller_id = ?`;             params.push(seller) }
-    if (q)      { sql += ` AND (title LIKE ? OR description LIKE ?)`;  params.push(`%${q}%`, `%${q}%`) }
-    sql += ` ORDER BY created_at DESC`
-    const { results } = await db.prepare(sql).bind(...params).all()
-    return c.json({ products: results, total: results.length, source: 'database' })
+    await initDB(c.env.DB)
+    const { products, source } = await store.list(c.env, {
+      category: c.req.query('category') || '',
+      seller:   c.req.query('seller')   || '',
+      q:        c.req.query('q')        || ''
+    })
+    return c.json({ products, total: products.length, source })
   } catch (e: any) {
-    return c.json({ products: [], total: 0, source: 'database', error: e.message })
+    return c.json({ products: [], total: 0, source: 'error', error: e.message })
   }
 })
 
 // GET /api/products/:id — single product
 app.get('/api/products/:id', async (c) => {
   try {
-    const db = c.env.DB
-    await initDB(db)
-    const row = await db.prepare(`SELECT * FROM products WHERE id = ? AND status = 'active'`)
-      .bind(c.req.param('id')).first()
-    if (!row) return c.json({ error: 'Product not found', product: null }, 404)
-    return c.json({ product: row })
+    await initDB(c.env.DB)
+    const product = await store.get(c.env, c.req.param('id'))
+    if (!product) return c.json({ error: 'Product not found', product: null }, 404)
+    return c.json({ product })
   } catch (e: any) {
     return c.json({ error: e.message, product: null }, 500)
   }
@@ -110,22 +239,26 @@ app.get('/api/products/:id', async (c) => {
 // POST /api/products — create a product
 app.post('/api/products', async (c) => {
   try {
-    const db   = c.env.DB
-    await initDB(db)
+    await initDB(c.env.DB)
     const body = await c.req.json() as any
     const { title, description, price, token = 'USDC', image = '', category = 'Other', stock = 1, seller_id } = body
+    // Validate required fields
     if (!title || !description || !price || !seller_id)
       return c.json({ error: 'Missing required fields: title, description, price, seller_id' }, 400)
     if (Number(price) <= 0)
       return c.json({ error: 'Price must be greater than 0' }, 400)
     if (!['USDC','EURC'].includes(token))
       return c.json({ error: 'Token must be USDC or EURC' }, 400)
-    const id = nanoid()
-    await db.prepare(`
-      INSERT INTO products (id, title, description, price, token, image, category, stock, seller_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(id, title.trim(), description.trim(), Number(price), token, image, category, Number(stock) || 1, seller_id).run()
-    const product = await db.prepare(`SELECT * FROM products WHERE id = ?`).bind(id).first()
+    const product = await store.create(c.env, {
+      title: String(title).trim(),
+      description: String(description).trim(),
+      price: Number(price),
+      token: String(token),
+      image: String(image || ''),
+      category: String(category),
+      stock: Number(stock) || 1,
+      seller_id: String(seller_id)
+    })
     return c.json({ product, success: true }, 201)
   } catch (e: any) {
     return c.json({ error: e.message }, 500)
@@ -135,12 +268,12 @@ app.post('/api/products', async (c) => {
 // DELETE /api/products/:id — soft-delete (seller only)
 app.delete('/api/products/:id', async (c) => {
   try {
-    const db        = c.env.DB
+    await initDB(c.env.DB)
     const { seller_id } = await c.req.json() as any
-    const row = await db.prepare(`SELECT * FROM products WHERE id = ?`).bind(c.req.param('id')).first() as any
+    const row = await store.getAny(c.env, c.req.param('id'))
     if (!row)                          return c.json({ error: 'Product not found' }, 404)
     if (row.seller_id !== seller_id)   return c.json({ error: 'Unauthorized' }, 403)
-    await db.prepare(`UPDATE products SET status = 'deleted', updated_at = datetime('now') WHERE id = ?`).bind(c.req.param('id')).run()
+    await store.setStatus(c.env, c.req.param('id'), 'deleted')
     return c.json({ success: true })
   } catch (e: any) {
     return c.json({ error: e.message }, 500)
@@ -150,16 +283,14 @@ app.delete('/api/products/:id', async (c) => {
 // PATCH /api/products/:id/status — pause, resume, delete (seller only)
 app.patch('/api/products/:id/status', async (c) => {
   try {
-    const db = c.env.DB
-    await initDB(db)
+    await initDB(c.env.DB)
     const { seller_id, status } = await c.req.json() as any
     if (!['active','paused','deleted'].includes(status))
       return c.json({ error: 'Invalid status. Use active, paused, or deleted' }, 400)
-    const row = await db.prepare(`SELECT * FROM products WHERE id = ?`).bind(c.req.param('id')).first() as any
+    const row = await store.getAny(c.env, c.req.param('id'))
     if (!row)                          return c.json({ error: 'Product not found' }, 404)
     if (row.seller_id !== seller_id)   return c.json({ error: 'Unauthorized' }, 403)
-    await db.prepare(`UPDATE products SET status = ?, updated_at = datetime('now') WHERE id = ?`)
-      .bind(status, c.req.param('id')).run()
+    await store.setStatus(c.env, c.req.param('id'), status)
     return c.json({ success: true, status })
   } catch (e: any) {
     return c.json({ error: e.message }, 500)
@@ -169,13 +300,9 @@ app.patch('/api/products/:id/status', async (c) => {
 // GET /api/seller/:address/products — all products (active + paused) for seller dashboard
 app.get('/api/seller/:address/products', async (c) => {
   try {
-    const db = c.env.DB
-    await initDB(db)
-    const address = c.req.param('address')
-    const { results } = await db.prepare(
-      `SELECT * FROM products WHERE seller_id = ? AND status != 'deleted' ORDER BY created_at DESC`
-    ).bind(address).all()
-    return c.json({ products: results, total: results.length })
+    await initDB(c.env.DB)
+    const products = await store.listBySeller(c.env, c.req.param('address'))
+    return c.json({ products, total: products.length })
   } catch (e: any) {
     return c.json({ products: [], total: 0, error: e.message })
   }
@@ -271,10 +398,9 @@ app.get('/marketplace', (c) => c.html(marketplacePage()))
 // ─── API routes for product page ────────────────────────────────────────────
 app.get('/product/:id', async (c) => {
   try {
-    const db  = c.env.DB
-    await initDB(db)
-    const row = await db.prepare(`SELECT * FROM products WHERE id = ? AND status = 'active'`).bind(c.req.param('id')).first() as any
-    if (row) return c.html(productPage(row))
+    await initDB(c.env.DB)
+    const product = await store.get(c.env, c.req.param('id'))
+    if (product) return c.html(productPage(product))
   } catch {}
   return c.html(productNotFoundPage(c.req.param('id')))
 })
