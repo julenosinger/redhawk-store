@@ -1,13 +1,13 @@
-# redhawk-store
+# Shukly Store
 
 ## Project Overview
-- **Name**: redhawk-store
+- **Name**: Shukly Store
 - **Goal**: Decentralized marketplace on Arc Testnet with trustless escrow via FxEscrow contract
 - **Language**: English-only
 - **Features**: Browse products, cart, checkout with escrow, order tracking, dispute resolution, seller dashboard
 
 ## URLs
-- **GitHub**: https://github.com/julenosinger/redhawk-store
+- **GitHub**: https://github.com/julenosinger/Shukly Store
 - **Arc Testnet Explorer**: https://testnet.arcscan.app
 - **Faucet**: https://faucet.circle.com
 

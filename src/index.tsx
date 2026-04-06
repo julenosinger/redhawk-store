@@ -477,7 +477,7 @@ function shell(title: string, body: string, extraHead = '') {
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>${title} | redhawk-store</title>
+  <title>${title} | Shukly Store</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet"/>
   <script>
@@ -1077,7 +1077,7 @@ function navbar() {
           <path d="M9 14l3-3 3 3" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
         </svg>
       </div>
-      <span class="font-extrabold text-xl tracking-tight text-slate-800">redhawk<span class="text-red-600">-store</span></span>
+      <span class="font-extrabold text-xl tracking-tight text-slate-800">Shukly<span class="text-amber-500"> Store</span></span>
     </a>
     <div class="hidden md:flex flex-1 max-w-xl mx-4">
       <div class="relative w-full">
@@ -1213,7 +1213,7 @@ function footer() {
             <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-red-500 to-red-800 flex items-center justify-center shrink-0">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="white"/></svg>
             </div>
-            <span class="font-bold text-white text-sm">redhawk<span class="text-red-500">-store</span></span>
+            <span class="font-bold text-white text-sm">Shukly<span class="text-amber-400"> Store</span></span>
           </div>
           <p class="text-xs text-slate-500 leading-relaxed mb-3 max-w-xs">Decentralized marketplace on Arc Network — Circle's stablecoin-native L1.</p>
           <div class="flex items-center gap-3 text-xs">
@@ -1262,7 +1262,7 @@ function footer() {
 
       <!-- Bottom bar -->
       <div class="py-3 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-600">
-        <span>© 2024 redhawk-store · Built on Arc Network (Circle)</span>
+        <span>© 2024 Shukly Store · Built on Arc Network (Circle)</span>
         <div class="flex items-center gap-3 flex-wrap justify-center">
           <a href="https://github.com/julenosinger/redhawk-store" target="_blank" class="flex items-center gap-1 hover:text-white transition-colors"><i class="fab fa-github"></i> GitHub</a>
           <span class="text-slate-700">·</span>
@@ -1404,7 +1404,7 @@ function homePage() {
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="white" opacity=".95"/></svg>
             </div>
             <div>
-              <p class="home-glass-name">redhawk-store</p>
+              <p class="home-glass-name">Shukly Store</p>
               <p class="home-glass-net">On Arc Network</p>
             </div>
             <div class="home-live-badge">
@@ -1532,7 +1532,7 @@ function homePage() {
     <div class="home-how-inner">
       <div class="home-how-header">
         <p class="home-section-eyebrow" style="color:#ef4444;">PROCESS</p>
-        <h2 class="home-section-title" style="color:#fff;">How redhawk-store Works</h2>
+        <h2 class="home-section-title" style="color:#fff;">How Shukly Store Works</h2>
         <p style="color:#64748b;font-size:15px;max-width:520px;margin:0 auto;line-height:1.7;">
           A trustless escrow marketplace powered by Arc Network smart contracts.
           No intermediaries. No custodians. Just code.
@@ -1571,10 +1571,10 @@ function homePage() {
           <div class="home-about-logo-icon">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="white" opacity=".95"/></svg>
           </div>
-          <h2 class="home-about-title">About redhawk-store</h2>
+          <h2 class="home-about-title">About Shukly Store</h2>
         </div>
         <p class="home-about-body">
-          <strong>redhawk-store</strong> is a decentralized marketplace powered by
+          <strong>Shukly Store</strong> is a decentralized marketplace powered by
           <strong>Arc Network</strong> — Circle's stablecoin-native Layer 1 blockchain.
           It uses escrow smart contracts to protect every transaction: funds are locked
           on-chain until the buyer confirms delivery, then automatically released to the seller.
@@ -3100,7 +3100,7 @@ function walletPage() {
   return shell('Wallet', `
   <div class="max-w-4xl mx-auto px-4 py-8">
     <h1 class="text-3xl font-bold text-slate-800 mb-2 flex items-center gap-3">
-      <i class="fas fa-wallet text-red-500"></i> redhawk-store Wallet
+      <i class="fas fa-wallet text-red-500"></i> Shukly Store Wallet
     </h1>
     <p class="text-slate-500 mb-2">Non-custodial wallet — your keys, your funds, on Arc Network.</p>
     <div id="wallet-network-status" class="mb-6"></div>
@@ -3159,7 +3159,7 @@ function walletPage() {
         <!-- Wallet transparency notice -->
         <div class="trust-box mt-4">
           <i class="fas fa-shield-alt" style="color:#16a34a;flex-shrink:0;margin-top:1px"></i>
-          <span><strong>Your keys, your funds.</strong> redhawk-store never accesses your private keys. All transactions are signed locally in your wallet and broadcast directly to Arc Network. We have zero custody over your assets.</span>
+          <span><strong>Your keys, your funds.</strong> Shukly Store never accesses your private keys. All transactions are signed locally in your wallet and broadcast directly to Arc Network. We have zero custody over your assets.</span>
         </div>
       </div>
     </div>
@@ -3174,7 +3174,7 @@ function walletPage() {
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="white" opacity=".9"/></svg>
             </div>
             <div>
-              <p class="font-bold text-lg">redhawk-store Wallet</p>
+              <p class="font-bold text-lg">Shukly Store Wallet</p>
               <p class="text-red-200 text-xs">Arc Testnet · Chain 5042002</p>
             </div>
           </div>
@@ -3227,7 +3227,7 @@ function walletPage() {
       <!-- Wallet transparency notice (dashboard) -->
       <div class="trust-box mb-6">
         <i class="fas fa-shield-alt" style="color:#16a34a;flex-shrink:0;margin-top:1px"></i>
-        <span><strong>Your keys, your funds.</strong> redhawk-store never accesses your private keys. All transactions are signed locally in your wallet and broadcast directly to Arc Network. We have zero custody over your assets. <a href="/privacy" class="underline text-green-800 font-medium">Privacy Policy</a></span>
+        <span><strong>Your keys, your funds.</strong> Shukly Store never accesses your private keys. All transactions are signed locally in your wallet and broadcast directly to Arc Network. We have zero custody over your assets. <a href="/privacy" class="underline text-green-800 font-medium">Privacy Policy</a></span>
       </div>
 
       <!-- Real Tx History -->
@@ -3496,7 +3496,7 @@ function walletCreatePage() {
       <div class="space-y-4">
         <div>
           <label class="block text-sm font-medium text-slate-700 mb-1">Wallet Name (optional)</label>
-          <input id="wallet-name" type="text" placeholder="My redhawk-store Wallet" class="input"/>
+          <input id="wallet-name" type="text" placeholder="My Shukly Store Wallet" class="input"/>
         </div>
         <div>
           <label class="block text-sm font-medium text-slate-700 mb-1">Encryption Password *</label>
@@ -3508,7 +3508,7 @@ function walletCreatePage() {
         </div>
         <div class="card p-4 bg-blue-50 border-blue-100 text-sm text-blue-800">
           <i class="fas fa-info-circle mr-2"></i>
-          Password encrypts your wallet in <strong>your browser only</strong>. redhawk-store never sees it. Your wallet will work on Arc Testnet (Chain ID: 5042002).
+          Password encrypts your wallet in <strong>your browser only</strong>. Shukly Store never sees it. Your wallet will work on Arc Testnet (Chain ID: 5042002).
         </div>
         <button onclick="goToStep1()" class="btn-primary w-full justify-center py-3">
           <i class="fas fa-arrow-right"></i> Continue
@@ -3526,7 +3526,7 @@ function walletCreatePage() {
             <h3 class="font-bold text-red-800 text-lg mb-3">⚠️ Critical Security Notice</h3>
             <ul class="space-y-2 text-red-700 text-sm">
               <li class="flex items-start gap-2"><i class="fas fa-times-circle mt-0.5"></i><strong>NEVER</strong> share your seed phrase with anyone</li>
-              <li class="flex items-start gap-2"><i class="fas fa-times-circle mt-0.5"></i>redhawk-store will <strong>NEVER</strong> ask for your seed phrase</li>
+              <li class="flex items-start gap-2"><i class="fas fa-times-circle mt-0.5"></i>Shukly Store will <strong>NEVER</strong> ask for your seed phrase</li>
               <li class="flex items-start gap-2"><i class="fas fa-times-circle mt-0.5"></i>Loss of seed phrase = <strong>permanent loss</strong> of funds</li>
               <li class="flex items-start gap-2"><i class="fas fa-times-circle mt-0.5"></i>Screenshots of seed phrases are <strong>NOT safe</strong></li>
             </ul>
@@ -4469,7 +4469,7 @@ function orderDetailPage(id: string) {
 
 // ─── PAGE: SELL ─────────────────────────────────────────────────────────
 function sellPage() {
-  return shell('Sell on redhawk-store', `
+  return shell('Sell on Shukly Store', `
   <div class="max-w-3xl mx-auto px-4 py-8">
     <div class="text-center mb-8">
       <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-red-500 to-red-800 flex items-center justify-center text-white text-2xl mx-auto mb-4 shadow-xl">
@@ -5253,10 +5253,10 @@ function registerPage() {
           <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-red-500 to-red-800 flex items-center justify-center shadow">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="white" opacity=".9"/></svg>
           </div>
-          <span class="font-extrabold text-xl text-slate-800">redhawk<span class="text-red-600">-store</span></span>
+          <span class="font-extrabold text-xl text-slate-800">Shukly<span class="text-amber-500"> Store</span></span>
         </a>
         <h1 class="text-2xl font-extrabold text-slate-800 mb-1">Create Account</h1>
-        <p class="text-slate-500 text-sm">Join redhawk-store on Arc Network</p>
+        <p class="text-slate-500 text-sm">Join Shukly Store on Arc Network</p>
       </div>
       <div class="card p-8">
         <div class="space-y-4">
@@ -5307,10 +5307,10 @@ function loginPage() {
           <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-red-500 to-red-800 flex items-center justify-center shadow">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="white" opacity=".9"/></svg>
           </div>
-          <span class="font-extrabold text-xl text-slate-800">redhawk<span class="text-red-600">-store</span></span>
+          <span class="font-extrabold text-xl text-slate-800">Shukly<span class="text-amber-500"> Store</span></span>
         </a>
         <h1 class="text-2xl font-extrabold text-slate-800 mb-1">Welcome Back</h1>
-        <p class="text-slate-500 text-sm">Sign in to redhawk-store on Arc Network</p>
+        <p class="text-slate-500 text-sm">Sign in to Shukly Store on Arc Network</p>
       </div>
       <div class="card p-8">
         <div class="space-y-4">
@@ -5341,7 +5341,7 @@ function disputesPage() {
     <h1 class="text-3xl font-bold text-slate-800 mb-2 flex items-center gap-3">
       <i class="fas fa-gavel text-red-500"></i> Dispute Resolution
     </h1>
-    <p class="text-slate-500 mb-6">Open disputes are reviewed by redhawk-store governance. Escrow funds remain locked on Arc Network until resolved.</p>
+    <p class="text-slate-500 mb-6">Open disputes are reviewed by Shukly Store governance. Escrow funds remain locked on Arc Network until resolved.</p>
 
     <!-- Fund-lock info banner -->
     <div class="flex items-start gap-3 p-4 mb-6 rounded-xl" style="background:#fef2f2;border:1px solid #fecaca;">
@@ -5426,26 +5426,26 @@ function termsPage() {
         <div class="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center text-red-600"><i class="fas fa-file-alt"></i></div>
         <div>
           <h1>Terms of Service</h1>
-          <p class="text-slate-400 text-sm">Last updated: January 2024 · redhawk-store</p>
+          <p class="text-slate-400 text-sm">Last updated: January 2024 · Shukly Store</p>
         </div>
       </div>
 
       <div class="demo-disclaimer mb-6">
         <i class="fas fa-exclamation-circle" style="color:#d97706;flex-shrink:0"></i>
-        <span><strong>Important:</strong> redhawk-store is a testnet demonstration project. No real funds, products, or legal obligations are involved.</span>
+        <span><strong>Important:</strong> Shukly Store is a testnet demonstration project. No real funds, products, or legal obligations are involved.</span>
       </div>
 
       <h2>1. Acceptance of Terms</h2>
-      <p>By accessing or using redhawk-store ("the Platform"), you agree to be bound by these Terms of Service. If you do not agree, please do not use the Platform.</p>
+      <p>By accessing or using Shukly Store ("the Platform"), you agree to be bound by these Terms of Service. If you do not agree, please do not use the Platform.</p>
 
       <h2>2. Nature of the Platform</h2>
-      <p>redhawk-store is an open-source, decentralized marketplace demonstration running on the Arc Network testnet. It is provided for educational and testing purposes only. No real monetary transactions occur. All products listed are illustrative and not real.</p>
+      <p>Shukly Store is an open-source, decentralized marketplace demonstration running on the Arc Network testnet. It is provided for educational and testing purposes only. No real monetary transactions occur. All products listed are illustrative and not real.</p>
 
       <h2>3. Testnet Environment</h2>
-      <p>All transactions on redhawk-store are executed on Arc Testnet (Chain ID: 5042002). Testnet tokens (USDC, EURC) have no real monetary value. We are not responsible for any loss of testnet assets.</p>
+      <p>All transactions on Shukly Store are executed on Arc Testnet (Chain ID: 5042002). Testnet tokens (USDC, EURC) have no real monetary value. We are not responsible for any loss of testnet assets.</p>
 
       <h2>4. Wallet & Private Keys</h2>
-      <p>redhawk-store operates as a non-custodial platform. We do not store, collect, or have access to your private keys, seed phrases, or wallet credentials. You are solely responsible for the security of your wallet. Private keys are generated and stored exclusively in your browser.</p>
+      <p>Shukly Store operates as a non-custodial platform. We do not store, collect, or have access to your private keys, seed phrases, or wallet credentials. You are solely responsible for the security of your wallet. Private keys are generated and stored exclusively in your browser.</p>
 
       <h2>5. No Financial Advice</h2>
       <p>Nothing on this Platform constitutes financial, investment, legal, or tax advice. All content is for informational and demonstration purposes only.</p>
@@ -5462,7 +5462,7 @@ function termsPage() {
       <p>The Platform is provided "as is" without warranties of any kind. We do not guarantee uninterrupted access, accuracy of data, or fitness for a particular purpose.</p>
 
       <h2>8. Limitation of Liability</h2>
-      <p>To the maximum extent permitted by law, redhawk-store and its contributors shall not be liable for any indirect, incidental, special, or consequential damages arising from your use of the Platform.</p>
+      <p>To the maximum extent permitted by law, Shukly Store and its contributors shall not be liable for any indirect, incidental, special, or consequential damages arising from your use of the Platform.</p>
 
       <h2>9. Changes to Terms</h2>
       <p>We reserve the right to modify these Terms at any time. Continued use of the Platform after changes constitutes acceptance of the new Terms.</p>
@@ -5489,13 +5489,13 @@ function privacyPage() {
         <div class="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center text-red-600"><i class="fas fa-lock"></i></div>
         <div>
           <h1>Privacy Policy</h1>
-          <p class="text-slate-400 text-sm">Last updated: January 2024 · redhawk-store</p>
+          <p class="text-slate-400 text-sm">Last updated: January 2024 · Shukly Store</p>
         </div>
       </div>
 
       <div class="trust-box mb-6">
         <i class="fas fa-shield-alt" style="color:#16a34a;flex-shrink:0"></i>
-        <span><strong>Privacy first:</strong> redhawk-store does not collect personal data. Your wallet keys never leave your browser. We have no backend user database.</span>
+        <span><strong>Privacy first:</strong> Shukly Store does not collect personal data. Your wallet keys never leave your browser. We have no backend user database.</span>
       </div>
 
       <h2>1. Information We Do NOT Collect</h2>
@@ -5519,7 +5519,7 @@ function privacyPage() {
       <p>When you connect a wallet or execute transactions, your public wallet address and transaction data are visible on the Arc Network blockchain. Blockchain data is public by nature and cannot be deleted.</p>
 
       <h2>4. Third-Party Services</h2>
-      <p>redhawk-store may interact with the following third-party services:</p>
+      <p>Shukly Store may interact with the following third-party services:</p>
       <ul>
         <li><strong>Arc Network RPC</strong> (rpc.testnet.arc.network) — for blockchain queries</li>
         <li><strong>Arc Explorer</strong> (testnet.arcscan.app) — public blockchain explorer</li>
@@ -5534,7 +5534,7 @@ function privacyPage() {
       <p>Wallet private keys are encrypted client-side using your chosen password before being stored in localStorage. We recommend using a strong, unique password. Never share your seed phrase or private key with anyone.</p>
 
       <h2>7. Children's Privacy</h2>
-      <p>redhawk-store is not directed at children under 13. We do not knowingly collect information from children.</p>
+      <p>Shukly Store is not directed at children under 13. We do not knowingly collect information from children.</p>
 
       <h2>8. Contact</h2>
       <p>For privacy-related questions, please open an issue on our <a href="https://github.com/julenosinger/redhawk-store" target="_blank" class="text-red-600 hover:underline">GitHub repository</a>.</p>
@@ -5558,7 +5558,7 @@ function disclaimerPage() {
         <div class="w-10 h-10 rounded-xl bg-yellow-100 flex items-center justify-center text-yellow-600"><i class="fas fa-exclamation-triangle"></i></div>
         <div>
           <h1>Disclaimer</h1>
-          <p class="text-slate-400 text-sm">Last updated: January 2024 · redhawk-store</p>
+          <p class="text-slate-400 text-sm">Last updated: January 2024 · Shukly Store</p>
         </div>
       </div>
 
@@ -5568,22 +5568,22 @@ function disclaimerPage() {
       </div>
 
       <h2>General Disclaimer</h2>
-      <p>redhawk-store is an open-source, experimental decentralized application (dApp) built for demonstration and educational purposes. It is not a licensed financial service, marketplace, exchange, or business entity.</p>
+      <p>Shukly Store is an open-source, experimental decentralized application (dApp) built for demonstration and educational purposes. It is not a licensed financial service, marketplace, exchange, or business entity.</p>
 
       <h2>No Real Products</h2>
-      <p>All products displayed on redhawk-store are entirely illustrative. They do not represent real items available for purchase. No physical or digital goods are sold through this platform.</p>
+      <p>All products displayed on Shukly Store are entirely illustrative. They do not represent real items available for purchase. No physical or digital goods are sold through this platform.</p>
 
       <h2>No Real Funds</h2>
-      <p>All tokens used on redhawk-store (USDC, EURC) are testnet tokens with zero monetary value. They cannot be exchanged for real currency. Arc Testnet tokens are only for testing purposes.</p>
+      <p>All tokens used on Shukly Store (USDC, EURC) are testnet tokens with zero monetary value. They cannot be exchanged for real currency. Arc Testnet tokens are only for testing purposes.</p>
 
       <h2>Smart Contract Risk</h2>
-      <p>Smart contracts used in redhawk-store are deployed on testnet and have not undergone formal security audits. Do not interact with them using mainnet wallets or real funds.</p>
+      <p>Smart contracts used in Shukly Store are deployed on testnet and have not undergone formal security audits. Do not interact with them using mainnet wallets or real funds.</p>
 
       <h2>No Financial Advice</h2>
       <p>Nothing on this platform constitutes financial, investment, legal, or tax advice. The platform does not recommend any investment strategy or financial product.</p>
 
       <h2>Wallet Security</h2>
-      <p>You are solely responsible for the security of your wallet and any credentials you use. redhawk-store does not have access to your private keys, but your browser-stored wallet is only as secure as your device and password.</p>
+      <p>You are solely responsible for the security of your wallet and any credentials you use. Shukly Store does not have access to your private keys, but your browser-stored wallet is only as secure as your device and password.</p>
 
       <h2>Availability</h2>
       <p>This platform may be modified, suspended, or discontinued at any time without notice. It is provided on a best-effort basis with no uptime guarantees.</p>
@@ -5611,18 +5611,18 @@ function aboutPage() {
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="white" opacity=".9"/></svg>
         </div>
         <div>
-          <h1>About redhawk-store</h1>
+          <h1>About Shukly Store</h1>
           <p class="text-slate-400 text-sm">Decentralized marketplace on Arc Network</p>
         </div>
       </div>
 
       <div class="demo-disclaimer mb-6">
         <i class="fas fa-flask" style="color:#d97706;flex-shrink:0"></i>
-        <span><strong>Demo project:</strong> redhawk-store is an open-source testnet demonstration. Not a real commercial marketplace.</span>
+        <span><strong>Demo project:</strong> Shukly Store is an open-source testnet demonstration. Not a real commercial marketplace.</span>
       </div>
 
-      <h2>What is redhawk-store?</h2>
-      <p>redhawk-store is a decentralized marketplace powered by <strong>Arc Network</strong> — Circle's stablecoin-native Layer 1 blockchain. It uses escrow smart contracts to protect every transaction: buyer funds are locked on-chain until delivery is confirmed, then automatically released to the seller.</p>
+      <h2>What is Shukly Store?</h2>
+      <p>Shukly Store is a decentralized marketplace powered by <strong>Arc Network</strong> — Circle's stablecoin-native Layer 1 blockchain. It uses escrow smart contracts to protect every transaction: buyer funds are locked on-chain until delivery is confirmed, then automatically released to the seller.</p>
 
       <h2>Technology Stack</h2>
       <ul>
@@ -5647,7 +5647,7 @@ function aboutPage() {
       <p>Arc is an Economic OS for the internet built by Circle, providing enterprise-grade infrastructure for on-chain payments. It uses USDC as its native gas token, offering sub-second finality and predictable fees.</p>
 
       <h2>Open Source</h2>
-      <p>redhawk-store is open source. You can inspect, fork, and contribute to the codebase on GitHub:</p>
+      <p>Shukly Store is open source. You can inspect, fork, and contribute to the codebase on GitHub:</p>
       <p>
         <a href="https://github.com/julenosinger/redhawk-store" target="_blank" class="inline-flex items-center gap-2 text-red-600 hover:underline font-medium">
           <i class="fab fa-github"></i> github.com/julenosinger/redhawk-store

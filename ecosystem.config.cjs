@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: 'redhawk-store',
+      name: 'shukly-store',
       script: 'npx',
       args: 'wrangler pages dev dist --d1=DB --local --ip 0.0.0.0 --port 3000',
       cwd: '/home/user/webapp',
