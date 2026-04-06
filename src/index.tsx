@@ -194,9 +194,10 @@ const ARC = {
     USDC: '0x3600000000000000000000000000000000000000',
     EURC: '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a',
     Multicall3: '0xcA11bde05977b3631167028862bE2a173976CA11',
-    // ShuklyEscrow: set to the deployed contract address on Arc Testnet
-    // Deploy via /deploy-escrow page and update this address, or set SHUKLY_ESCROW_ADDRESS env var
-    ShuklyEscrow: '0x721eafa9c1e38dd7fff81d30ea1a5500b37cf658',
+    // ShuklyEscrow: verified on ArcScan (testnet.arcscan.app)
+    // Contract: ShuklyEscrow | solc 0.8.34 | optimizer: true, runs: 200 | MIT
+    // Verified: https://testnet.arcscan.app/address/0x26f290dAe5A54f68b3191C79d710e2A8C2E5A511
+    ShuklyEscrow: '0x26f290dAe5A54f68b3191C79d710e2A8C2E5A511',
   }
 }
 
@@ -365,8 +366,35 @@ app.get('/api/escrow/address', (c) => {
   return c.json({
     address: addr,
     deployed: addr !== '0x0000000000000000000000000000000000000000',
-    explorer: `${ARC.explorer}/address/${addr}`
+    verified: addr === '0x26f290dAe5A54f68b3191C79d710e2A8C2E5A511',
+    explorer: `${ARC.explorer}/address/${addr}`,
+    verified_url: `https://testnet.arcscan.app/address/${addr}`
   })
+})
+
+// ─── GET /api/escrow/abi — returns the verified ABI from ArcScan ─────────────
+app.get('/api/escrow/abi', async (c) => {
+  try {
+    const addr = (c.env as any).SHUKLY_ESCROW_ADDRESS || ARC.contracts.ShuklyEscrow
+    const resp = await fetch(`https://testnet.arcscan.app/api/v2/smart-contracts/${addr}`)
+    if (!resp.ok) throw new Error(`ArcScan API error: ${resp.status}`)
+    const data: any = await resp.json()
+    return c.json({
+      address: addr,
+      abi: data.abi,
+      name: data.name,
+      compiler_version: data.compiler_version,
+      optimization_enabled: data.optimization_enabled,
+      optimization_runs: data.optimization_runs,
+      license_type: data.license_type,
+      is_verified: data.is_verified,
+      is_fully_verified: data.is_fully_verified,
+      verified_at: data.verified_at,
+      explorer_url: `https://testnet.arcscan.app/address/${addr}`
+    })
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500)
+  }
 })
 
 // ─── POST /api/escrow/save-address — saves deployed contract address ─────────
@@ -5679,9 +5707,45 @@ function deployEscrowPage() {
   return shell('Deploy ShuklyEscrow', `
   <div class="max-w-2xl mx-auto px-4 py-8">
     <h1 class="text-3xl font-bold text-slate-800 mb-2 flex items-center gap-3">
-      <i class="fas fa-code text-red-500"></i> Deploy ShuklyEscrow
+      <i class="fas fa-code text-red-500"></i> ShuklyEscrow Contract
     </h1>
-    <p class="text-slate-500 mb-6">Deploy the escrow smart contract to Arc Testnet using your MetaMask wallet. Only needed once — the address is saved in your browser.</p>
+    <p class="text-slate-500 mb-6">The ShuklyEscrow contract is deployed and <strong>fully verified</strong> on Arc Testnet.</p>
+
+    <!-- Verified Contract Banner -->
+    <div class="card p-4 mb-6 bg-green-50 border border-green-200">
+      <div class="flex items-start gap-3">
+        <i class="fas fa-check-circle text-green-600 text-xl mt-0.5 shrink-0"></i>
+        <div class="flex-1">
+          <p class="font-semibold text-green-800 text-sm">Contract Source Code Verified ✅</p>
+          <p class="text-green-700 text-xs mt-1 font-mono break-all">0x26f290dAe5A54f68b3191C79d710e2A8C2E5A511</p>
+          <div class="flex flex-wrap gap-2 mt-2">
+            <a href="https://testnet.arcscan.app/address/0x26f290dAe5A54f68b3191C79d710e2A8C2E5A511" target="_blank"
+               class="text-xs bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 transition-colors">
+              <i class="fas fa-external-link-alt mr-1"></i> View on ArcScan
+            </a>
+            <a href="https://testnet.arcscan.app/address/0x26f290dAe5A54f68b3191C79d710e2A8C2E5A511?tab=read_contract" target="_blank"
+               class="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 transition-colors">
+              <i class="fas fa-book-open mr-1"></i> Read Contract
+            </a>
+            <a href="https://testnet.arcscan.app/address/0x26f290dAe5A54f68b3191C79d710e2A8C2E5A511?tab=write_contract" target="_blank"
+               class="text-xs bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700 transition-colors">
+              <i class="fas fa-pen mr-1"></i> Write Contract
+            </a>
+            <a href="/api/escrow/abi" target="_blank"
+               class="text-xs bg-slate-600 text-white px-3 py-1 rounded hover:bg-slate-700 transition-colors">
+              <i class="fas fa-code mr-1"></i> ABI (JSON)
+            </a>
+          </div>
+          <div class="mt-3 text-xs text-green-700 space-y-0.5">
+            <p><strong>Compiler:</strong> solc v0.8.34+commit.80d5c536</p>
+            <p><strong>Optimization:</strong> Enabled — 200 runs</p>
+            <p><strong>License:</strong> MIT</p>
+            <p><strong>Not a proxy</strong> — direct implementation contract</p>
+            <p><strong>No constructor arguments</strong></p>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div class="card p-6 mb-6">
       <h2 class="font-bold text-slate-800 mb-3 flex items-center gap-2"><i class="fas fa-info-circle text-blue-500"></i> Pre-requisites</h2>
@@ -5705,7 +5769,7 @@ function deployEscrowPage() {
       <div class="mt-4 border-t pt-4">
         <p class="text-xs text-slate-500 mb-2">Already have a deployed contract? Set the address manually:</p>
         <div class="flex gap-2">
-          <input id="manual-addr-input" type="text" class="input text-xs flex-1" placeholder="0x721eafa9c1e38dd7fff81d30ea1a5500b37cf658" value="0x721eafa9c1e38dd7fff81d30ea1a5500b37cf658"/>
+          <input id="manual-addr-input" type="text" class="input text-xs flex-1" placeholder="0x26f290dAe5A54f68b3191C79d710e2A8C2E5A511" value="0x26f290dAe5A54f68b3191C79d710e2A8C2E5A511"/>
           <button onclick="setManualAddr()" class="btn-secondary text-xs px-3 py-2 whitespace-nowrap">Set Address</button>
         </div>
       </div>
