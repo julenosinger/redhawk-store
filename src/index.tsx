@@ -57,8 +57,9 @@ const ARC = {
     USDC: '0x3600000000000000000000000000000000000000',
     EURC: '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a',
     Multicall3: '0xcA11bde05977b3631167028862bE2a173976CA11',
-    Permit2: '0x000000000022D473030F116dDEE9F6B43aC78BA3',
-    FxEscrow: '0x867650F5eAe8df91445971f14d89fd84F0C9a9f8',
+    // ShuklyEscrow: deployed via /deploy-escrow page using owner wallet
+    // Set SHUKLY_ESCROW_ADDRESS env var or deploy via the admin page
+    ShuklyEscrow: '0x0000000000000000000000000000000000000000',
   }
 }
 
@@ -199,217 +200,58 @@ app.get('/api/stats', (c) => {
   })
 })
 
-// Create order — stores metadata returned after recordTrade on-chain
+// ─── POST /api/orders — save order metadata after on-chain escrow tx ────────
+// Called by frontend AFTER createEscrow + fundEscrow are confirmed on-chain.
+// txHash must be a real 0x... hash — never a placeholder.
 app.post('/api/orders', async (c) => {
-  const body = await c.req.json()
+  const body = await c.req.json() as any
   if (!body.txHash || !body.buyerAddress || !body.sellerAddress) {
     return c.json({ error: 'Missing required fields: txHash, buyerAddress, sellerAddress' }, 400)
   }
+  // Reject fake placeholder hashes
+  if (body.txHash.startsWith('PENDING_') || body.txHash === '0x') {
+    return c.json({ error: 'Invalid txHash — must be a real on-chain transaction hash' }, 400)
+  }
+  const escrowAddr = (c.env as any).SHUKLY_ESCROW_ADDRESS || ARC.contracts.ShuklyEscrow
   const order = {
-    id: body.orderId || `ORD-${Date.now()}`,
-    txHash: body.txHash,
-    escrowTradeId: body.escrowTradeId || null,   // on-chain FxEscrow trade ID
-    buyerAddress: body.buyerAddress,
-    sellerAddress: body.sellerAddress,
-    escrowContract: ARC.contracts.FxEscrow,       // always the escrow contract
-    amount: body.amount,
-    token: body.token,
-    productId: body.productId,
-    status: 'escrow_locked',
-    createdAt: new Date().toISOString(),
-    explorerUrl: `${ARC.explorer}/tx/${body.txHash}`
+    id:              body.orderId || `ORD-${Date.now()}`,
+    txHash:          body.txHash,
+    fundTxHash:      body.fundTxHash   || null,    // fundEscrow tx hash
+    buyerAddress:    body.buyerAddress,
+    sellerAddress:   body.sellerAddress,
+    escrowContract:  escrowAddr,                   // always ShuklyEscrow address
+    orderId32:       body.orderId32    || null,     // bytes32 used on-chain
+    amount:          body.amount,
+    token:           body.token,
+    productId:       body.productId,
+    items:           body.items        || [],
+    status:          'escrow_locked',
+    createdAt:       new Date().toISOString(),
+    explorerUrl:     `${ARC.explorer}/tx/${body.fundTxHash || body.txHash}`
   }
   return c.json({ order, success: true })
 })
 
-// ─── Escrow: Relayer — record trade on FxEscrow ───────────────────────────
-// POST /api/escrow/record-trade
-// Body: { buyerAddress, sellerAddress, tokenAddress, amountWei (string),
-//         quoteId (bytes32 hex), maturity (unix ts), takerPermit, takerSig,
-//         makerPermit, makerSig, orderId }
-// The server acts as the authorised relayer and sends recordTrade() to the contract.
-app.post('/api/escrow/record-trade', async (c) => {
-  try {
-    const body = await c.req.json() as any
-
-    // ── Validate required fields
-    const required = ['buyerAddress','sellerAddress','tokenAddress','amountWei',
-                      'quoteId','maturity','takerPermit','takerSig',
-                      'makerPermit','makerSig']
-    for (const f of required) {
-      if (!body[f]) return c.json({ error: `Missing field: ${f}` }, 400)
-    }
-
-    // ── Build relayer wallet from env secret RELAYER_PRIVATE_KEY
-    const relayerKey: string = (c.env as any).RELAYER_PRIVATE_KEY || ''
-    if (!relayerKey || relayerKey.length < 60) {
-      // No relayer key configured — return error with instructions
-      return c.json({
-        error: 'RELAYER_NOT_CONFIGURED',
-        message: 'The relayer private key is not set. Add RELAYER_PRIVATE_KEY as a Cloudflare secret.',
-        fallback: true
-      }, 503)
-    }
-
-    // Dynamic import of ethers (available in Cloudflare Workers via compat flag)
-    const { ethers } = await import('ethers')
-
-    const provider = new ethers.JsonRpcProvider(ARC.rpc)
-    const relayer  = new ethers.Wallet(relayerKey, provider)
-
-    // ── FxEscrow ABI (minimal — only what the relayer calls)
-    const FXESCROW_ABI = [
-      `function recordTrade(
-        address taker,
-        tuple(
-          tuple(address token, uint256 amount) permitted,
-          uint256 nonce,
-          uint256 deadline,
-          tuple(
-            tuple(bytes32 quoteId, address base, address quote,
-                  uint256 baseAmount, uint256 quoteAmount, uint256 maturity) consideration,
-            address recipient,
-            uint256 fee
-          ) witness,
-          bytes signature
-        ) takerPermit,
-        address maker,
-        tuple(
-          tuple(address token, uint256 amount) permitted,
-          uint256 nonce,
-          uint256 deadline,
-          tuple(uint256 fee) witness,
-          bytes signature
-        ) makerPermit
-      ) returns (uint256 id)`,
-      'function lastTradeId() view returns (uint256)'
-    ]
-
-    const escrow = new ethers.Contract(ARC.contracts.FxEscrow, FXESCROW_ABI, relayer)
-
-    // ── Reconstruct takerPermit tuple from body
-    const takerPermit = {
-      permitted: {
-        token:  body.takerPermit.permitted.token,
-        amount: BigInt(body.takerPermit.permitted.amount)
-      },
-      nonce:    BigInt(body.takerPermit.nonce),
-      deadline: BigInt(body.takerPermit.deadline),
-      witness: {
-        consideration: {
-          quoteId:     body.takerPermit.witness.consideration.quoteId,
-          base:        body.takerPermit.witness.consideration.base,
-          quote:       body.takerPermit.witness.consideration.quote,
-          baseAmount:  BigInt(body.takerPermit.witness.consideration.baseAmount),
-          quoteAmount: BigInt(body.takerPermit.witness.consideration.quoteAmount),
-          maturity:    BigInt(body.takerPermit.witness.consideration.maturity)
-        },
-        recipient: body.takerPermit.witness.recipient,
-        fee:       BigInt(body.takerPermit.witness.fee)
-      },
-      signature: body.takerSig
-    }
-
-    // ── Reconstruct makerPermit tuple from body
-    const makerPermit = {
-      permitted: {
-        token:  body.makerPermit.permitted.token,
-        amount: BigInt(body.makerPermit.permitted.amount)
-      },
-      nonce:    BigInt(body.makerPermit.nonce),
-      deadline: BigInt(body.makerPermit.deadline),
-      witness: {
-        fee: BigInt(body.makerPermit.witness.fee)
-      },
-      signature: body.makerSig
-    }
-
-    // ── Send recordTrade as relayer
-    const tx = await escrow.recordTrade(
-      body.buyerAddress,
-      takerPermit,
-      body.sellerAddress,
-      makerPermit
-    )
-    const receipt = await tx.wait(1)
-    const tradeId = (await escrow.lastTradeId()).toString()
-
-    return c.json({
-      success: true,
-      txHash: tx.hash,
-      escrowTradeId: tradeId,
-      explorerUrl: `${ARC.explorer}/tx/${tx.hash}`
-    })
-
-  } catch (err: any) {
-    console.error('[escrow/record-trade]', err)
-    return c.json({
-      error: 'RELAYER_TX_FAILED',
-      message: err.shortMessage || err.message || 'Unknown error',
-      fallback: true
-    }, 500)
-  }
+// ─── GET /api/escrow/address — returns the deployed ShuklyEscrow address ─────
+app.get('/api/escrow/address', (c) => {
+  const addr = (c.env as any).SHUKLY_ESCROW_ADDRESS || ARC.contracts.ShuklyEscrow
+  return c.json({
+    address: addr,
+    deployed: addr !== '0x0000000000000000000000000000000000000000',
+    explorer: `${ARC.explorer}/address/${addr}`
+  })
 })
 
-// ─── Escrow: Relayer — deliver funds (taker or maker) ────────────────────
-// POST /api/escrow/deliver
-// Body: { role: 'taker'|'maker', tradeId, permitTransferFrom, signature }
-app.post('/api/escrow/deliver', async (c) => {
-  try {
-    const body = await c.req.json() as any
-    if (!body.role || !body.tradeId || !body.permit || !body.signature) {
-      return c.json({ error: 'Missing fields: role, tradeId, permit, signature' }, 400)
-    }
-
-    const relayerKey: string = (c.env as any).RELAYER_PRIVATE_KEY || ''
-    if (!relayerKey || relayerKey.length < 60) {
-      return c.json({ error: 'RELAYER_NOT_CONFIGURED', fallback: true }, 503)
-    }
-
-    const { ethers } = await import('ethers')
-    const provider = new ethers.JsonRpcProvider(ARC.rpc)
-    const relayer  = new ethers.Wallet(relayerKey, provider)
-
-    const DELIVER_ABI = [
-      `function takerDeliver(
-         uint256 id,
-         tuple(tuple(address token, uint256 amount) permitted, uint256 nonce, uint256 deadline) permit,
-         bytes signature
-       )`,
-      `function makerDeliver(
-         uint256 id,
-         tuple(tuple(address token, uint256 amount) permitted, uint256 nonce, uint256 deadline) permit,
-         bytes signature
-       )`
-    ]
-    const escrow = new ethers.Contract(ARC.contracts.FxEscrow, DELIVER_ABI, relayer)
-
-    const permit = {
-      permitted: {
-        token:  body.permit.permitted.token,
-        amount: BigInt(body.permit.permitted.amount)
-      },
-      nonce:    BigInt(body.permit.nonce),
-      deadline: BigInt(body.permit.deadline)
-    }
-
-    const fn   = body.role === 'taker' ? 'takerDeliver' : 'makerDeliver'
-    const tx   = await (escrow as any)[fn](BigInt(body.tradeId), permit, body.signature)
-    await tx.wait(1)
-
-    return c.json({
-      success: true,
-      txHash: tx.hash,
-      explorerUrl: `${ARC.explorer}/tx/${tx.hash}`
-    })
-
-  } catch (err: any) {
-    console.error('[escrow/deliver]', err)
-    return c.json({
-      error: 'DELIVER_TX_FAILED',
-      message: err.shortMessage || err.message || 'Unknown error'
-    }, 500)
+// ─── POST /api/escrow/save-address — saves deployed contract address ─────────
+// Called from /deploy-escrow page after owner deploys the contract via MetaMask.
+app.post('/api/escrow/save-address', async (c) => {
+  const body = await c.req.json() as any
+  if (!body.address || !body.address.startsWith('0x') || body.address.length !== 42) {
+    return c.json({ error: 'Invalid address' }, 400)
   }
+  // In production, this should persist to KV or D1.
+  // For now we return the address so the frontend can store it in localStorage.
+  return c.json({ success: true, address: body.address, message: 'Store SHUKLY_ESCROW_ADDRESS as a Cloudflare secret to persist across deployments.' })
 })
 
 // AI search: returns empty state since no real products exist yet
@@ -454,6 +296,7 @@ app.get('/terms', (c) => c.html(termsPage()))
 app.get('/privacy', (c) => c.html(privacyPage()))
 app.get('/disclaimer', (c) => c.html(disclaimerPage()))
 app.get('/about', (c) => c.html(aboutPage()))
+app.get('/deploy-escrow', (c) => c.html(deployEscrowPage()))
 
 export default app
 
@@ -617,8 +460,13 @@ const ARC_RPC = window.ARC.rpc;
 const ARC_EXPLORER = window.ARC.explorer;
 const USDC_ADDRESS = window.ARC.contracts.USDC;
 const EURC_ADDRESS = window.ARC.contracts.EURC;
-const PERMIT2_ADDRESS = window.ARC.contracts.Permit2;
-const FXESCROW_ADDRESS = window.ARC.contracts.FxEscrow;
+
+// ShuklyEscrow address — loaded from localStorage (set after deploy) or ARC config
+function getEscrowAddress() {
+  return localStorage.getItem('shukly_escrow_address')
+      || window.ARC.contracts.ShuklyEscrow
+      || '0x0000000000000000000000000000000000000000';
+}
 
 // Minimal ERC-20 ABI for balanceOf + approve + allowance
 const ERC20_ABI = [
@@ -630,18 +478,25 @@ const ERC20_ABI = [
   'function allowance(address owner, address spender) view returns (uint256)'
 ];
 
-// ─── Permit2 ABI (minimal: nonceBitmap + nonces for witness transfers) ───
-const PERMIT2_ABI = [
-  'function nonceBitmap(address owner, uint256 wordPos) view returns (uint256)',
-  'function allowance(address owner, address token, address spender) view returns (uint160 amount, uint48 expiration, uint48 nonce)',
-  'function approve(address token, address spender, uint160 amount, uint48 expiration)'
-];
-
-// ─── FxEscrow ABI (view + deliver functions callable by taker/maker) ────
-const FXESCROW_ABI = [
-  'function lastTradeId() view returns (uint256)',
-  'function getTradeDetails(uint256 id) view returns (tuple(address base, address quote, address taker, address maker, address recipient, uint256 baseAmount, uint256 quoteAmount, uint256 takerFee, uint256 makerFee, uint256 takerRiskBuffer, uint256 makerRiskBuffer, uint256 maturity, uint8 status, uint8 takerFundingStatus, uint8 makerFundingStatus))',
-  'function trades(uint256) view returns (address base, address quote, address taker, address maker, address recipient, uint256 baseAmount, uint256 quoteAmount, uint256 takerFee, uint256 makerFee, uint256 takerRiskBuffer, uint256 makerRiskBuffer, uint256 maturity, uint8 status, uint8 takerFundingStatus, uint8 makerFundingStatus)'
+// ─── ShuklyEscrow ABI — direct wallet calls (no relayer) ────────────────
+// States: 0=EMPTY, 1=FUNDED, 2=CONFIRMED, 3=RELEASED, 4=REFUNDED, 5=DISPUTED
+const ESCROW_ABI = [
+  'function createEscrow(bytes32 orderId, address seller, address token, uint256 amount) external',
+  'function fundEscrow(bytes32 orderId) external',
+  'function confirmDelivery(bytes32 orderId) external',
+  'function releaseFunds(bytes32 orderId) external',
+  'function refund(bytes32 orderId) external',
+  'function openDispute(bytes32 orderId) external',
+  'function getEscrow(bytes32 orderId) external view returns (address buyer, address seller, address token, uint256 amount, uint8 state, uint256 createdAt)',
+  'function escrows(bytes32) external view returns (address buyer, address seller, address token, uint256 amount, uint8 state, uint256 createdAt)',
+  'function owner() external view returns (address)',
+  'function feeBps() external view returns (uint256)',
+  'event EscrowCreated(bytes32 indexed orderId, address indexed buyer, address indexed seller, address token, uint256 amount)',
+  'event EscrowFunded(bytes32 indexed orderId, address indexed buyer, uint256 amount)',
+  'event DeliveryConfirmed(bytes32 indexed orderId, address indexed buyer)',
+  'event FundsReleased(bytes32 indexed orderId, address indexed seller, uint256 amount)',
+  'event EscrowRefunded(bytes32 indexed orderId, address indexed buyer, uint256 amount)',
+  'event DisputeOpened(bytes32 indexed orderId, address indexed opener)'
 ];
 
 // ─ Toast ──────────────────────────────────────────────────────
@@ -2689,10 +2544,10 @@ function checkoutPage() {
           <i class="fas fa-lock mr-2"></i> Confirm & Lock Funds
         </button>
         <div class="mt-3 p-3 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-800 space-y-1">
-          <p class="font-semibold flex items-center gap-1"><i class="fas fa-info-circle"></i> 3-step escrow process</p>
-          <p><span class="font-medium">Step 1:</span> Approve Permit2 to spend your tokens (once per token)</p>
-          <p><span class="font-medium">Step 2:</span> Sign the escrow permit (off-chain, no gas)</p>
-          <p><span class="font-medium">Step 3:</span> Relayer locks funds in FxEscrow contract — "to" address = escrow, never seller</p>
+          <p class="font-semibold flex items-center gap-1"><i class="fas fa-info-circle"></i> 3-step on-chain escrow</p>
+          <p><span class="font-medium">Step 1:</span> Approve ShuklyEscrow to spend your tokens (one-time)</p>
+          <p><span class="font-medium">Step 2:</span> Create escrow slot on-chain (<code>createEscrow</code>)</p>
+          <p><span class="font-medium">Step 3:</span> Lock funds in escrow (<code>fundEscrow</code>) — "to" = escrow contract, never seller</p>
         </div>
       </div>
     </div>
@@ -2738,23 +2593,21 @@ function checkoutPage() {
   });
 
   // ════════════════════════════════════════════════════════════════════
-  //  confirmOrder — funds flow ONLY through FxEscrow contract
+  //  confirmOrder — Direct ShuklyEscrow contract calls (no relayer)
   //
   //  Flow:
-  //   1. Buyer signs ERC-20 approve(Permit2, amount)          [on-chain tx]
-  //   2. Buyer signs Permit2 WitnessTransferFrom (EIP-712)    [off-chain sig]
-  //   3. POST /api/escrow/record-trade  (server calls recordTrade)
-  //      → FxEscrow pulls tokens from buyer into escrow contract
-  //   4. Order saved with status = 'escrow_locked'
-  //      txHash = escrow contract tx, "to" = FxEscrow address
+  //   1. buyer approves ShuklyEscrow to spend tokens   [on-chain tx]
+  //   2. buyer calls createEscrow(orderId32, seller, token, amount)  [on-chain tx]
+  //   3. buyer calls fundEscrow(orderId32)              [on-chain tx — pulls tokens]
   //
-  //  NEVER sends tokens directly to seller address.
+  //  "to" address = ShuklyEscrow contract (never the seller directly).
+  //  Tokens locked in escrow until confirmDelivery + releaseFunds.
   // ════════════════════════════════════════════════════════════════════
   async function confirmOrder(){
     const w=getStoredWallet();
     if(!w){showToast('Connect a wallet first','error');window.location.href='/wallet';return;}
 
-    // Ensure Arc Testnet for MetaMask
+    // ── Ensure Arc Testnet ─────────────────────────────────────────
     if(w.type==='metamask' && window.ethereum){
       const onArc=await isOnArcNetwork();
       if(!onArc){
@@ -2767,13 +2620,18 @@ function checkoutPage() {
     const cart=getCart();
     if(!cart.length){showToast('Cart is empty','error');return;}
 
-    const total=cart.reduce((s,i)=>s+(parseFloat(i.price)||0)*((i.quantity||i.qty)||1),0);
-    const token=document.querySelector('input[name="token"]:checked')?.value||'USDC';
-    const tokenAddress = token==='USDC' ? window.ARC.contracts.USDC : window.ARC.contracts.EURC;
-    const escrowAddress = window.ARC.contracts.FxEscrow;
-    const permit2Address = window.ARC.contracts.Permit2;
+    // ── Validate escrow contract is deployed ───────────────────────
+    const escrowAddress = getEscrowAddress();
+    if(!escrowAddress || escrowAddress === '0x0000000000000000000000000000000000000000'){
+      showToast('Escrow contract not deployed yet. Visit /deploy-escrow to deploy it.','error');
+      return;
+    }
 
-    // ── Resolve seller address ──────────────────────────────────────
+    const total   = cart.reduce((s,i)=>s+(parseFloat(i.price)||0)*((i.quantity||i.qty)||1),0);
+    const token   = document.querySelector('input[name="token"]:checked')?.value||'USDC';
+    const tokenAddress = token==='USDC' ? window.ARC.contracts.USDC : window.ARC.contracts.EURC;
+
+    // ── Resolve seller address ─────────────────────────────────────
     let sellerAddress = '0x0000000000000000000000000000000000000000';
     try {
       const pid = cart[0]?.id;
@@ -2786,46 +2644,35 @@ function checkoutPage() {
       }
     } catch(e){}
 
-    // ── Self-purchase guard ─────────────────────────────────────────
-    if(sellerAddress && sellerAddress !== '0x0000000000000000000000000000000000000000' &&
-       w.address.toLowerCase() === sellerAddress.toLowerCase()){
-      showToast('You cannot purchase your own product','error');
-      return;
+    if(!sellerAddress || sellerAddress === '0x0000000000000000000000000000000000000000'){
+      showToast('Could not resolve seller address','error'); return;
+    }
+    if(w.address.toLowerCase() === sellerAddress.toLowerCase()){
+      showToast('You cannot purchase your own product','error'); return;
     }
 
-    // ── Show confirmation modal ─────────────────────────────────────
+    // ── Show confirmation modal ────────────────────────────────────
     const confirmResult = await showTxConfirmModal({
-      action: 'Lock Funds in Escrow',
-      amount: total.toFixed(2),
-      token: token,
+      action:  'Lock Funds in Escrow',
+      amount:  total.toFixed(2),
+      token:   token,
       network: 'Arc Testnet (Chain ID: 5042002)',
-      note: 'Funds go to the FxEscrow contract — released only after delivery confirmation.'
+      note:    'Funds go to the ShuklyEscrow contract — released only after delivery confirmation.\n"to" address = escrow contract, NOT the seller.'
     });
     if(!confirmResult){showToast('Transaction cancelled','info');return;}
 
     const btn=document.getElementById('co-confirm-btn');
     if(btn){btn.disabled=true;btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Waiting for wallet…';}
 
-    // ── Build amounts ───────────────────────────────────────────────
-    const totalRounded = Math.round(total * 1_000_000) / 1_000_000;
-    const amountStr    = totalRounded.toFixed(6);
-    const amountWei    = ethers.parseUnits(amountStr, 6);   // 6 decimals for USDC/EURC
+    // ── Build amounts ─────────────────────────────────────────────
+    const amountStr = (Math.round(total * 1_000_000) / 1_000_000).toFixed(6);
+    const amountWei = ethers.parseUnits(amountStr, 6);   // 6 decimals USDC/EURC
 
-    // Platform fee = 0.1% of amount (goes to feeRecipient, stays in escrow accounting)
-    const feeBps   = 10n;    // 10 basis points = 0.1%
-    const feeWei   = (amountWei * feeBps) / 10000n;
+    // ── Generate orderId as bytes32 ────────────────────────────────
+    const orderId     = 'ORD-'+Date.now()+'-'+Math.random().toString(36).slice(2,7);
+    const orderId32   = ethers.id(orderId);   // keccak256 → bytes32
 
-    // Nonce: use current timestamp in ms (must be unused in Permit2 nonce bitmap)
-    const nonce    = BigInt(Date.now());
-    const deadline = BigInt(Math.floor(Date.now()/1000) + 3600); // 1 hour
-
-    // ── quoteId: keccak256 of orderId ──────────────────────────────
-    const orderId  = 'ORD-'+Date.now();
-    const quoteId  = ethers.keccak256(ethers.toUtf8Bytes(orderId));
-
-    // Maturity: settlement deadline = now + 30 days
-    const maturity = BigInt(Math.floor(Date.now()/1000) + 30*24*3600);
-
+    // ── Get signer ────────────────────────────────────────────────
     let provider, signer;
     try {
       if(w.type==='metamask' && window.ethereum){
@@ -2845,28 +2692,34 @@ function checkoutPage() {
       return;
     }
 
-    // ── STEP 1: ERC-20 approve(Permit2, amount) ────────────────────
-    // Permit2 needs allowance to pull tokens on behalf of the buyer.
-    // Check existing allowance first to avoid unnecessary transactions.
+    const erc20Contract   = new ethers.Contract(tokenAddress,  ERC20_ABI,  signer);
+    const escrowContract  = new ethers.Contract(escrowAddress, ESCROW_ABI, signer);
+
+    // ═══════════════════════════════════════════════════════════
+    //  STEP 1: ERC-20 approve(ShuklyEscrow, amount)
+    //  "to" = token contract (USDC or EURC)
+    // ═══════════════════════════════════════════════════════════
+    let approveTxHash = null;
     try {
-      if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 1/3 — Approve Permit2…';
-      showToast('Step 1/3: Approving Permit2 to spend '+token+'…','info');
+      if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 1/3 — Approve escrow…';
+      showToast('Step 1/3: Approve ShuklyEscrow to spend '+token+'…','info');
 
-      const erc20 = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
-      const currentAllowance = await erc20.allowance(w.address, permit2Address);
-
+      const currentAllowance = await erc20Contract.allowance(w.address, escrowAddress);
       if(currentAllowance < amountWei){
-        // Approve max uint256 so future orders don't need re-approval
-        const MAX = ethers.MaxUint256;
-        const approveTx = await erc20.approve(permit2Address, MAX);
-        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 1/3 — Confirming approval…';
-        await approveTx.wait(1);
-        showToast('Permit2 approved ✓','success');
+        const approveTx = await erc20Contract.approve(escrowAddress, ethers.MaxUint256);
+        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 1/3 — Waiting for approval…';
+        showToast('Approval sent. Waiting for confirmation…','info');
+        const approveReceipt = await approveTx.wait(1);
+        if(!approveReceipt || approveReceipt.status === 0){
+          throw new Error('Approval transaction reverted on-chain');
+        }
+        approveTxHash = approveTx.hash;
+        showToast('Approved! Tx: '+approveTx.hash.slice(0,14)+'…','success');
       } else {
-        showToast('Permit2 already approved ✓','success');
+        showToast('Allowance already sufficient ✓','success');
       }
     } catch(err){
-      const msg = err.code==='ACTION_REJECTED'||err.code===4001
+      const msg = (err.code==='ACTION_REJECTED'||err.code===4001)
         ? 'Approval rejected by user'
         : 'Approval error: '+(err.shortMessage||err.message||'');
       showToast(msg,'error');
@@ -2874,222 +2727,119 @@ function checkoutPage() {
       return;
     }
 
-    // ── STEP 2: Sign Permit2 WitnessTransferFrom (EIP-712) ─────────
-    // The buyer signs an off-chain message authorising FxEscrow to pull
-    // exactly [amountWei] tokens. No on-chain transaction is needed here.
-    //
-    // Witness type (matches FxEscrow SINGLE_TRADE_WITNESS_TYPE suffix):
-    //   TakerDetails(Consideration consideration,address recipient,uint256 fee)
-    //   Consideration(bytes32 quoteId,address base,address quote,
-    //                 uint256 baseAmount,uint256 quoteAmount,uint256 maturity)
-    let takerSig;
+    // ═══════════════════════════════════════════════════════════
+    //  STEP 2: createEscrow(orderId32, seller, token, amount)
+    //  "to" = ShuklyEscrow contract
+    // ═══════════════════════════════════════════════════════════
+    let createTxHash = null;
     try {
-      if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 2/3 — Sign escrow permit…';
-      showToast('Step 2/3: Sign the escrow permit in your wallet…','info');
+      if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 2/3 — Creating escrow…';
+      showToast('Step 2/3: Creating escrow slot on-chain…','info');
 
-      // EIP-712 domain = Permit2 contract (chain-specific domain separator)
-      const domain = {
-        name: 'Permit2',
-        chainId: window.ARC.chainId,
-        verifyingContract: permit2Address
-      };
+      const createTx = await escrowContract.createEscrow(
+        orderId32,
+        sellerAddress,
+        tokenAddress,
+        amountWei
+      );
+      if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 2/3 — Waiting for confirmation…';
+      showToast('createEscrow sent: '+createTx.hash.slice(0,14)+'… Waiting…','info');
 
-      // Witness type definitions (alphabetically ordered per EIP-712)
-      const takerTypes = {
-        PermitWitnessTransferFrom: [
-          { name: 'permitted', type: 'TokenPermissions' },
-          { name: 'spender',   type: 'address' },
-          { name: 'nonce',     type: 'uint256' },
-          { name: 'deadline',  type: 'uint256' },
-          { name: 'witness',   type: 'TakerDetails' }
-        ],
-        TokenPermissions: [
-          { name: 'token',  type: 'address' },
-          { name: 'amount', type: 'uint256' }
-        ],
-        TakerDetails: [
-          { name: 'consideration', type: 'Consideration' },
-          { name: 'recipient',     type: 'address' },
-          { name: 'fee',           type: 'uint256' }
-        ],
-        Consideration: [
-          { name: 'quoteId',     type: 'bytes32' },
-          { name: 'base',        type: 'address' },
-          { name: 'quote',       type: 'address' },
-          { name: 'baseAmount',  type: 'uint256' },
-          { name: 'quoteAmount', type: 'uint256' },
-          { name: 'maturity',    type: 'uint256' }
-        ]
-      };
-
-      const takerValue = {
-        permitted: { token: tokenAddress, amount: amountWei.toString() },
-        spender:   escrowAddress,
-        nonce:     nonce.toString(),
-        deadline:  deadline.toString(),
-        witness: {
-          consideration: {
-            quoteId,
-            base:        tokenAddress,    // buyer pays base token
-            quote:       tokenAddress,    // seller receives same token (single-currency)
-            baseAmount:  amountWei.toString(),
-            quoteAmount: amountWei.toString(),
-            maturity:    maturity.toString()
-          },
-          recipient: sellerAddress,       // funds go to seller after release
-          fee:       feeWei.toString()
-        }
-      };
-
-      takerSig = await signer.signTypedData(domain, takerTypes, takerValue);
-      showToast('Escrow permit signed ✓','success');
+      const createReceipt = await createTx.wait(1);
+      if(!createReceipt || createReceipt.status === 0){
+        throw new Error('createEscrow transaction reverted — check contract address and inputs');
+      }
+      createTxHash = createTx.hash;
+      showToast('Escrow slot created! Tx: '+createTx.hash.slice(0,14)+'…','success');
     } catch(err){
-      const msg = err.code==='ACTION_REJECTED'||err.code===4001
-        ? 'Permit signature rejected by user'
-        : 'Signing error: '+(err.shortMessage||err.message||'');
+      const msg = (err.code==='ACTION_REJECTED'||err.code===4001)
+        ? 'createEscrow rejected by user'
+        : 'createEscrow error: '+(err.shortMessage||err.message||'');
       showToast(msg,'error');
       if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-lock mr-2"></i>Confirm & Lock Funds';}
       return;
     }
 
-    // ── STEP 3: POST to relayer → recordTrade on FxEscrow ──────────
-    // Server calls recordTrade() with both permits; FxEscrow pulls tokens
-    // from buyer into the escrow contract. "to" address = escrow contract.
-    let txHash, escrowTradeId;
+    // ═══════════════════════════════════════════════════════════
+    //  STEP 3: fundEscrow(orderId32)
+    //  "to" = ShuklyEscrow contract — pulls tokens from buyer → escrow
+    // ═══════════════════════════════════════════════════════════
+    let fundTxHash = null;
     try {
-      if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 3/3 — Locking funds in escrow…';
-      showToast('Step 3/3: Submitting to escrow contract…','info');
+      if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 3/3 — Locking funds…';
+      showToast('Step 3/3: Locking funds in escrow contract…','info');
 
-      const takerPermitPayload = {
-        permitted: { token: tokenAddress, amount: amountWei.toString() },
-        nonce:     nonce.toString(),
-        deadline:  deadline.toString(),
-        witness: {
-          consideration: {
-            quoteId,
-            base:        tokenAddress,
-            quote:       tokenAddress,
-            baseAmount:  amountWei.toString(),
-            quoteAmount: amountWei.toString(),
-            maturity:    maturity.toString()
-          },
-          recipient: sellerAddress,
-          fee:       feeWei.toString()
-        }
-      };
+      const fundTx = await escrowContract.fundEscrow(orderId32);
+      if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 3/3 — Waiting for confirmation…';
+      showToast('fundEscrow sent: '+fundTx.hash.slice(0,14)+'… Waiting…','info');
 
-      // Maker (seller) permit: seller is not signing here — in this flow the
-      // buyer is the only signer; seller's "contribution" amount is 0 (they
-      // receive, not pay). The maker permit carries a zero-amount token with
-      // fee accounting only. The server will construct the maker permit nonce.
-      const makerPermitPayload = {
-        permitted: { token: tokenAddress, amount: '0' },
-        nonce:     (nonce + 1n).toString(),   // distinct nonce for maker slot
-        deadline:  deadline.toString(),
-        witness:   { fee: '0' }               // maker fee = 0 for buyer-pays model
-      };
-
-      const resp = await fetch('/api/escrow/record-trade', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          buyerAddress:   w.address,
-          sellerAddress,
-          tokenAddress,
-          amountWei:      amountWei.toString(),
-          quoteId,
-          maturity:       maturity.toString(),
-          takerPermit:    takerPermitPayload,
-          takerSig,
-          makerPermit:    makerPermitPayload,
-          makerSig:       '0x',   // server signs or uses relayer authority
-          orderId
-        })
-      });
-      const relayerData = await resp.json();
-
-      if(relayerData.fallback){
-        // ── RELAYER NOT CONFIGURED ──────────────────────────────────
-        // The RELAYER_PRIVATE_KEY secret is not set on the server.
-        // We must NOT fake an escrow — instead show a clear error so the
-        // user knows funds were NOT locked. No tokens were sent anywhere.
-        throw new Error(
-          'Escrow relayer is not configured. ' +
-          'Add RELAYER_PRIVATE_KEY as a Cloudflare secret and redeploy. ' +
-          'No tokens have been sent — your funds are safe.'
-        );
-      } else if(relayerData.success){
-        txHash       = relayerData.txHash;
-        escrowTradeId = relayerData.escrowTradeId;
-        showToast('Funds locked in escrow! Tx: '+txHash.substring(0,14)+'…','success');
-      } else {
-        throw new Error(relayerData.message || 'Escrow submission failed');
+      const fundReceipt = await fundTx.wait(1);
+      if(!fundReceipt || fundReceipt.status === 0){
+        throw new Error('fundEscrow transaction reverted — check token allowance and escrow state');
       }
+      fundTxHash = fundTx.hash;
+      showToast('Funds locked in escrow! Tx: '+fundTx.hash.slice(0,14)+'…','success');
     } catch(err){
-      const msg = 'Escrow error: '+(err.message||'unknown');
+      const msg = (err.code==='ACTION_REJECTED'||err.code===4001)
+        ? 'fundEscrow rejected by user'
+        : 'fundEscrow error: '+(err.shortMessage||err.message||'');
       showToast(msg,'error');
       if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-lock mr-2"></i>Confirm & Lock Funds';}
       return;
     }
 
-    // ── Save order ─────────────────────────────────────────────────
-    try {
-      const res = await fetch('/api/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          txHash, buyerAddress: w.address, sellerAddress,
-          amount: total, token, productId: cart[0]?.id||'',
-          items: cart, orderId, escrowTradeId
-        })
-      });
-      const data = await res.json();
-      const savedOrder = data.success ? data.order : {
-        id: orderId, txHash, escrowTradeId,
-        buyerAddress: w.address, sellerAddress,
-        escrowContract: escrowAddress,
-        amount: total, token,
-        productId: cart[0]?.id||'',
-        status: 'escrow_locked',
-        createdAt: new Date().toISOString()
-      };
+    // ═══════════════════════════════════════════════════════════
+    //  Save order — only after on-chain confirmation
+    // ═══════════════════════════════════════════════════════════
+    const orderData = {
+      orderId,
+      orderId32,
+      txHash:       createTxHash,   // createEscrow tx
+      fundTxHash:   fundTxHash,      // fundEscrow tx (main lock tx)
+      buyerAddress: w.address,
+      sellerAddress,
+      amount:       total,
+      token,
+      productId:    cart[0]?.id || '',
+      items:        cart
+    };
 
-      const orders = JSON.parse(localStorage.getItem('rh_orders')||'[]');
-      orders.push({
-        ...savedOrder,
-        items: cart,
-        escrowContract: escrowAddress,
-        explorerUrl: window.ARC.explorer+'/tx/'+txHash
+    // Save to backend (optional metadata store)
+    try {
+      await fetch('/api/orders', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(orderData)
       });
-      localStorage.setItem('rh_orders', JSON.stringify(orders));
-      saveCart([]); updateCartBadge();
-      showToast('Escrow locked! Order '+orderId,'success');
-      setTimeout(()=>window.location.href='/orders/'+orderId, 1500);
-    } catch(err){
-      // API save failed but escrow tx succeeded — save locally with real hash
-      if(txHash && escrowTradeId){
-        const orders = JSON.parse(localStorage.getItem('rh_orders')||'[]');
-        orders.push({
-          id: orderId, txHash, escrowTradeId,
-          buyerAddress: w.address, sellerAddress,
-          escrowContract: escrowAddress,
-          amount: total, token,
-          productId: cart[0]?.id||'',
-          items: cart,
-          status: 'escrow_locked',
-          createdAt: new Date().toISOString(),
-          explorerUrl: window.ARC.explorer+'/tx/'+txHash
-        });
-        localStorage.setItem('rh_orders', JSON.stringify(orders));
-        saveCart([]); updateCartBadge();
-        showToast('Escrow locked! Hash: '+txHash.substring(0,14)+'…','success');
-        setTimeout(()=>window.location.href='/orders/'+orderId, 1500);
-      } else {
-        // Nothing was locked — surface the error
-        showToast('Order error: '+(err.message||''),'error');
-        if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-lock mr-2"></i>Confirm & Lock Funds';}
-      }
-    }
+    } catch(e){}
+
+    // Save to localStorage
+    const savedOrders = JSON.parse(localStorage.getItem('rh_orders')||'[]');
+    const newOrder = {
+      id:             orderId,
+      orderId32,
+      txHash:         createTxHash,
+      fundTxHash,
+      buyerAddress:   w.address,
+      sellerAddress,
+      escrowContract: escrowAddress,
+      amount:         total,
+      token,
+      productId:      cart[0]?.id || '',
+      items:          cart,
+      status:         'escrow_locked',
+      createdAt:      new Date().toISOString(),
+      explorerUrl:    window.ARC.explorer+'/tx/'+fundTxHash
+    };
+    savedOrders.unshift(newOrder);
+    localStorage.setItem('rh_orders', JSON.stringify(savedOrders));
+
+    // Clear cart
+    localStorage.removeItem('cart');
+    try{ CartStore._syncBadge([]); } catch(e){}
+
+    showToast('Funds locked in escrow! Order '+orderId,'success');
+    setTimeout(()=>{ window.location.href='/orders/'+orderId; }, 1200);
   }
   </script>
   `)
@@ -3883,7 +3633,7 @@ function orderDetailPage(id: string) {
     var myAddr=wallet?wallet.address.toLowerCase():'';
     var isSeller=order.sellerAddress&&order.sellerAddress.toLowerCase()===myAddr;
     var isBuyer=order.buyerAddress&&order.buyerAddress.toLowerCase()===myAddr;
-    var statusSteps=['escrow_pending','escrow_locked','shipped','delivered','completed','funds_released'];
+    var statusSteps=['escrow_pending','escrow_locked','shipped','delivery_confirmed','funds_released'];
     var statusIdx=Math.max(0,statusSteps.indexOf(order.status));
     var explorerTxUrl=order.explorerUrl||('${ARC.explorer}/tx/'+(order.txHash||''));
 
@@ -3893,18 +3643,22 @@ function orderDetailPage(id: string) {
     var isPending=order.status==='escrow_pending';
     if(isSeller){
       if(order.status==='escrow_locked') actionBtns+='<button data-oid="'+order.id+'" data-status="shipped" class="update-status-btn btn-primary"><i class="fas fa-shipping-fast mr-1"></i> Mark as Shipped</button>';
-      // Release Funds: requires on-chain escrowTradeId — blocked for pending orders and disputes
-      if(order.status==='completed' && order.escrowTradeId)
-        actionBtns+='<button data-oid="'+order.id+'" data-status="funds_released" class="update-status-btn btn-primary bg-green-600 hover:bg-green-700"><i class="fas fa-coins mr-1"></i> Release Funds</button>';
-      if(order.status==='completed' && !order.escrowTradeId)
-        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm font-semibold"><i class="fas fa-exclamation-triangle"></i> Escrow not on-chain — cannot release</span>';
       if(isPending)
         actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm font-semibold"><i class="fas fa-clock"></i> Awaiting escrow lock</span>';
       if(isDisputed)
         actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm font-semibold"><i class="fas fa-lock"></i> Funds Locked — Dispute Active</span>';
+      if(order.status==='delivery_confirmed')
+        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-green-50 border border-green-200 text-green-700 text-sm font-semibold"><i class="fas fa-check-circle"></i> Buyer confirmed delivery — awaiting fund release</span>';
     }
     if(isBuyer){
-      if(order.status==='shipped') actionBtns+='<button data-oid="'+order.id+'" data-status="completed" class="update-status-btn btn-secondary"><i class="fas fa-check-circle mr-1"></i> Confirm Delivery</button>';
+      // Step 1: buyer confirms receipt of goods (calls confirmDelivery on-chain)
+      if(order.status==='shipped')
+        actionBtns+='<button data-oid="'+order.id+'" data-status="delivery_confirmed" class="update-status-btn btn-secondary"><i class="fas fa-check-circle mr-1"></i> Confirm Delivery</button>';
+      // Step 2: buyer releases funds to seller (calls releaseFunds on-chain)
+      if(order.status==='delivery_confirmed' && order.orderId32)
+        actionBtns+='<button data-oid="'+order.id+'" data-status="funds_released" class="update-status-btn btn-primary bg-green-600 hover:bg-green-700"><i class="fas fa-coins mr-1"></i> Release Funds</button>';
+      if((order.status==='delivery_confirmed'||order.status==='shipped') && !order.orderId32)
+        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm font-semibold"><i class="fas fa-exclamation-triangle"></i> No on-chain escrow ID found</span>';
     }
 
     container.innerHTML=
@@ -3918,11 +3672,10 @@ function orderDetailPage(id: string) {
           +'<div class="flex items-start gap-3">'
           +'<i class="fas fa-exclamation-triangle text-amber-500 text-xl mt-0.5 shrink-0"></i>'
           +'<div>'
-          +'<h3 class="font-bold text-amber-800 mb-1">Escrow Not Yet On-Chain</h3>'
+          +'<h3 class="font-bold text-amber-800 mb-1">Escrow Pending</h3>'
           +'<p class="text-amber-700 text-sm">Funds have NOT been deposited into the escrow contract yet. '
-          +'The relayer (<code>RELAYER_PRIVATE_KEY</code>) is not configured — '
-          +'<code>recordTrade()</code> was never called. No tokens are locked or at risk.</p>'
-          +'<p class="text-amber-600 text-xs mt-2 font-medium">To enable live escrow, set the <code>RELAYER_PRIVATE_KEY</code> Cloudflare secret and retry the checkout.</p>'
+          +'The ShuklyEscrow contract may not be deployed or the checkout did not complete all steps.</p>'
+          +'<p class="text-amber-600 text-xs mt-2 font-medium">Go to <a href="/deploy-escrow" class="underline">Deploy Escrow</a> to set up the contract, then retry checkout.</p>'
           +'</div></div></div>'
         : '')
       // ── Funds Released banner ────────────────────────────────────
@@ -3944,13 +3697,13 @@ function orderDetailPage(id: string) {
       +'<h2 class="font-bold text-slate-800 flex items-center gap-2"><i class="fas fa-route text-red-500"></i> Escrow Status (Arc Network)</h2>'
       +'<span class="arc-badge"><i class="fas fa-network-wired text-xs"></i> Arc Testnet</span></div>'
       +'<div class="flex items-center gap-2 overflow-x-auto">'
-      +['Pending','Locked','Shipped','Delivered','Complete','Released'].map((s,i)=>
+      +['Pending','Locked','Shipped','Confirmed','Released'].map((s,i)=>
           '<div class="flex items-center gap-2 shrink-0">'
           +'<div class="flex flex-col items-center">'
           +'<div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold '+(i<=statusIdx?'bg-green-500 text-white':'bg-slate-200 text-slate-400')+'">'
           +(i<statusIdx?'<i class="fas fa-check text-xs"></i>':(i+1))+'</div>'
           +'<p class="text-xs text-center mt-1 text-slate-400 w-14">'+s+'</p></div>'
-          +(i<5?'<div class="w-8 h-0.5 '+(i<statusIdx?'bg-green-500':'bg-slate-200')+' mb-4"></div>':'')
+          +(i<4?'<div class="w-8 h-0.5 '+(i<statusIdx?'bg-green-500':'bg-slate-200')+' mb-4"></div>':'')
           +'</div>'
         ).join('')
       +'</div></div>'
@@ -3959,14 +3712,24 @@ function orderDetailPage(id: string) {
       +'<h2 class="font-bold text-slate-800 mb-4 flex items-center gap-2"><i class="fas fa-receipt text-red-500"></i> On-Chain Details</h2>'
       +'<div class="space-y-3 text-sm">'
       +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Order ID</span><span class="font-mono font-medium text-right">'+order.id+'</span></div>'
-      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Escrow Contract</span><a href="'+('${ARC.explorer}'+'/address/'+(order.escrowContract||'${ARC.contracts.FxEscrow}'))+'" target="_blank" class="font-mono text-xs text-blue-600 hover:underline text-right break-all">'+(order.escrowContract||'${ARC.contracts.FxEscrow}')+'</a></div>'
-      +(order.escrowTradeId ? '<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Escrow Trade ID</span><a href="'+'${ARC.explorer}'+'/address/'+'${ARC.contracts.FxEscrow}'+'" target="_blank" class="font-mono font-medium text-right text-blue-600 hover:underline">#'+order.escrowTradeId+'</a></div>' : '')
-      // Lock tx hash (recordTrade)
-      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Lock Tx</span>'
+      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Escrow Contract</span><a href="'+('${ARC.explorer}'+'/address/'+(order.escrowContract||''))+'" target="_blank" class="font-mono text-xs text-blue-600 hover:underline text-right break-all">'+(order.escrowContract||'—')+'</a></div>'
+      +(order.orderId32 ? '<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Order ID (bytes32)</span><span class="font-mono text-xs text-right break-all">'+order.orderId32+'</span></div>' : '')
+      // createEscrow tx hash
+      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Create Tx</span>'
       +(order.txHash && !order.txHash.startsWith('PENDING_')
-        ? '<a href="'+explorerTxUrl+'" target="_blank" class="font-mono text-xs text-blue-600 hover:underline text-right break-all">'+order.txHash+'</a>'
-        : '<span class="text-xs text-amber-600 font-medium flex items-center gap-1"><i class="fas fa-clock"></i> Not yet on-chain — relayer key not configured</span>')
+        ? '<a href="'+('${ARC.explorer}/tx/'+order.txHash)+'" target="_blank" class="font-mono text-xs text-blue-600 hover:underline text-right break-all">'+order.txHash+'</a>'
+        : '<span class="text-xs text-amber-600 font-medium flex items-center gap-1"><i class="fas fa-clock"></i> Not yet on-chain</span>')
       +'</div>'
+      // fundEscrow tx hash
+      +(order.fundTxHash
+        ? '<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Fund Tx</span>'
+          +'<a href="'+'${ARC.explorer}/tx/'+order.fundTxHash+'" target="_blank" class="font-mono text-xs text-indigo-600 hover:underline text-right break-all">'+order.fundTxHash+'</a></div>'
+        : '')
+      // confirmDelivery tx hash
+      +(order.confirmDeliveryTx
+        ? '<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Confirm Delivery Tx</span>'
+          +'<a href="'+(order.confirmDeliveryUrl||'${ARC.explorer}/tx/'+order.confirmDeliveryTx)+'" target="_blank" class="font-mono text-xs text-blue-600 hover:underline text-right break-all">'+order.confirmDeliveryTx+'</a></div>'
+        : '')
       // Release tx hash (takerDeliver) — only shown after release
       +(order.releaseTxHash
         ? '<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Release Tx</span>'
@@ -4033,18 +3796,88 @@ function orderDetailPage(id: string) {
     }
 
     // ══════════════════════════════════════════════════════════════════
-    //  RELEASE FUNDS — direct on-chain call, no relayer needed
+    //  CONFIRM DELIVERY — buyer calls confirmDelivery(orderId32)
+    //  This signals goods received; seller can now call releaseFunds.
+    // ══════════════════════════════════════════════════════════════════
+    if(s==='delivery_confirmed'){
+      const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
+      const idx=orders.findIndex(o=>o.id===id);
+      if(idx<0) return;
+      const order=orders[idx];
+
+      const btn=event && event.target;
+      const origLabel='<i class="fas fa-check-circle mr-1"></i> Confirm Delivery';
+      if(btn){ btn.disabled=true; btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Initialising…'; }
+
+      if(!order.orderId32){
+        showToast('No on-chain order ID found. Cannot confirm delivery.','error');
+        if(btn){ btn.disabled=false; btn.innerHTML=origLabel; }
+        return;
+      }
+
+      try {
+        const w=getStoredWallet();
+        if(!w){ showToast('Connect wallet to confirm delivery','error'); if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return; }
+
+        let provider, signer;
+        if(w.type==='metamask' && window.ethereum){
+          provider = new ethers.BrowserProvider(window.ethereum);
+          const net = await provider.getNetwork();
+          if(net.chainId !== BigInt(window.ARC.chainId)){
+            showToast('Please switch MetaMask to Arc Testnet','warning');
+            if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return;
+          }
+          signer = await provider.getSigner();
+        } else if((w.type==='internal'||w.type==='imported') && w.privateKey && !w.privateKey.startsWith('[')){
+          provider = new ethers.JsonRpcProvider(window.ARC.rpc);
+          signer   = new ethers.Wallet(w.privateKey, provider);
+        } else {
+          showToast('Private key unavailable. Re-import wallet.','error');
+          if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return;
+        }
+
+        const escrowAddress = getEscrowAddress();
+        if(!escrowAddress || escrowAddress==='0x0000000000000000000000000000000000000000'){
+          showToast('Escrow contract not configured','error');
+          if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return;
+        }
+
+        const escrowContract = new ethers.Contract(escrowAddress, ESCROW_ABI, signer);
+        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Confirming delivery…';
+        showToast('Sending confirmDelivery on-chain…','info');
+
+        const tx = await escrowContract.confirmDelivery(order.orderId32);
+        showToast('Tx sent: '+tx.hash.slice(0,14)+'… Waiting…','info');
+        const receipt = await tx.wait(1);
+        if(!receipt || receipt.status===0) throw new Error('confirmDelivery reverted');
+
+        showToast('Delivery confirmed on-chain! Tx: '+tx.hash.slice(0,14)+'…','success');
+        orders[idx].status             = 'delivery_confirmed';
+        orders[idx].confirmDeliveryTx  = tx.hash;
+        orders[idx].confirmDeliveryUrl = window.ARC.explorer+'/tx/'+tx.hash;
+        orders[idx].updatedAt          = new Date().toISOString();
+        localStorage.setItem('rh_orders', JSON.stringify(orders));
+        setTimeout(()=>location.reload(), 800);
+      } catch(err){
+        const msg = err.code==='ACTION_REJECTED'||err.code===4001
+          ? 'Confirm delivery rejected by user'
+          : 'confirmDelivery error: '+(err.shortMessage||err.message||'');
+        showToast(msg,'error');
+        if(btn){ btn.disabled=false; btn.innerHTML=origLabel; }
+      }
+      return;
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  RELEASE FUNDS — buyer calls releaseFunds(orderId32) on ShuklyEscrow
+    //  Direct on-chain call — no Permit2, no relayer, no signature
     //
-    //  Flow (buyer confirms delivery → releases to seller):
-    //   1. Buyer signs PermitWitnessTransferFrom with SingleTradeWitness(tradeId)
-    //      signed over Permit2 domain — off-chain, no gas
-    //   2. Buyer's wallet broadcasts takerDeliver(tradeId, permit, sig) directly
-    //      to FxEscrow contract — REAL on-chain tx, real hash
-    //   3. FxEscrow verifies permit2 sig, releases locked tokens to seller
-    //   4. UI updates ONLY after tx is confirmed (receipt.status === 1)
+    //  Flow:
+    //   1. Buyer calls releaseFunds(orderId32) on ShuklyEscrow
+    //   2. Contract releases locked tokens to seller
+    //   3. UI updates ONLY after tx is confirmed (receipt.status === 1)
     //
-    //  takerDeliver can be called by anyone who holds the taker's valid
-    //  PermitWitnessTransferFrom signature — here the buyer calls it directly.
+    //  "to" address = ShuklyEscrow contract — never directly to seller
     // ══════════════════════════════════════════════════════════════════
     if(s==='funds_released'){
       const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
@@ -4056,10 +3889,9 @@ function orderDetailPage(id: string) {
       const origLabel='<i class="fas fa-coins mr-1"></i> Release Funds';
       if(btn){ btn.disabled=true; btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Initialising…'; }
 
-      // ── Guard: order must have been locked on-chain ──────────────
-      if(!order.escrowTradeId){
+      if(!order.orderId32){
         showToast(
-          'This order was not locked on-chain (no escrow trade ID). ' +
+          'This order was not locked on-chain (no orderId32). ' +
           'Funds were never deposited into the escrow contract — nothing to release.',
           'error'
         );
@@ -4068,14 +3900,13 @@ function orderDetailPage(id: string) {
       }
 
       try {
-        // ── Connect wallet ───────────────────────────────────────────
+        // ── Connect wallet ─────────────────────────────────────────
         const w=getStoredWallet();
         if(!w){ showToast('Connect wallet to release funds','error'); if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return; }
 
         let provider, signer;
         if(w.type==='metamask' && window.ethereum){
           provider = new ethers.BrowserProvider(window.ethereum);
-          // Ensure Arc Testnet
           const net = await provider.getNetwork();
           if(net.chainId !== BigInt(window.ARC.chainId)){
             showToast('Please switch MetaMask to Arc Testnet (Chain 5042002)','warning');
@@ -4090,88 +3921,32 @@ function orderDetailPage(id: string) {
           if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return;
         }
 
-        const tradeId      = BigInt(order.escrowTradeId);
-        const tokenAddress = order.token==='USDC' ? window.ARC.contracts.USDC : window.ARC.contracts.EURC;
-        const amountWei    = ethers.parseUnits((order.amount||0).toFixed(6), 6);
-        const nonce        = BigInt(Date.now());
-        const deadline     = BigInt(Math.floor(Date.now()/1000) + 3600);
+        // ── Get escrow contract ────────────────────────────────────
+        const escrowAddress = getEscrowAddress();
+        if(!escrowAddress || escrowAddress==='0x0000000000000000000000000000000000000000'){
+          showToast('Escrow contract not configured. Visit /deploy-escrow.','error');
+          if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return;
+        }
 
-        // ── STEP 1: Sign PermitWitnessTransferFrom (SingleTradeWitness) ──
-        // The FxEscrow contract uses SINGLE_TRADE_WITNESS_TYPE for takerDeliver:
-        //   "SingleTradeWitness witness)SingleTradeWitness(uint256 id)TokenPermissions(address token,uint256 amount)"
-        // Full Permit2 type = PermitWitnessTransferFrom(..., SingleTradeWitness witness) + suffix
-        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 1/2 — Sign release permit…';
-        showToast('Step 1/2: Sign the release permit in your wallet…','info');
+        const escrowContract = new ethers.Contract(escrowAddress, ESCROW_ABI, signer);
 
-        const permitDomain = {
-          name: 'Permit2',
-          chainId: window.ARC.chainId,
-          verifyingContract: window.ARC.contracts.Permit2
-        };
-        const permitTypes = {
-          PermitWitnessTransferFrom: [
-            { name: 'permitted', type: 'TokenPermissions' },
-            { name: 'spender',   type: 'address' },
-            { name: 'nonce',     type: 'uint256' },
-            { name: 'deadline',  type: 'uint256' },
-            { name: 'witness',   type: 'SingleTradeWitness' }
-          ],
-          TokenPermissions: [
-            { name: 'token',  type: 'address' },
-            { name: 'amount', type: 'uint256' }
-          ],
-          SingleTradeWitness: [
-            { name: 'id', type: 'uint256' }
-          ]
-        };
-        const permitValue = {
-          permitted: { token: tokenAddress, amount: amountWei.toString() },
-          spender:   window.ARC.contracts.FxEscrow,
-          nonce:     nonce.toString(),
-          deadline:  deadline.toString(),
-          witness:   { id: tradeId.toString() }
-        };
+        // ── Call releaseFunds(orderId32) — no permit, no signature ──
+        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Sending to escrow…';
+        showToast('Broadcasting releaseFunds to ShuklyEscrow…','info');
 
-        const deliverSig = await signer.signTypedData(permitDomain, permitTypes, permitValue);
-        showToast('Release permit signed. Broadcasting…','success');
-
-        // ── STEP 2: Call takerDeliver directly on FxEscrow ────────────
-        // The buyer's wallet broadcasts this tx — no relayer needed.
-        // "to" address = FxEscrow contract = 0x867650F5eAe8df91445971f14d89fd84F0C9a9f8
-        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 2/2 — Sending to escrow…';
-        showToast('Step 2/2: Broadcasting release to FxEscrow…','info');
-
-        const DELIVER_ABI = [
-          'function takerDeliver(uint256 id, tuple(tuple(address token, uint256 amount) permitted, uint256 nonce, uint256 deadline) permit, bytes signature) nonpayable',
-          'function makerDeliver(uint256 id, tuple(tuple(address token, uint256 amount) permitted, uint256 nonce, uint256 deadline) permit, bytes signature) nonpayable'
-        ];
-        const escrowContract = new ethers.Contract(
-          window.ARC.contracts.FxEscrow,
-          DELIVER_ABI,
-          signer
-        );
-
-        const permitArg = {
-          permitted: { token: tokenAddress, amount: amountWei },
-          nonce,
-          deadline
-        };
-
-        // Buyer (taker) calls takerDeliver to release quote tokens to seller
-        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Waiting for confirmation…';
-        const txResponse = await escrowContract.takerDeliver(tradeId, permitArg, deliverSig);
+        const txResponse = await escrowContract.releaseFunds(order.orderId32);
         showToast('Tx sent! Waiting for confirmation… '+txResponse.hash.slice(0,14)+'…','info');
 
         // Wait for on-chain confirmation before updating UI
         const receipt = await txResponse.wait(1);
         if(!receipt || receipt.status === 0){
-          throw new Error('Transaction reverted on-chain. Check escrow state.');
+          throw new Error('releaseFunds reverted on-chain. Check escrow state (must be CONFIRMED).');
         }
 
         const releaseTxHash = txResponse.hash;
         showToast('Funds released! Tx: '+releaseTxHash.slice(0,14)+'…','success');
 
-        // ── Update order status ONLY after confirmed receipt ─────────
+        // ── Update order status ONLY after confirmed receipt ───────
         orders[idx].status         = 'funds_released';
         orders[idx].releaseTxHash  = releaseTxHash;
         orders[idx].releaseTxUrl   = window.ARC.explorer+'/tx/'+releaseTxHash;
@@ -5628,7 +5403,7 @@ function aboutPage() {
       <ul>
         <li><strong>Blockchain:</strong> Arc Network Testnet (Chain ID: 5042002, EVM-compatible)</li>
         <li><strong>Payments:</strong> USDC (native on Arc) and EURC (ERC-20)</li>
-        <li><strong>Escrow:</strong> FxEscrow smart contract (${ARC.contracts.FxEscrow})</li>
+        <li><strong>Escrow:</strong> ShuklyEscrow smart contract — deployed via /deploy-escrow page</li>
         <li><strong>Wallet:</strong> Non-custodial, BIP39 seed phrase, client-side key generation (ethers.js)</li>
         <li><strong>Frontend:</strong> Hono.js on Cloudflare Workers, Tailwind CSS</li>
         <li><strong>Storage:</strong> IPFS for product images and shipment proofs</li>
@@ -5658,8 +5433,7 @@ function aboutPage() {
       <ul>
         <li><strong>USDC:</strong> <code class="text-xs bg-slate-100 px-1 py-0.5 rounded font-mono">${ARC.contracts.USDC}</code></li>
         <li><strong>EURC:</strong> <code class="text-xs bg-slate-100 px-1 py-0.5 rounded font-mono">${ARC.contracts.EURC}</code></li>
-        <li><strong>FxEscrow:</strong> <code class="text-xs bg-slate-100 px-1 py-0.5 rounded font-mono">${ARC.contracts.FxEscrow}</code></li>
-        <li><strong>Permit2:</strong> <code class="text-xs bg-slate-100 px-1 py-0.5 rounded font-mono">${ARC.contracts.Permit2}</code></li>
+        <li><strong>ShuklyEscrow:</strong> <code class="text-xs bg-slate-100 px-1 py-0.5 rounded font-mono" id="escrow-addr-docs">Deploy at /deploy-escrow</code></li>
       </ul>
 
       <h2>Useful Links</h2>
@@ -5679,5 +5453,141 @@ function aboutPage() {
       </div>
     </div>
   </div>
+  `)
+}
+
+// ─── PAGE: DEPLOY ESCROW ──────────────────────────────────────────────────
+function deployEscrowPage() {
+  return shell('Deploy ShuklyEscrow', `
+  <div class="max-w-2xl mx-auto px-4 py-8">
+    <h1 class="text-3xl font-bold text-slate-800 mb-2 flex items-center gap-3">
+      <i class="fas fa-code text-red-500"></i> Deploy ShuklyEscrow
+    </h1>
+    <p class="text-slate-500 mb-6">Deploy the escrow smart contract to Arc Testnet using your MetaMask wallet. Only needed once — the address is saved in your browser.</p>
+
+    <div class="card p-6 mb-6">
+      <h2 class="font-bold text-slate-800 mb-3 flex items-center gap-2"><i class="fas fa-info-circle text-blue-500"></i> Pre-requisites</h2>
+      <ul class="space-y-2 text-sm text-slate-600">
+        <li class="flex items-start gap-2"><i class="fas fa-check-circle text-green-500 mt-0.5 shrink-0"></i> MetaMask installed and connected to Arc Testnet (Chain ID: 5042002)</li>
+        <li class="flex items-start gap-2"><i class="fas fa-check-circle text-green-500 mt-0.5 shrink-0"></i> Small amount of USDC for gas fees</li>
+        <li class="flex items-start gap-2"><i class="fas fa-info-circle text-blue-500 mt-0.5 shrink-0"></i> <span>Get free testnet tokens at <a href="https://faucet.circle.com" target="_blank" class="text-red-600 underline">faucet.circle.com</a></span></li>
+      </ul>
+    </div>
+
+    <div id="deploy-status" class="mb-4"></div>
+
+    <div class="card p-6 mb-4">
+      <h2 class="font-bold text-slate-800 mb-4"><i class="fas fa-rocket mr-2 text-red-500"></i> Deploy Contract</h2>
+      <div id="current-escrow" class="mb-4 p-3 rounded-lg bg-slate-50 border text-sm text-slate-600">
+        <strong>Current escrow address:</strong> <span id="current-escrow-addr" class="font-mono">loading…</span>
+      </div>
+      <button id="deploy-btn" onclick="deployContract()" class="btn-primary w-full justify-center py-3 text-base font-bold">
+        <i class="fas fa-rocket mr-2"></i> Deploy ShuklyEscrow via MetaMask
+      </button>
+      <p class="text-xs text-slate-400 mt-3 text-center">Deployer wallet becomes the contract owner. Gas paid in USDC on Arc Network.</p>
+    </div>
+
+    <div id="deployed-result" class="hidden card p-6 bg-emerald-50 border-emerald-200 mb-4">
+      <h3 class="font-bold text-emerald-800 mb-2 flex items-center gap-2"><i class="fas fa-check-circle text-emerald-500"></i> Contract Deployed!</h3>
+      <p class="text-sm text-emerald-700 mb-3">Address saved to browser. All checkouts will now use this contract.</p>
+      <div class="bg-white border rounded-lg p-3 font-mono text-xs break-all" id="deployed-addr-display"></div>
+      <a id="deployed-explorer-link" href="#" target="_blank" class="mt-3 inline-flex items-center gap-2 text-sm text-blue-600 hover:underline">
+        <i class="fas fa-external-link-alt"></i> View on Explorer
+      </a>
+    </div>
+
+    <div class="card p-6 text-sm text-slate-500">
+      <h3 class="font-semibold text-slate-700 mb-2">ShuklyEscrow Functions</h3>
+      <ul class="space-y-1 font-mono text-xs">
+        <li><span class="text-purple-600">createEscrow</span>(bytes32 orderId, address seller, address token, uint256 amount)</li>
+        <li><span class="text-purple-600">fundEscrow</span>(bytes32 orderId) — pulls tokens from buyer</li>
+        <li><span class="text-purple-600">confirmDelivery</span>(bytes32 orderId) — buyer confirms receipt</li>
+        <li><span class="text-purple-600">releaseFunds</span>(bytes32 orderId) — releases to seller</li>
+        <li><span class="text-purple-600">refund</span>(bytes32 orderId) — returns to buyer</li>
+        <li><span class="text-purple-600">openDispute</span>(bytes32 orderId)</li>
+        <li><span class="text-purple-600">getEscrow</span>(bytes32 orderId) view</li>
+      </ul>
+    </div>
+  </div>
+
+  <script>
+  const ESCROW_BYTECODE = '0x60806040525f6002553480156012575f5ffd5b50600180546001600160a01b031916331790556111ad806100325f395ff3fe608060405234801561000f575f5ffd5b50600436106100a6575f3560e01c806374950ffd1161006e57806374950ffd146101695780638da5cb5b1461017c578063c92ee043146101a7578063f023b811146101ba578063f08ef6cb14610211578063f8e65d6114610224575f5ffd5b806324a9d853146100aa5780632d83549c146100c657806343a0e3e61461012e5780636e629653146101435780637249fbb614610156575b5f5ffd5b6100b360025481565b6040519081526020015b60405180910390f35b61011c6100d4366004610fb2565b5f602081905290815260409020805460018201546002830154600384015460048501546005909501546001600160a01b03948516959385169490921692909160ff9091169086565b6040516100bd96959493929190610fdd565b61014161013c366004611044565b610237565b005b61014161015136600461108d565b61049f565b610141610164366004610fb2565b61073f565b610141610177366004610fb2565b61090f565b60015461018f906001600160a01b031681565b6040516001600160a01b0390911681526020016100bd565b6101416101b5366004610fb2565b6109ef565b61011c6101c8366004610fb2565b5f908152602081905260409020805460018201546002830154600384015460048501546005909501546001600160a01b0394851696938516959490921693909260ff9091169190565b61014161021f366004610fb2565b610ca3565b610141610232366004610fb2565b610de1565b6001546001600160a01b031633146102835760405162461bcd60e51b815260206004820152600a60248201526927b7363c9037bbb732b960b11b60448201526064015b60405180910390fd5b5f8281526020819052604090206005600482015460ff1660058111156102ab576102ab610fc9565b146102e75760405162461bcd60e51b815260206004820152600c60248201526b139bdd08191a5cdc1d5d195960a21b604482015260640161027a565b81156103cf576004818101805460ff19166003908117909155600283015460018401549184015460405163a9059cbb60e01b81526001600160a01b03938416948101949094526024840152169063a9059cbb906044016020604051808303815f875af1158015610359573d5f5f3e3d5ffd5b505050506040513d601f19601f8201168201806040525081019061037d91906110ce565b50600181015460038201546040519081526001600160a01b039091169084907f75d86e5bfa1175e2dc677f3abe3aebba3069f2db6ae492f1734d4b4bc65f61c1906020015b60405180910390a3505050565b6004818101805460ff19168217905560028201548254600384015460405163a9059cbb60e01b81526001600160a01b03928316948101949094526024840152169063a9059cbb906044016020604051808303815f875af1158015610435573d5f5f3e3d5ffd5b505050506040513d601f19601f8201168201806040525081019061045991906110ce565b50805460038201546040519081526001600160a01b039091169084907ffc31a7ddbe933aa6e67f3c98c183fbc87addd2b602fcfb10238d2f85cf026617906020016103c2565b5f848152602081905260409020546001600160a01b0316156104fb5760405162461bcd60e51b8152602060048201526015602482015274457363726f7720616c72656164792065786973747360581b604482015260640161027a565b6001600160a01b0383166105425760405162461bcd60e51b815260206004820152600e60248201526d24b73b30b634b21039b2b63632b960911b604482015260640161027a565b336001600160a01b038416036105935760405162461bcd60e51b8152602060048201526016602482015275213abcb2b91031b0b73737ba1031329039b2b63632b960511b604482015260640161027a565b6001600160a01b0382166105d95760405162461bcd60e51b815260206004820152600d60248201526c24b73b30b634b2103a37b5b2b760991b604482015260640161027a565b5f811161061d5760405162461bcd60e51b81526020600482015260126024820152710416d6f756e74206d757374206265203e20360741b604482015260640161027a565b6040805160c0810182523381526001600160a01b03858116602083015284169181019190915260608101829052608081015f8152426020918201525f868152808252604090819020835181546001600160a01b03199081166001600160a01b039283161783559385015160018084018054871692841692909217909155928501516002830180549095169116179092556060830151600383015560808301516004830180549192909160ff1916908360058111156106dd576106dd610fc9565b021790555060a09190910151600590910155604080516001600160a01b03848116825260208201849052851691339187917fa659390cb932e6b1ea09aba8819db2052575206b54a121463b49371aa8dae6a7910160405180910390a450505050565b5f8181526020819052604090205481906001600160a01b031633146107765760405162461bcd60e51b815260040161027a906110f0565b5f8281526020819052604090206001600482015460ff16600581111561079e5761079e610fc9565b146107eb5760405162461bcd60e51b815260206004820152601e60248201527f43616e6e6f7420726566756e6420696e2063757272656e742073746174650000604482015260640161027a565b6004818101805460ff19168217905560028201548254600384015460405163a9059cbb60e01b81526001600160a01b039283169481019490945260248401525f9291169063a9059cbb906044016020604051808303815f875af1158015610854573d5f5f3e3d5ffd5b505050506040513d601f19601f8201168201806040525081019061087891906110ce565b9050806108c05760405162461bcd60e51b81526020600482015260166024820152751499599d5b99081d1c985b9cd9995c8819985a5b195960521b604482015260640161027a565b815460038301546040519081526001600160a01b039091169085907ffc31a7ddbe933aa6e67f3c98c183fbc87addd2b602fcfb10238d2f85cf026617906020015b60405180910390a350505050565b5f8181526020819052604090205481906001600160a01b031633146109465760405162461bcd60e51b815260040161027a906110f0565b5f8281526020819052604090206001600482015460ff16600581111561096e5761096e610fc9565b146109af5760405162461bcd60e51b8152602060048201526011602482015270115cd8dc9bddc81b9bdd08119553911151607a1b604482015260640161027a565b60048101805460ff19166002179055604051339084907ff46bccfdb06ecc81738bcfc5ee961cc50fe62e4a5060c050d8bf69bcd1d47731905f90a3505050565b5f81815260208190526040902080546001600160a01b0316331480610a20575060018101546001600160a01b031633145b610a635760405162461bcd60e51b815260206004820152601460248201527327b7363c90313abcb2b91037b91039b2b63632b960611b604482015260640161027a565b6002600482015460ff166005811115610a7e57610a7e610fc9565b14610ac25760405162461bcd60e51b8152602060048201526014602482015273115cd8dc9bddc81b9bdd0810d3d391925493515160621b604482015260640161027a565b60048101805460ff19166003908117909155600254908201545f9161271091610aeb9190611128565b610af59190611145565b90505f818360030154610b089190611164565b6002840154600185015460405163a9059cbb60e01b81526001600160a01b039182166004820152602481018490529293505f9291169063a9059cbb906044016020604051808303815f875af1158015610b63573d5f5f3e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610b8791906110ce565b905080610bd65760405162461bcd60e51b815260206004820152601960248201527f5472616e7366657220746f2073656c6c6572206661696c656400000000000000604482015260640161027a565b8215610c5657600284015460015460405163a9059cbb60e01b81526001600160a01b0391821660048201526024810186905291169063a9059cbb906044016020604051808303815f875af1158015610c30573d5f5f3e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610c5491906110ce565b505b60018401546040518381526001600160a01b039091169086907f75d86e5bfa1175e2dc677f3abe3aebba3069f2db6ae492f1734d4b4bc65f61c19060200160405180910390a35050505050565b5f81815260208190526040902080546001600160a01b0316331480610cd4575060018101546001600160a01b031633145b610d175760405162461bcd60e51b815260206004820152601460248201527327b7363c90313abcb2b91037b91039b2b63632b960611b604482015260640161027a565b6001600482015460ff166005811115610d3257610d32610fc9565b1480610d5657506002600482015460ff166005811115610d5457610d54610fc9565b145b610da25760405162461bcd60e51b815260206004820152601f60248201527f43616e6e6f74206469737075746520696e2063757272656e7420737461746500604482015260640161027a565b60048101805460ff19166005179055604051339083907fe7b614d99462ab012c8191c9348164cd62a4aec6d211f42371fd1f0759e5c220905f90a35050565b5f8181526020819052604090205481906001600160a01b03163314610e185760405162461bcd60e51b815260040161027a906110f0565b5f82815260208190526040812090600482015460ff166005811115610e3f57610e3f610fc9565b14610e8c5760405162461bcd60e51b815260206004820152601960248201527f457363726f77206e6f7420696e20454d50545920737461746500000000000000604482015260640161027a565b600281015460038201546040516323b872dd60e01b815233600482015230602482015260448101919091525f916001600160a01b0316906323b872dd906064016020604051808303815f875af1158015610ee8573d5f5f3e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610f0c91906110ce565b905080610f6a5760405162461bcd60e51b815260206004820152602660248201527f546f6b656e207472616e73666572206661696c65643a20636865636b20616c6c6044820152656f77616e636560d01b606482015260840161027a565b60048201805460ff191660011790556003820154604051908152339085907fb0f7b6ab70e0186c433938ee752b2498a7cab42018e6bf7596cd704c81c470bc90602001610901565b5f60208284031215610fc2575f5ffd5b5035919050565b634e487b7160e01b5f52602160045260245ffd5b6001600160a01b0387811682528681166020830152851660408201526060810184905260c081016006841061102057634e487b7160e01b5f52602160045260245ffd5b608082019390935260a00152949350505050565b8015158114611041575f5ffd5b50565b5f5f60408385031215611055575f5ffd5b82359150602083013561106781611034565b809150509250929050565b80356001600160a01b0381168114611088575f5ffd5b919050565b5f5f5f5f608085870312156110a0575f5ffd5b843593506110b060208601611072565b92506110be60408601611072565b9396929550929360600135925050565b5f602082840312156110de575f5ffd5b81516110e981611034565b9392505050565b6020808252600a908201526927b7363c90313abcb2b960b11b604082015260600190565b634e487b7160e01b5f52601160045260245ffd5b808202811582820484141761113f5761113f611114565b92915050565b5f8261115f57634e487b7160e01b5f52601260045260245ffd5b500490565b8181038181111561113f5761113f61111456fea2646970667358221220005a0901a06072c1c8d0bb8592692ff2bdda55f3fd069fcfda67dd532120acd064736f6c63430008220033';
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const addr = localStorage.getItem('shukly_escrow_address') || 'Not deployed yet';
+    document.getElementById('current-escrow-addr').textContent = addr;
+    if(addr && addr.startsWith('0x') && addr !== '0x0000000000000000000000000000000000000000') {
+      document.getElementById('deployed-addr-display').textContent = addr;
+      document.getElementById('deployed-explorer-link').href = window.ARC.explorer + '/address/' + addr;
+      document.getElementById('deployed-result').classList.remove('hidden');
+    }
+  });
+
+  async function deployContract() {
+    const statusEl = document.getElementById('deploy-status');
+    const btn = document.getElementById('deploy-btn');
+    const resultEl = document.getElementById('deployed-result');
+
+    const setStatus = (msg, type='info') => {
+      const colors = { info:'bg-blue-50 border-blue-200 text-blue-800', success:'bg-emerald-50 border-emerald-200 text-emerald-800', error:'bg-red-50 border-red-200 text-red-800', warning:'bg-amber-50 border-amber-200 text-amber-800' };
+      statusEl.innerHTML = '<div class="p-4 rounded-lg border '+colors[type]+' text-sm">'+msg+'</div>';
+    };
+
+    try {
+      if(!window.ethereum) { setStatus('<i class="fas fa-exclamation-circle mr-2"></i>MetaMask not detected. Please install MetaMask.', 'error'); return; }
+      btn.disabled = true;
+      btn.innerHTML = '<span class="loading-spinner inline-block mr-2"></span>Connecting MetaMask…';
+
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      await provider.send('eth_requestAccounts', []);
+
+      // Ensure Arc Testnet
+      const net = await provider.getNetwork();
+      if(net.chainId !== BigInt(window.ARC.chainId)) {
+        setStatus('<i class="fas fa-exclamation-triangle mr-2"></i>Please switch MetaMask to Arc Testnet (Chain ID: 5042002) and try again.', 'warning');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-rocket mr-2"></i> Deploy ShuklyEscrow via MetaMask';
+        return;
+      }
+
+      const signer = await provider.getSigner();
+      const deployerAddr = await signer.getAddress();
+      setStatus('<i class="fas fa-spinner fa-spin mr-2"></i>Deploying from <code class="font-mono text-xs">'+deployerAddr.slice(0,14)+'…</code> — confirm in MetaMask…', 'info');
+      btn.innerHTML = '<span class="loading-spinner inline-block mr-2"></span>Confirm in MetaMask…';
+
+      // Deploy using ContractFactory
+      const factory = new ethers.ContractFactory([], ESCROW_BYTECODE, signer);
+      const contract = await factory.deploy();
+
+      setStatus('<i class="fas fa-spinner fa-spin mr-2"></i>Waiting for on-chain confirmation… <code class="font-mono text-xs">'+contract.deploymentTransaction().hash.slice(0,14)+'…</code>', 'info');
+      btn.innerHTML = '<span class="loading-spinner inline-block mr-2"></span>Waiting for confirmation…';
+
+      await contract.waitForDeployment();
+      const deployedAddress = await contract.getAddress();
+      const txHash = contract.deploymentTransaction().hash;
+
+      // Save to localStorage
+      localStorage.setItem('shukly_escrow_address', deployedAddress);
+      document.getElementById('current-escrow-addr').textContent = deployedAddress;
+
+      // Show result
+      document.getElementById('deployed-addr-display').textContent = deployedAddress;
+      const explorerUrl = window.ARC.explorer + '/address/' + deployedAddress;
+      document.getElementById('deployed-explorer-link').href = explorerUrl;
+      resultEl.classList.remove('hidden');
+
+      setStatus('<i class="fas fa-check-circle mr-2"></i>Deployed at <code class="font-mono text-xs">'+deployedAddress+'</code>. Tx: <a href="'+window.ARC.explorer+'/tx/'+txHash+'" target="_blank" class="underline font-mono text-xs">'+txHash.slice(0,18)+'…</a>', 'success');
+      btn.innerHTML = '<i class="fas fa-check mr-2"></i> Deployed Successfully';
+
+    } catch(err) {
+      const msg = err.code==='ACTION_REJECTED'||err.code===4001
+        ? 'Deployment rejected by user.'
+        : 'Deploy error: '+(err.shortMessage||err.message||'Unknown error');
+      setStatus('<i class="fas fa-times-circle mr-2"></i>'+msg, 'error');
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-rocket mr-2"></i> Retry Deployment';
+    }
+  }
+  </script>
   `)
 }
