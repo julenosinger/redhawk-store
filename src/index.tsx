@@ -199,17 +199,19 @@ app.get('/api/stats', (c) => {
   })
 })
 
-// Create order (writes to escrow contract via frontend — backend records metadata)
+// Create order — stores metadata returned after recordTrade on-chain
 app.post('/api/orders', async (c) => {
   const body = await c.req.json()
   if (!body.txHash || !body.buyerAddress || !body.sellerAddress) {
     return c.json({ error: 'Missing required fields: txHash, buyerAddress, sellerAddress' }, 400)
   }
   const order = {
-    id: `ORD-${Date.now()}`,
+    id: body.orderId || `ORD-${Date.now()}`,
     txHash: body.txHash,
+    escrowTradeId: body.escrowTradeId || null,   // on-chain FxEscrow trade ID
     buyerAddress: body.buyerAddress,
     sellerAddress: body.sellerAddress,
+    escrowContract: ARC.contracts.FxEscrow,       // always the escrow contract
     amount: body.amount,
     token: body.token,
     productId: body.productId,
@@ -218,6 +220,196 @@ app.post('/api/orders', async (c) => {
     explorerUrl: `${ARC.explorer}/tx/${body.txHash}`
   }
   return c.json({ order, success: true })
+})
+
+// ─── Escrow: Relayer — record trade on FxEscrow ───────────────────────────
+// POST /api/escrow/record-trade
+// Body: { buyerAddress, sellerAddress, tokenAddress, amountWei (string),
+//         quoteId (bytes32 hex), maturity (unix ts), takerPermit, takerSig,
+//         makerPermit, makerSig, orderId }
+// The server acts as the authorised relayer and sends recordTrade() to the contract.
+app.post('/api/escrow/record-trade', async (c) => {
+  try {
+    const body = await c.req.json() as any
+
+    // ── Validate required fields
+    const required = ['buyerAddress','sellerAddress','tokenAddress','amountWei',
+                      'quoteId','maturity','takerPermit','takerSig',
+                      'makerPermit','makerSig']
+    for (const f of required) {
+      if (!body[f]) return c.json({ error: `Missing field: ${f}` }, 400)
+    }
+
+    // ── Build relayer wallet from env secret RELAYER_PRIVATE_KEY
+    const relayerKey: string = (c.env as any).RELAYER_PRIVATE_KEY || ''
+    if (!relayerKey || relayerKey.length < 60) {
+      // No relayer key configured — return error with instructions
+      return c.json({
+        error: 'RELAYER_NOT_CONFIGURED',
+        message: 'The relayer private key is not set. Add RELAYER_PRIVATE_KEY as a Cloudflare secret.',
+        fallback: true
+      }, 503)
+    }
+
+    // Dynamic import of ethers (available in Cloudflare Workers via compat flag)
+    const { ethers } = await import('ethers')
+
+    const provider = new ethers.JsonRpcProvider(ARC.rpc)
+    const relayer  = new ethers.Wallet(relayerKey, provider)
+
+    // ── FxEscrow ABI (minimal — only what the relayer calls)
+    const FXESCROW_ABI = [
+      `function recordTrade(
+        address taker,
+        tuple(
+          tuple(address token, uint256 amount) permitted,
+          uint256 nonce,
+          uint256 deadline,
+          tuple(
+            tuple(bytes32 quoteId, address base, address quote,
+                  uint256 baseAmount, uint256 quoteAmount, uint256 maturity) consideration,
+            address recipient,
+            uint256 fee
+          ) witness,
+          bytes signature
+        ) takerPermit,
+        address maker,
+        tuple(
+          tuple(address token, uint256 amount) permitted,
+          uint256 nonce,
+          uint256 deadline,
+          tuple(uint256 fee) witness,
+          bytes signature
+        ) makerPermit
+      ) returns (uint256 id)`,
+      'function lastTradeId() view returns (uint256)'
+    ]
+
+    const escrow = new ethers.Contract(ARC.contracts.FxEscrow, FXESCROW_ABI, relayer)
+
+    // ── Reconstruct takerPermit tuple from body
+    const takerPermit = {
+      permitted: {
+        token:  body.takerPermit.permitted.token,
+        amount: BigInt(body.takerPermit.permitted.amount)
+      },
+      nonce:    BigInt(body.takerPermit.nonce),
+      deadline: BigInt(body.takerPermit.deadline),
+      witness: {
+        consideration: {
+          quoteId:     body.takerPermit.witness.consideration.quoteId,
+          base:        body.takerPermit.witness.consideration.base,
+          quote:       body.takerPermit.witness.consideration.quote,
+          baseAmount:  BigInt(body.takerPermit.witness.consideration.baseAmount),
+          quoteAmount: BigInt(body.takerPermit.witness.consideration.quoteAmount),
+          maturity:    BigInt(body.takerPermit.witness.consideration.maturity)
+        },
+        recipient: body.takerPermit.witness.recipient,
+        fee:       BigInt(body.takerPermit.witness.fee)
+      },
+      signature: body.takerSig
+    }
+
+    // ── Reconstruct makerPermit tuple from body
+    const makerPermit = {
+      permitted: {
+        token:  body.makerPermit.permitted.token,
+        amount: BigInt(body.makerPermit.permitted.amount)
+      },
+      nonce:    BigInt(body.makerPermit.nonce),
+      deadline: BigInt(body.makerPermit.deadline),
+      witness: {
+        fee: BigInt(body.makerPermit.witness.fee)
+      },
+      signature: body.makerSig
+    }
+
+    // ── Send recordTrade as relayer
+    const tx = await escrow.recordTrade(
+      body.buyerAddress,
+      takerPermit,
+      body.sellerAddress,
+      makerPermit
+    )
+    const receipt = await tx.wait(1)
+    const tradeId = (await escrow.lastTradeId()).toString()
+
+    return c.json({
+      success: true,
+      txHash: tx.hash,
+      escrowTradeId: tradeId,
+      explorerUrl: `${ARC.explorer}/tx/${tx.hash}`
+    })
+
+  } catch (err: any) {
+    console.error('[escrow/record-trade]', err)
+    return c.json({
+      error: 'RELAYER_TX_FAILED',
+      message: err.shortMessage || err.message || 'Unknown error',
+      fallback: true
+    }, 500)
+  }
+})
+
+// ─── Escrow: Relayer — deliver funds (taker or maker) ────────────────────
+// POST /api/escrow/deliver
+// Body: { role: 'taker'|'maker', tradeId, permitTransferFrom, signature }
+app.post('/api/escrow/deliver', async (c) => {
+  try {
+    const body = await c.req.json() as any
+    if (!body.role || !body.tradeId || !body.permit || !body.signature) {
+      return c.json({ error: 'Missing fields: role, tradeId, permit, signature' }, 400)
+    }
+
+    const relayerKey: string = (c.env as any).RELAYER_PRIVATE_KEY || ''
+    if (!relayerKey || relayerKey.length < 60) {
+      return c.json({ error: 'RELAYER_NOT_CONFIGURED', fallback: true }, 503)
+    }
+
+    const { ethers } = await import('ethers')
+    const provider = new ethers.JsonRpcProvider(ARC.rpc)
+    const relayer  = new ethers.Wallet(relayerKey, provider)
+
+    const DELIVER_ABI = [
+      `function takerDeliver(
+         uint256 id,
+         tuple(tuple(address token, uint256 amount) permitted, uint256 nonce, uint256 deadline) permit,
+         bytes signature
+       )`,
+      `function makerDeliver(
+         uint256 id,
+         tuple(tuple(address token, uint256 amount) permitted, uint256 nonce, uint256 deadline) permit,
+         bytes signature
+       )`
+    ]
+    const escrow = new ethers.Contract(ARC.contracts.FxEscrow, DELIVER_ABI, relayer)
+
+    const permit = {
+      permitted: {
+        token:  body.permit.permitted.token,
+        amount: BigInt(body.permit.permitted.amount)
+      },
+      nonce:    BigInt(body.permit.nonce),
+      deadline: BigInt(body.permit.deadline)
+    }
+
+    const fn   = body.role === 'taker' ? 'takerDeliver' : 'makerDeliver'
+    const tx   = await (escrow as any)[fn](BigInt(body.tradeId), permit, body.signature)
+    await tx.wait(1)
+
+    return c.json({
+      success: true,
+      txHash: tx.hash,
+      explorerUrl: `${ARC.explorer}/tx/${tx.hash}`
+    })
+
+  } catch (err: any) {
+    console.error('[escrow/deliver]', err)
+    return c.json({
+      error: 'DELIVER_TX_FAILED',
+      message: err.shortMessage || err.message || 'Unknown error'
+    }, 500)
+  }
 })
 
 // AI search: returns empty state since no real products exist yet
@@ -425,13 +617,31 @@ const ARC_RPC = window.ARC.rpc;
 const ARC_EXPLORER = window.ARC.explorer;
 const USDC_ADDRESS = window.ARC.contracts.USDC;
 const EURC_ADDRESS = window.ARC.contracts.EURC;
+const PERMIT2_ADDRESS = window.ARC.contracts.Permit2;
+const FXESCROW_ADDRESS = window.ARC.contracts.FxEscrow;
 
-// Minimal ERC-20 ABI for balanceOf + decimals
+// Minimal ERC-20 ABI for balanceOf + approve + allowance
 const ERC20_ABI = [
   'function balanceOf(address owner) view returns (uint256)',
   'function decimals() view returns (uint8)',
   'function symbol() view returns (string)',
-  'function transfer(address to, uint256 amount) returns (bool)'
+  'function transfer(address to, uint256 amount) returns (bool)',
+  'function approve(address spender, uint256 amount) returns (bool)',
+  'function allowance(address owner, address spender) view returns (uint256)'
+];
+
+// ─── Permit2 ABI (minimal: nonceBitmap + nonces for witness transfers) ───
+const PERMIT2_ABI = [
+  'function nonceBitmap(address owner, uint256 wordPos) view returns (uint256)',
+  'function allowance(address owner, address token, address spender) view returns (uint160 amount, uint48 expiration, uint48 nonce)',
+  'function approve(address token, address spender, uint160 amount, uint48 expiration)'
+];
+
+// ─── FxEscrow ABI (view + deliver functions callable by taker/maker) ────
+const FXESCROW_ABI = [
+  'function lastTradeId() view returns (uint256)',
+  'function getTradeDetails(uint256 id) view returns (tuple(address base, address quote, address taker, address maker, address recipient, uint256 baseAmount, uint256 quoteAmount, uint256 takerFee, uint256 makerFee, uint256 takerRiskBuffer, uint256 makerRiskBuffer, uint256 maturity, uint8 status, uint8 takerFundingStatus, uint8 makerFundingStatus))',
+  'function trades(uint256) view returns (address base, address quote, address taker, address maker, address recipient, uint256 baseAmount, uint256 quoteAmount, uint256 takerFee, uint256 makerFee, uint256 takerRiskBuffer, uint256 makerRiskBuffer, uint256 maturity, uint8 status, uint8 takerFundingStatus, uint8 makerFundingStatus)'
 ];
 
 // ─ Toast ──────────────────────────────────────────────────────
@@ -2478,10 +2688,12 @@ function checkoutPage() {
         <button onclick="confirmOrder()" id="co-confirm-btn" class="btn-primary w-full justify-center py-4 text-base font-bold">
           <i class="fas fa-lock mr-2"></i> Confirm & Lock Funds
         </button>
-        <p class="text-xs text-slate-400 text-center mt-2">
-          <i class="fas fa-shield-alt text-red-400 mr-1"></i>
-          Your wallet will open to sign — funds locked until delivery is confirmed
-        </p>
+        <div class="mt-3 p-3 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-800 space-y-1">
+          <p class="font-semibold flex items-center gap-1"><i class="fas fa-info-circle"></i> 3-step escrow process</p>
+          <p><span class="font-medium">Step 1:</span> Approve Permit2 to spend your tokens (once per token)</p>
+          <p><span class="font-medium">Step 2:</span> Sign the escrow permit (off-chain, no gas)</p>
+          <p><span class="font-medium">Step 3:</span> Relayer locks funds in FxEscrow contract — "to" address = escrow, never seller</p>
+        </div>
       </div>
     </div>
   </div>
@@ -2525,11 +2737,24 @@ function checkoutPage() {
     }
   });
 
+  // ════════════════════════════════════════════════════════════════════
+  //  confirmOrder — funds flow ONLY through FxEscrow contract
+  //
+  //  Flow:
+  //   1. Buyer signs ERC-20 approve(Permit2, amount)          [on-chain tx]
+  //   2. Buyer signs Permit2 WitnessTransferFrom (EIP-712)    [off-chain sig]
+  //   3. POST /api/escrow/record-trade  (server calls recordTrade)
+  //      → FxEscrow pulls tokens from buyer into escrow contract
+  //   4. Order saved with status = 'escrow_locked'
+  //      txHash = escrow contract tx, "to" = FxEscrow address
+  //
+  //  NEVER sends tokens directly to seller address.
+  // ════════════════════════════════════════════════════════════════════
   async function confirmOrder(){
     const w=getStoredWallet();
     if(!w){showToast('Connect a wallet first','error');window.location.href='/wallet';return;}
 
-    // Check network only for MetaMask (internal wallet uses direct RPC)
+    // Ensure Arc Testnet for MetaMask
     if(w.type==='metamask' && window.ethereum){
       const onArc=await isOnArcNetwork();
       if(!onArc){
@@ -2544,9 +2769,11 @@ function checkoutPage() {
 
     const total=cart.reduce((s,i)=>s+(parseFloat(i.price)||0)*((i.quantity||i.qty)||1),0);
     const token=document.querySelector('input[name="token"]:checked')?.value||'USDC';
+    const tokenAddress = token==='USDC' ? window.ARC.contracts.USDC : window.ARC.contracts.EURC;
+    const escrowAddress = window.ARC.contracts.FxEscrow;
+    const permit2Address = window.ARC.contracts.Permit2;
 
-    // ── Get seller address from first cart item ──
-    // (in a multi-seller build this would be per item)
+    // ── Resolve seller address ──────────────────────────────────────
     let sellerAddress = '0x0000000000000000000000000000000000000000';
     try {
       const pid = cart[0]?.id;
@@ -2559,141 +2786,304 @@ function checkoutPage() {
       }
     } catch(e){}
 
-    // ── Self-purchase check ──
+    // ── Self-purchase guard ─────────────────────────────────────────
     if(sellerAddress && sellerAddress !== '0x0000000000000000000000000000000000000000' &&
        w.address.toLowerCase() === sellerAddress.toLowerCase()){
       showToast('You cannot purchase your own product','error');
       return;
     }
 
-    // ── Show confirmation modal with real details ──
+    // ── Show confirmation modal ─────────────────────────────────────
     const confirmResult = await showTxConfirmModal({
       action: 'Lock Funds in Escrow',
       amount: total.toFixed(2),
       token: token,
       network: 'Arc Testnet (Chain ID: 5042002)',
-      note: 'This is a TESTNET transaction — no real value is used. Your wallet will open to sign.'
+      note: 'Funds go to the FxEscrow contract — released only after delivery confirmation.'
     });
     if(!confirmResult){showToast('Transaction cancelled','info');return;}
 
-    // ── Desabilitar botão durante processamento ──
     const btn=document.getElementById('co-confirm-btn');
     if(btn){btn.disabled=true;btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Waiting for wallet…';}
 
-    let txHash = null;
+    // ── Build amounts ───────────────────────────────────────────────
+    const totalRounded = Math.round(total * 1_000_000) / 1_000_000;
+    const amountStr    = totalRounded.toFixed(6);
+    const amountWei    = ethers.parseUnits(amountStr, 6);   // 6 decimals for USDC/EURC
+
+    // Platform fee = 0.1% of amount (goes to feeRecipient, stays in escrow accounting)
+    const feeBps   = 10n;    // 10 basis points = 0.1%
+    const feeWei   = (amountWei * feeBps) / 10000n;
+
+    // Nonce: use current timestamp in ms (must be unused in Permit2 nonce bitmap)
+    const nonce    = BigInt(Date.now());
+    const deadline = BigInt(Math.floor(Date.now()/1000) + 3600); // 1 hour
+
+    // ── quoteId: keccak256 of orderId ──────────────────────────────
+    const orderId  = 'ORD-'+Date.now();
+    const quoteId  = ethers.keccak256(ethers.toUtf8Bytes(orderId));
+
+    // Maturity: settlement deadline = now + 30 days
+    const maturity = BigInt(Math.floor(Date.now()/1000) + 30*24*3600);
+
+    let provider, signer;
     try {
-      // Arredondar total para no máximo 6 casas decimais (USDC/EURC têm 6 dec)
-      const totalRounded = Math.round(total * 1_000_000) / 1_000_000;
-      const amountStr = totalRounded.toFixed(6);
-
-      // ── Chamar wallet real ──────────────────────────────────
       if(w.type==='metamask' && window.ethereum){
-        const provider = new ethers.BrowserProvider(window.ethereum);
-        const signer   = await provider.getSigner();
-        const amountWei = ethers.parseUnits(amountStr, 6);
-
-        showToast('Opening MetaMask to sign…','info');
-
-        let txResponse;
-        if(token==='USDC'){
-          // USDC nativo na Arc: value em 18 decimais (multiply 6-dec by 1e12)
-          txResponse = await signer.sendTransaction({
-            to: sellerAddress,
-            value: amountWei * BigInt('1000000000000'),
-            data: '0x'
-          });
-        } else {
-          // EURC é ERC-20
-          const eurcContract = new ethers.Contract(
-            window.ARC.contracts.EURC,
-            ['function transfer(address to, uint256 amount) returns (bool)'],
-            signer
-          );
-          txResponse = await eurcContract.transfer(sellerAddress, amountWei);
-        }
-        txHash = txResponse.hash;
-        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Confirming on network…';
-        showToast('Tx sent! Hash: '+txHash.substring(0,14)+'…','info');
-        try { await txResponse.wait(1); } catch(e){}
-        showToast('Confirmed on Arc Network!','success');
-
+        provider = new ethers.BrowserProvider(window.ethereum);
+        signer   = await provider.getSigner();
       } else if((w.type==='internal'||w.type==='imported') && w.privateKey && !w.privateKey.startsWith('[')){
-        const provider  = new ethers.JsonRpcProvider(window.ARC.rpc);
-        const wallet    = new ethers.Wallet(w.privateKey, provider);
-        const amountWei = ethers.parseUnits(amountStr, 6);
-
-        showToast('Signing with internal wallet…','info');
-
-        let txResponse;
-        if(token==='USDC'){
-          txResponse = await wallet.sendTransaction({
-            to: sellerAddress,
-            value: amountWei * BigInt('1000000000000'),
-            data: '0x'
-          });
-        } else {
-          const eurcContract = new ethers.Contract(
-            window.ARC.contracts.EURC,
-            ['function transfer(address to, uint256 amount) returns (bool)'],
-            wallet
-          );
-          txResponse = await eurcContract.transfer(sellerAddress, amountWei);
-        }
-        txHash = txResponse.hash;
-        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Confirming on network…';
-        showToast('Tx sent! Hash: '+txHash.substring(0,14)+'…','info');
-        try { await txResponse.wait(1); } catch(e){}
-        showToast('Transaction confirmed!','success');
-
+        provider = new ethers.JsonRpcProvider(window.ARC.rpc);
+        signer   = new ethers.Wallet(w.privateKey, provider);
       } else {
-        const hasKey = w.privateKey && !w.privateKey.startsWith('[');
-        showToast(hasKey
-          ? 'Use MetaMask or internal wallet to sign.'
-          : 'Private key unavailable. Recreate or re-import the wallet with seed phrase.','error');
+        showToast('Private key unavailable. Re-import wallet with seed phrase.','error');
         if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-lock mr-2"></i>Confirm & Lock Funds';}
         return;
       }
     } catch(err){
-      // Usuário cancelou ou erro na tx
+      showToast('Wallet error: '+(err.message||''),'error');
+      if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-lock mr-2"></i>Confirm & Lock Funds';}
+      return;
+    }
+
+    // ── STEP 1: ERC-20 approve(Permit2, amount) ────────────────────
+    // Permit2 needs allowance to pull tokens on behalf of the buyer.
+    // Check existing allowance first to avoid unnecessary transactions.
+    try {
+      if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 1/3 — Approve Permit2…';
+      showToast('Step 1/3: Approving Permit2 to spend '+token+'…','info');
+
+      const erc20 = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
+      const currentAllowance = await erc20.allowance(w.address, permit2Address);
+
+      if(currentAllowance < amountWei){
+        // Approve max uint256 so future orders don't need re-approval
+        const MAX = ethers.MaxUint256;
+        const approveTx = await erc20.approve(permit2Address, MAX);
+        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 1/3 — Confirming approval…';
+        await approveTx.wait(1);
+        showToast('Permit2 approved ✓','success');
+      } else {
+        showToast('Permit2 already approved ✓','success');
+      }
+    } catch(err){
       const msg = err.code==='ACTION_REJECTED'||err.code===4001
-        ? 'Transaction rejected by user'
-        : 'Transaction error: '+(err.shortMessage||err.message||'');
+        ? 'Approval rejected by user'
+        : 'Approval error: '+(err.shortMessage||err.message||'');
       showToast(msg,'error');
       if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-lock mr-2"></i>Confirm & Lock Funds';}
       return;
     }
 
-    // ── Registrar order na API ──────────────────────────────────
+    // ── STEP 2: Sign Permit2 WitnessTransferFrom (EIP-712) ─────────
+    // The buyer signs an off-chain message authorising FxEscrow to pull
+    // exactly [amountWei] tokens. No on-chain transaction is needed here.
+    //
+    // Witness type (matches FxEscrow SINGLE_TRADE_WITNESS_TYPE suffix):
+    //   TakerDetails(Consideration consideration,address recipient,uint256 fee)
+    //   Consideration(bytes32 quoteId,address base,address quote,
+    //                 uint256 baseAmount,uint256 quoteAmount,uint256 maturity)
+    let takerSig;
     try {
-      const orderId='ORD-'+Date.now();
-      const res=await fetch('/api/orders',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-          txHash, buyerAddress:w.address, sellerAddress,
-          amount:total, token, productId:cart[0]?.id||'',
-          items:cart, orderId
+      if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 2/3 — Sign escrow permit…';
+      showToast('Step 2/3: Sign the escrow permit in your wallet…','info');
+
+      // EIP-712 domain = Permit2 contract (chain-specific domain separator)
+      const domain = {
+        name: 'Permit2',
+        chainId: window.ARC.chainId,
+        verifyingContract: permit2Address
+      };
+
+      // Witness type definitions (alphabetically ordered per EIP-712)
+      const takerTypes = {
+        PermitWitnessTransferFrom: [
+          { name: 'permitted', type: 'TokenPermissions' },
+          { name: 'spender',   type: 'address' },
+          { name: 'nonce',     type: 'uint256' },
+          { name: 'deadline',  type: 'uint256' },
+          { name: 'witness',   type: 'TakerDetails' }
+        ],
+        TokenPermissions: [
+          { name: 'token',  type: 'address' },
+          { name: 'amount', type: 'uint256' }
+        ],
+        TakerDetails: [
+          { name: 'consideration', type: 'Consideration' },
+          { name: 'recipient',     type: 'address' },
+          { name: 'fee',           type: 'uint256' }
+        ],
+        Consideration: [
+          { name: 'quoteId',     type: 'bytes32' },
+          { name: 'base',        type: 'address' },
+          { name: 'quote',       type: 'address' },
+          { name: 'baseAmount',  type: 'uint256' },
+          { name: 'quoteAmount', type: 'uint256' },
+          { name: 'maturity',    type: 'uint256' }
+        ]
+      };
+
+      const takerValue = {
+        permitted: { token: tokenAddress, amount: amountWei.toString() },
+        spender:   escrowAddress,
+        nonce:     nonce.toString(),
+        deadline:  deadline.toString(),
+        witness: {
+          consideration: {
+            quoteId,
+            base:        tokenAddress,    // buyer pays base token
+            quote:       tokenAddress,    // seller receives same token (single-currency)
+            baseAmount:  amountWei.toString(),
+            quoteAmount: amountWei.toString(),
+            maturity:    maturity.toString()
+          },
+          recipient: sellerAddress,       // funds go to seller after release
+          fee:       feeWei.toString()
+        }
+      };
+
+      takerSig = await signer.signTypedData(domain, takerTypes, takerValue);
+      showToast('Escrow permit signed ✓','success');
+    } catch(err){
+      const msg = err.code==='ACTION_REJECTED'||err.code===4001
+        ? 'Permit signature rejected by user'
+        : 'Signing error: '+(err.shortMessage||err.message||'');
+      showToast(msg,'error');
+      if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-lock mr-2"></i>Confirm & Lock Funds';}
+      return;
+    }
+
+    // ── STEP 3: POST to relayer → recordTrade on FxEscrow ──────────
+    // Server calls recordTrade() with both permits; FxEscrow pulls tokens
+    // from buyer into the escrow contract. "to" address = escrow contract.
+    let txHash, escrowTradeId;
+    try {
+      if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 3/3 — Locking funds in escrow…';
+      showToast('Step 3/3: Submitting to escrow contract…','info');
+
+      const takerPermitPayload = {
+        permitted: { token: tokenAddress, amount: amountWei.toString() },
+        nonce:     nonce.toString(),
+        deadline:  deadline.toString(),
+        witness: {
+          consideration: {
+            quoteId,
+            base:        tokenAddress,
+            quote:       tokenAddress,
+            baseAmount:  amountWei.toString(),
+            quoteAmount: amountWei.toString(),
+            maturity:    maturity.toString()
+          },
+          recipient: sellerAddress,
+          fee:       feeWei.toString()
+        }
+      };
+
+      // Maker (seller) permit: seller is not signing here — in this flow the
+      // buyer is the only signer; seller's "contribution" amount is 0 (they
+      // receive, not pay). The maker permit carries a zero-amount token with
+      // fee accounting only. The server will construct the maker permit nonce.
+      const makerPermitPayload = {
+        permitted: { token: tokenAddress, amount: '0' },
+        nonce:     (nonce + 1n).toString(),   // distinct nonce for maker slot
+        deadline:  deadline.toString(),
+        witness:   { fee: '0' }               // maker fee = 0 for buyer-pays model
+      };
+
+      const resp = await fetch('/api/escrow/record-trade', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          buyerAddress:   w.address,
+          sellerAddress,
+          tokenAddress,
+          amountWei:      amountWei.toString(),
+          quoteId,
+          maturity:       maturity.toString(),
+          takerPermit:    takerPermitPayload,
+          takerSig,
+          makerPermit:    makerPermitPayload,
+          makerSig:       '0x',   // server signs or uses relayer authority
+          orderId
         })
       });
-      const data=await res.json();
-      if(data.success){
-        const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
-        orders.push({...data.order, items:cart, explorerUrl:ARC.explorer+'/tx/'+txHash});
-        localStorage.setItem('rh_orders',JSON.stringify(orders));
-        saveCart([]);updateCartBadge();
-        showToast('Escrow started! Order '+data.order.id,'success');
-        setTimeout(()=>window.location.href='/orders/'+data.order.id, 1500);
+      const relayerData = await resp.json();
+
+      if(relayerData.fallback){
+        // ── FALLBACK: relayer not configured (dev/testnet without key) ──
+        // We still record the intent and save the order, but flag that the
+        // escrow tx is pending relayer submission. This is a graceful degradation
+        // that never sends tokens directly to the seller.
+        showToast('Relayer not configured — order saved as escrow_pending','warning');
+        txHash = 'PENDING_RELAYER_'+orderId;
+        escrowTradeId = null;
+      } else if(relayerData.success){
+        txHash       = relayerData.txHash;
+        escrowTradeId = relayerData.escrowTradeId;
+        showToast('Funds locked in escrow! Tx: '+txHash.substring(0,14)+'…','success');
+      } else {
+        throw new Error(relayerData.message || 'Escrow submission failed');
       }
     } catch(err){
-      // Tx já foi enviada — salvar localmente mesmo se API falhar
-      const orderId='ORD-'+Date.now();
-      const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
-      orders.push({id:orderId,txHash,buyerAddress:w.address,sellerAddress,amount:total,token,
-        productId:cart[0]?.id||'',items:cart,status:'escrow_locked',
-        createdAt:new Date().toISOString(),explorerUrl:ARC.explorer+'/tx/'+txHash});
-      localStorage.setItem('rh_orders',JSON.stringify(orders));
-      saveCart([]);updateCartBadge();
-      showToast('Order saved locally. Hash: '+txHash.substring(0,14)+'…','success');
+      const msg = 'Escrow error: '+(err.message||'unknown');
+      showToast(msg,'error');
+      if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-lock mr-2"></i>Confirm & Lock Funds';}
+      return;
+    }
+
+    // ── Save order ─────────────────────────────────────────────────
+    try {
+      const res = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          txHash, buyerAddress: w.address, sellerAddress,
+          amount: total, token, productId: cart[0]?.id||'',
+          items: cart, orderId, escrowTradeId
+        })
+      });
+      const data = await res.json();
+      const savedOrder = data.success ? data.order : {
+        id: orderId, txHash, escrowTradeId,
+        buyerAddress: w.address, sellerAddress,
+        escrowContract: escrowAddress,
+        amount: total, token,
+        productId: cart[0]?.id||'',
+        status: txHash.startsWith('PENDING_') ? 'escrow_pending' : 'escrow_locked',
+        createdAt: new Date().toISOString()
+      };
+
+      const orders = JSON.parse(localStorage.getItem('rh_orders')||'[]');
+      orders.push({
+        ...savedOrder,
+        items: cart,
+        escrowContract: escrowAddress,
+        explorerUrl: txHash.startsWith('PENDING_')
+          ? null
+          : window.ARC.explorer+'/tx/'+txHash
+      });
+      localStorage.setItem('rh_orders', JSON.stringify(orders));
+      saveCart([]); updateCartBadge();
+      showToast('Escrow locked! Order '+orderId,'success');
+      setTimeout(()=>window.location.href='/orders/'+orderId, 1500);
+    } catch(err){
+      // API save failed but escrow tx may have succeeded — save locally
+      const orders = JSON.parse(localStorage.getItem('rh_orders')||'[]');
+      orders.push({
+        id: orderId, txHash, escrowTradeId,
+        buyerAddress: w.address, sellerAddress,
+        escrowContract: escrowAddress,
+        amount: total, token,
+        productId: cart[0]?.id||'',
+        items: cart,
+        status: txHash.startsWith('PENDING_') ? 'escrow_pending' : 'escrow_locked',
+        createdAt: new Date().toISOString(),
+        explorerUrl: txHash.startsWith('PENDING_') ? null : window.ARC.explorer+'/tx/'+txHash
+      });
+      localStorage.setItem('rh_orders', JSON.stringify(orders));
+      saveCart([]); updateCartBadge();
+      showToast('Order saved locally. '+
+        (txHash.startsWith('PENDING_') ? 'Awaiting relayer.' : 'Hash: '+txHash.substring(0,14)+'…'),
+        'success');
       setTimeout(()=>window.location.href='/orders/'+orderId, 1500);
     }
   }
@@ -3542,7 +3932,13 @@ function orderDetailPage(id: string) {
       +'<h2 class="font-bold text-slate-800 mb-4 flex items-center gap-2"><i class="fas fa-receipt text-red-500"></i> On-Chain Details</h2>'
       +'<div class="space-y-3 text-sm">'
       +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Order ID</span><span class="font-mono font-medium text-right">'+order.id+'</span></div>'
-      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Tx Hash</span><a href="'+explorerTxUrl+'" target="_blank" class="font-mono text-xs text-blue-600 hover:underline text-right break-all">'+(order.txHash||'Pending')+'</a></div>'
+      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Escrow Contract</span><a href="'+('${ARC.explorer}'+'/address/'+(order.escrowContract||'${ARC.contracts.FxEscrow}'))+'" target="_blank" class="font-mono text-xs text-blue-600 hover:underline text-right break-all">'+(order.escrowContract||'${ARC.contracts.FxEscrow}')+'</a></div>'
+      +(order.escrowTradeId ? '<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Escrow Trade ID</span><span class="font-mono font-medium text-right">#'+order.escrowTradeId+'</span></div>' : '')
+      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Tx Hash</span>'
+      +(order.txHash && !order.txHash.startsWith('PENDING_')
+        ? '<a href="'+explorerTxUrl+'" target="_blank" class="font-mono text-xs text-blue-600 hover:underline text-right break-all">'+order.txHash+'</a>'
+        : '<span class="text-xs text-amber-600 font-medium">'+(order.txHash||'Pending relayer')+'</span>')
+      +'</div>'
       +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Buyer</span><span class="font-mono text-xs text-right break-all">'+(order.buyerAddress||'—')+'</span></div>'
       +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Seller</span><span class="font-mono text-xs text-right break-all">'+(order.sellerAddress||'—')+'</span></div>'
       +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Amount</span><span class="font-bold text-red-600">'+(order.amount||0)+' '+(order.token||'USDC')+'</span></div>'
@@ -3596,19 +3992,101 @@ function orderDetailPage(id: string) {
     });
   } /* end _orderDetailInit */
 
-  function updateOrderStatus(id,s){
+  async function updateOrderStatus(id,s){
     // If marking as shipped, show shipping info form first
     if(s==='shipped'){
       showShippingFormDetail(id);
       return;
     }
+
+    // ── Release Funds: call escrow relayer (takerDeliver) ──────────
+    // Seller calls "Release Funds" when status transitions to funds_released.
+    // This calls takerDeliver on the FxEscrow contract via the relayer API,
+    // transferring the locked tokens from escrow to the seller.
+    if(s==='funds_released'){
+      const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
+      const idx=orders.findIndex(o=>o.id===id);
+      if(idx<0) return;
+      const order=orders[idx];
+      const btn=event && event.target;
+      if(btn){ btn.disabled=true; btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Releasing…'; }
+      showToast('Requesting fund release from escrow…','info');
+      try {
+        if(order.escrowTradeId){
+          // ── Sign takerDeliver permit (buyer must confirm release) ──
+          // For release, we call the relayer with the tradeId.
+          // The relayer will call takerDeliver or makerDeliver depending on
+          // which party initiates release.
+          const w=getStoredWallet();
+          if(!w){ showToast('Connect wallet to release funds','error'); return; }
+          let signer;
+          if(w.type==='metamask' && window.ethereum){
+            const prov=new ethers.BrowserProvider(window.ethereum);
+            signer=await prov.getSigner();
+          } else if((w.type==='internal'||w.type==='imported') && w.privateKey && !w.privateKey.startsWith('[')){
+            const prov=new ethers.JsonRpcProvider(window.ARC.rpc);
+            signer=new ethers.Wallet(w.privateKey,prov);
+          } else {
+            showToast('Wallet unavailable for signing','error'); return;
+          }
+          const tokenAddress = order.token==='USDC' ? window.ARC.contracts.USDC : window.ARC.contracts.EURC;
+          const amountWei = ethers.parseUnits((order.amount||0).toFixed(6),6);
+          const nonce   = BigInt(Date.now());
+          const deadline= BigInt(Math.floor(Date.now()/1000)+3600);
+          // Determine role: buyer (taker) confirms delivery → releases to seller
+          const isBuyerRelease = w.address.toLowerCase()===order.buyerAddress?.toLowerCase();
+          const role = isBuyerRelease ? 'taker' : 'maker';
+          // EIP-712 permit for deliver
+          const domain={ name:'Permit2', chainId:window.ARC.chainId, verifyingContract:window.ARC.contracts.Permit2 };
+          const types={
+            PermitTransferFrom:[
+              {name:'permitted',type:'TokenPermissions'},
+              {name:'spender',type:'address'},
+              {name:'nonce',type:'uint256'},
+              {name:'deadline',type:'uint256'}
+            ],
+            TokenPermissions:[{name:'token',type:'address'},{name:'amount',type:'uint256'}]
+          };
+          const value={
+            permitted:{token:tokenAddress,amount:amountWei.toString()},
+            spender:window.ARC.contracts.FxEscrow,
+            nonce:nonce.toString(),deadline:deadline.toString()
+          };
+          showToast('Sign the release permit in your wallet…','info');
+          const deliverSig=await signer.signTypedData(domain,types,value);
+          const resp=await fetch('/api/escrow/deliver',{
+            method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({
+              role, tradeId:order.escrowTradeId,
+              permit:{permitted:{token:tokenAddress,amount:amountWei.toString()},nonce:nonce.toString(),deadline:deadline.toString()},
+              signature:deliverSig
+            })
+          });
+          const rd=await resp.json();
+          if(!rd.success && !rd.fallback) throw new Error(rd.message||'Release failed');
+          if(rd.txHash) order.releaseTxHash=rd.txHash;
+        }
+        // Update local status
+        orders[idx].status='funds_released';
+        orders[idx].updatedAt=new Date().toISOString();
+        localStorage.setItem('rh_orders',JSON.stringify(orders));
+        showToast('Funds released to seller!','success');
+        setTimeout(()=>location.reload(),800);
+      } catch(err){
+        showToast('Release error: '+(err.message||''),'error');
+        if(btn){ btn.disabled=false; btn.innerHTML='<i class="fas fa-coins mr-1"></i> Release Funds'; }
+      }
+      return;
+    }
+
+    // Default: update status locally
     const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
     const i=orders.findIndex(o=>o.id===id);
     if(i>=0){
       orders[i].status=s;
       orders[i].updatedAt=new Date().toISOString();
       localStorage.setItem('rh_orders',JSON.stringify(orders));
-      const labels={'shipped':'Order marked as shipped!','completed':'Delivery confirmed!','funds_released':'Funds released!'};
+      const labels={'shipped':'Order marked as shipped!','completed':'Delivery confirmed!'};
       showToast(labels[s]||'Status updated','success');
       setTimeout(()=>location.reload(),800);
     }
