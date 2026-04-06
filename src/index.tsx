@@ -3495,9 +3495,12 @@ function orderDetailPage(id: string) {
 
     // Build role-based action buttons
     let actionBtns='';
+    var isDisputed=order.status==='dispute';
     if(isSeller){
       if(order.status==='escrow_locked') actionBtns+='<button data-oid="'+order.id+'" data-status="shipped" class="update-status-btn btn-primary"><i class="fas fa-shipping-fast mr-1"></i> Mark as Shipped</button>';
+      // Release Funds is BLOCKED while dispute is active
       if(order.status==='completed')     actionBtns+='<button data-oid="'+order.id+'" data-status="funds_released" class="update-status-btn btn-primary bg-green-600 hover:bg-green-700"><i class="fas fa-coins mr-1"></i> Release Funds</button>';
+      if(isDisputed)                     actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm font-semibold"><i class="fas fa-lock"></i> Funds Locked — Dispute Active</span>';
     }
     if(isBuyer){
       if(order.status==='shipped') actionBtns+='<button data-oid="'+order.id+'" data-status="completed" class="update-status-btn btn-secondary"><i class="fas fa-check-circle mr-1"></i> Confirm Delivery</button>';
@@ -3576,7 +3579,10 @@ function orderDetailPage(id: string) {
       // Actions
       +'<div class="flex flex-wrap gap-3">'
       +actionBtns
-      +'<button data-oid="'+order.id+'" class="open-dispute-btn btn-secondary"><i class="fas fa-gavel mr-1"></i> Open Dispute</button>'
+      // Only show Open Dispute button if not already disputed AND user is buyer or seller
+      +((!isDisputed && (isBuyer||isSeller))
+        ?'<button data-oid="'+order.id+'" class="open-dispute-btn btn-secondary"><i class="fas fa-gavel mr-1"></i> Open Dispute</button>'
+        :(isDisputed?'<a href="/disputes" class="btn-secondary text-sm"><i class="fas fa-gavel mr-1"></i> View Dispute</a>':''))
       +'<button onclick="showReceiptModalDetail()" class="btn-secondary text-sm"><i class="fas fa-receipt mr-1"></i> View Receipt</button>'
       +'<a href="'+explorerTxUrl+'" target="_blank" class="btn-secondary text-sm"><i class="fas fa-external-link-alt mr-1"></i> Arc Explorer</a>'
       +'</div>'
@@ -3586,7 +3592,7 @@ function orderDetailPage(id: string) {
       b.addEventListener('click',function(){ updateOrderStatus(this.dataset.oid, this.dataset.status); });
     });
     document.querySelectorAll('.open-dispute-btn').forEach(function(b){
-      b.addEventListener('click',function(){ openDispute(this.dataset.oid); });
+      b.addEventListener('click',function(){ openDisputeForm(this.dataset.oid); });
     });
   } /* end _orderDetailInit */
 
@@ -3660,10 +3666,193 @@ function orderDetailPage(id: string) {
       }
     };
   }
-  function openDispute(id){
-    const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
-    const i=orders.findIndex(o=>o.id===id);
-    if(i>=0){orders[i].status='dispute';orders[i].disputedAt=new Date().toISOString();localStorage.setItem('rh_orders',JSON.stringify(orders));showToast('Dispute opened — funds remain locked in Arc escrow','info');setTimeout(()=>location.reload(),800);}
+  function openDisputeForm(id){
+    var ordersRaw=JSON.parse(localStorage.getItem('rh_orders')||'[]');
+    var order=ordersRaw.find(function(o){return o.id===id;});
+    if(!order){showToast('Order not found','error');return;}
+    // Access control: only buyer or seller
+    var wallet=typeof getStoredWallet==='function'?getStoredWallet():null;
+    var myAddr=wallet?wallet.address.toLowerCase():'';
+    var isBuyerOrSeller=(order.buyerAddress&&order.buyerAddress.toLowerCase()===myAddr)||(order.sellerAddress&&order.sellerAddress.toLowerCase()===myAddr);
+    if(!isBuyerOrSeller){showToast('Only the buyer or seller can open a dispute','error');return;}
+
+    var root=document.getElementById('receipt-modal-root');
+    if(!root)return;
+    root.innerHTML=
+      '<div id="dispute-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;">'+
+      '<div style="background:#fff;border-radius:16px;box-shadow:0 25px 60px rgba(0,0,0,0.3);width:100%;max-width:560px;max-height:92vh;overflow-y:auto;">'+
+
+      // ── Header
+      '<div style="display:flex;align-items:center;justify-content:space-between;padding:20px 20px 14px;border-bottom:1px solid #f1f5f9;">'+
+      '<div style="display:flex;align-items:center;gap:10px;">'+
+      '<div style="width:38px;height:38px;border-radius:10px;background:#fee2e2;display:flex;align-items:center;justify-content:center;"><i class="fas fa-gavel" style="color:#dc2626;font-size:16px;"></i></div>'+
+      '<div><p style="font-weight:700;color:#1e293b;margin:0;font-size:15px;">Open Dispute</p>'+
+      '<p style="font-size:11px;color:#94a3b8;margin:0;">Order '+id+' &bull; Funds will remain locked</p></div></div>'+
+      '<button id="disp-close" style="width:32px;height:32px;border:none;background:#f8fafc;border-radius:8px;cursor:pointer;font-size:18px;color:#64748b;">&times;</button>'+
+      '</div>'+
+
+      // ── Fund-lock notice
+      '<div style="margin:16px 20px 0;padding:12px 14px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;display:flex;gap:10px;align-items:flex-start;">'+
+      '<i class="fas fa-lock" style="color:#dc2626;margin-top:2px;flex-shrink:0;"></i>'+
+      '<div style="font-size:13px;color:#7f1d1d;"><strong>Funds will remain locked.</strong> While a dispute is open, USDC/EURC stays in the Arc Network escrow contract. No release or transfer is possible until the dispute is resolved.</div>'+
+      '</div>'+
+
+      // ── Form body
+      '<div style="padding:20px;display:flex;flex-direction:column;gap:16px;">'+
+
+      // Description textarea
+      '<div>'+
+      '<label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em;">Description <span style="color:#dc2626;">*</span></label>'+
+      '<textarea id="disp-desc" rows="4" placeholder="Describe your issue in detail. Include dates, what was expected, and what actually happened..." style="width:100%;padding:10px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;resize:vertical;box-sizing:border-box;font-family:inherit;"></textarea>'+
+      '</div>'+
+
+      // File upload
+      '<div>'+
+      '<label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em;">Evidence Files <span style="font-weight:400;text-transform:none;letter-spacing:0;">(images &amp; PDFs, optional)</span></label>'+
+      '<div id="disp-dropzone" style="border:2px dashed #e2e8f0;border-radius:10px;padding:24px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s;" onclick="document.getElementById(\'disp-file-input\').click()">'+
+      '<i class="fas fa-cloud-upload-alt" style="font-size:28px;color:#94a3b8;display:block;margin-bottom:8px;"></i>'+
+      '<p style="font-size:13px;color:#64748b;margin:0;">Click to choose files or drag &amp; drop here</p>'+
+      '<p style="font-size:11px;color:#94a3b8;margin:4px 0 0;">Accepted: PNG, JPG, PDF &bull; Up to 5 files &bull; 10 MB each</p>'+
+      '</div>'+
+      '<input id="disp-file-input" type="file" multiple accept="image/png,image/jpeg,application/pdf" style="display:none;">'+
+      '<ul id="disp-file-list" style="margin:8px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;"></ul>'+
+      '</div>'+
+
+      '</div>'+
+
+      // ── Footer buttons
+      '<div style="padding:14px 20px;border-top:1px solid #f1f5f9;display:flex;gap:8px;justify-content:flex-end;">'+
+      '<button id="disp-cancel" style="padding:9px 18px;border:1.5px solid #e2e8f0;border-radius:8px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:600;cursor:pointer;">Cancel</button>'+
+      '<button id="disp-submit" style="padding:9px 22px;border:none;border-radius:8px;background:#dc2626;color:#fff;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:7px;"><i class="fas fa-gavel"></i> Submit Dispute</button>'+
+      '</div>'+
+
+      '</div></div>';
+
+    // ── Selected files state
+    var selectedFiles=[];
+
+    // ── Dropzone styling
+    var dz=document.getElementById('disp-dropzone');
+    dz.addEventListener('dragover',function(e){e.preventDefault();this.style.borderColor='#dc2626';this.style.background='#fff5f5';});
+    dz.addEventListener('dragleave',function(){this.style.borderColor='#e2e8f0';this.style.background='';});
+    dz.addEventListener('drop',function(e){
+      e.preventDefault();this.style.borderColor='#e2e8f0';this.style.background='';
+      addFiles(Array.from(e.dataTransfer.files));
+    });
+
+    // ── File input change
+    document.getElementById('disp-file-input').addEventListener('change',function(){
+      addFiles(Array.from(this.files));
+      this.value=''; // reset so same file can be re-added after remove
+    });
+
+    function addFiles(files){
+      var allowed=['image/png','image/jpeg','application/pdf'];
+      files.forEach(function(f){
+        if(!allowed.includes(f.type)){showToast('Only PNG, JPG, and PDF files are accepted','error');return;}
+        if(f.size>10*1024*1024){showToast(f.name+' exceeds the 10 MB limit','error');return;}
+        if(selectedFiles.length>=5){showToast('Maximum 5 files per dispute','error');return;}
+        // Prevent duplicates by name+size
+        var dup=selectedFiles.some(function(x){return x.name===f.name&&x.size===f.size;});
+        if(dup){showToast(f.name+' is already added','info');return;}
+        selectedFiles.push(f);
+      });
+      renderFileList();
+    }
+
+    function renderFileList(){
+      var ul=document.getElementById('disp-file-list');
+      if(!ul)return;
+      ul.innerHTML=selectedFiles.map(function(f,i){
+        var icon=f.type==='application/pdf'?'fa-file-pdf':'fa-file-image';
+        var size=(f.size/1024)<1024?(Math.round(f.size/1024)+'KB'):(Math.round(f.size/1024/10.24)/100+' MB');
+        return '<li style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:7px;">'+
+          '<i class="fas '+icon+'" style="color:#64748b;font-size:14px;flex-shrink:0;"></i>'+
+          '<span style="flex:1;font-size:12px;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+escapeHtml(f.name)+'</span>'+
+          '<span style="font-size:11px;color:#94a3b8;flex-shrink:0;">'+size+'</span>'+
+          '<button data-idx="'+i+'" class="disp-remove-file" style="width:22px;height:22px;border:none;background:transparent;cursor:pointer;color:#94a3b8;font-size:14px;flex-shrink:0;padding:0;" title="Remove">&times;</button>'+
+          '</li>';
+      }).join('');
+      ul.querySelectorAll('.disp-remove-file').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          selectedFiles.splice(parseInt(this.dataset.idx),1);
+          renderFileList();
+        });
+      });
+    }
+
+    // ── escapeHtml helper (local scope)
+    function escapeHtml(s){
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // ── Read files as Data URLs for local storage
+    function readFileAsDataURL(file){
+      return new Promise(function(resolve){
+        var r=new FileReader();
+        r.onload=function(e){resolve({name:file.name,type:file.type,size:file.size,dataUrl:e.target.result});};
+        r.readAsDataURL(file);
+      });
+    }
+
+    // ── Close handlers
+    function closeDisputeModal(){root.innerHTML='';}
+    document.getElementById('disp-close').onclick=closeDisputeModal;
+    document.getElementById('disp-cancel').onclick=closeDisputeModal;
+    document.getElementById('dispute-overlay').addEventListener('click',function(e){if(e.target===this)closeDisputeModal();});
+
+    // ── Submit
+    document.getElementById('disp-submit').onclick=async function(){
+      var desc=document.getElementById('disp-desc').value.trim();
+      if(!desc){showToast('Please describe your issue before submitting','error');document.getElementById('disp-desc').focus();return;}
+
+      var btn=this;
+      btn.disabled=true;
+      btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Saving…';
+
+      try{
+        // Read all files as Data URLs (stored locally — IPFS integration point)
+        var fileRecords=await Promise.all(selectedFiles.map(readFileAsDataURL));
+
+        // Save evidence object
+        var evidence={
+          orderId:id,
+          submittedBy:myAddr,
+          submittedAt:new Date().toISOString(),
+          description:desc,
+          files:fileRecords.map(function(f){return{name:f.name,type:f.type,size:f.size,dataUrl:f.dataUrl};})
+          // NOTE: In a production deployment, replace dataUrl with an IPFS hash/URL
+          // by uploading via: https://api.pinata.cloud/pinning/pinFileToIPFS or web3.storage
+        };
+
+        // Persist evidence to localStorage (key: rh_dispute_evidence)
+        var allEvidence=JSON.parse(localStorage.getItem('rh_dispute_evidence')||'{}');
+        if(!allEvidence[id])allEvidence[id]=[];
+        allEvidence[id].push(evidence);
+        localStorage.setItem('rh_dispute_evidence',JSON.stringify(allEvidence));
+
+        // Update order status to 'dispute' and lock funds
+        var orders2=JSON.parse(localStorage.getItem('rh_orders')||'[]');
+        var idx=orders2.findIndex(function(o){return o.id===id;});
+        if(idx>=0){
+          orders2[idx].status='dispute';
+          orders2[idx].disputedAt=new Date().toISOString();
+          orders2[idx].disputeLockedFunds=true;   // explicit fund-lock flag
+          orders2[idx].disputeEvidenceCount=(orders2[idx].disputeEvidenceCount||0)+1;
+          localStorage.setItem('rh_orders',JSON.stringify(orders2));
+        }
+
+        closeDisputeModal();
+        showToast('Dispute opened — funds remain locked in Arc escrow. Evidence saved.','success');
+        setTimeout(function(){location.reload();},900);
+
+      }catch(e){
+        console.error('[dispute]',e);
+        showToast('Error saving dispute. Please try again.','error');
+        btn.disabled=false;
+        btn.innerHTML='<i class="fas fa-gavel"></i> Submit Dispute';
+      }
+    };
   }
 
   function showReceiptModalDetail(){
@@ -4555,47 +4744,29 @@ function disputesPage() {
       <i class="fas fa-gavel text-red-500"></i> Dispute Resolution
     </h1>
     <p class="text-slate-500 mb-6">Open disputes are reviewed by redhawk-store governance. Escrow funds remain locked on Arc Network until resolved.</p>
-    <div id="disputes-container">
-      <div class="text-center py-8"><div class="loading-spinner-lg mx-auto mb-4"></div><p class="text-slate-400">Loading disputes…</p></div>
+
+    <!-- Fund-lock info banner -->
+    <div class="flex items-start gap-3 p-4 mb-6 rounded-xl" style="background:#fef2f2;border:1px solid #fecaca;">
+      <i class="fas fa-lock text-red-500 mt-0.5 flex-shrink-0"></i>
+      <div>
+        <p class="font-semibold text-red-800 text-sm mb-1">Funds Are Locked During Disputes</p>
+        <p class="text-red-700 text-xs">USDC/EURC stays locked in the Arc Network escrow contract while a dispute is active. No release or transfer is possible until the dispute is resolved by both parties.</p>
+      </div>
     </div>
+
+    <!-- disputes list rendered by disputes.js -->
+    <div id="disputes-container">
+      <div class="text-center py-8">
+        <div class="loading-spinner-lg mx-auto mb-4"></div>
+        <p class="text-slate-400">Loading disputes…</p>
+      </div>
+    </div>
+
+    <!-- modal root for evidence viewer -->
+    <div id="disputes-modal-root"></div>
   </div>
-  <script>
-  document.addEventListener('DOMContentLoaded', () => {
-    const w=getStoredWallet();
-    const container=document.getElementById('disputes-container');
-    if(!w){
-      container.innerHTML='<div class="card p-12 text-center"><div class="empty-state"><i class="fas fa-gavel"></i><h3 class="font-bold text-slate-600 mb-2">Connect Wallet</h3><p class="text-sm mb-4">Connect your wallet to see your disputes.</p><a href="/wallet" class="btn-primary mx-auto">Connect Wallet</a></div></div>';
-      return;
-    }
-    const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
-    const disputes=orders.filter(o=>o.status==='dispute'&&o.buyerAddress&&o.buyerAddress.toLowerCase()===w.address.toLowerCase());
-    if(!disputes.length){
-      container.innerHTML='<div class="card p-12 text-center"><div class="empty-state"><i class="fas fa-handshake"></i><h3 class="font-bold text-slate-600 mb-2">No Active Disputes</h3><p class="text-sm">Open a dispute from any order with delivery issues.</p></div></div>';
-      return;
-    }
-    container.innerHTML=disputes.map(d=>
-      '<div class="card p-5 mb-4 border-l-4 border-red-500">'
-      +'<div class="flex items-center justify-between mb-3">'
-      +'<div><p class="font-bold text-slate-800">'+d.id+'</p>'
-      +'<p class="text-slate-400 text-xs">Opened: '+new Date(d.disputedAt||d.createdAt).toLocaleString()+'</p></div>'
-      +'<span class="px-3 py-1 rounded-full text-xs font-bold bg-red-100 text-red-700">Open Dispute</span></div>'
-      +'<p class="text-sm text-slate-600 mb-1">Locked: <strong class="text-red-600">'+(d.amount||0)+' '+(d.token||'USDC')+'</strong></p>'
-      +'<p class="text-xs text-slate-400 addr-mono mb-3">Tx: <a href="'+(d.explorerUrl||ARC.explorer+'/tx/'+d.txHash)+'" target="_blank" class="text-blue-500 hover:underline">'+(d.txHash||'').substring(0,24)+'…</a></p>'
-      +'<div class="flex gap-2">'
-      +'<button data-did="'+d.id+'" data-favor="buyer" class="resolve-btn btn-primary text-xs py-1.5">Refund Buyer</button>'
-      +'<button data-did="'+d.id+'" data-favor="seller" class="resolve-btn btn-secondary text-xs py-1.5">Release to Seller</button>'
-      +'</div></div>'
-    ).join('');
-    document.querySelectorAll('.resolve-btn').forEach(function(b){
-      b.addEventListener('click',function(){ resolveDispute(this.dataset.did, this.dataset.favor); });
-    });
-  });
-  function resolveDispute(id,favor){
-    const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
-    const i=orders.findIndex(o=>o.id===id);
-    if(i>=0){orders[i].status='completed';orders[i].disputeResolution=favor;orders[i].resolvedAt=new Date().toISOString();localStorage.setItem('rh_orders',JSON.stringify(orders));showToast('Dispute resolved in favor of '+favor+'. Escrow released.','success');setTimeout(()=>location.reload(),800);}
-  }
-  </script>
+  <!-- Disputes logic is in /static/disputes.js (no inline script) -->
+  <script src="/static/disputes.js" defer></script>
   `)
 }
 
