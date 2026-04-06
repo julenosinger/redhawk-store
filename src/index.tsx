@@ -3009,13 +3009,15 @@ function checkoutPage() {
       const relayerData = await resp.json();
 
       if(relayerData.fallback){
-        // ── FALLBACK: relayer not configured (dev/testnet without key) ──
-        // We still record the intent and save the order, but flag that the
-        // escrow tx is pending relayer submission. This is a graceful degradation
-        // that never sends tokens directly to the seller.
-        showToast('Relayer not configured — order saved as escrow_pending','warning');
-        txHash = 'PENDING_RELAYER_'+orderId;
-        escrowTradeId = null;
+        // ── RELAYER NOT CONFIGURED ──────────────────────────────────
+        // The RELAYER_PRIVATE_KEY secret is not set on the server.
+        // We must NOT fake an escrow — instead show a clear error so the
+        // user knows funds were NOT locked. No tokens were sent anywhere.
+        throw new Error(
+          'Escrow relayer is not configured. ' +
+          'Add RELAYER_PRIVATE_KEY as a Cloudflare secret and redeploy. ' +
+          'No tokens have been sent — your funds are safe.'
+        );
       } else if(relayerData.success){
         txHash       = relayerData.txHash;
         escrowTradeId = relayerData.escrowTradeId;
@@ -3048,7 +3050,7 @@ function checkoutPage() {
         escrowContract: escrowAddress,
         amount: total, token,
         productId: cart[0]?.id||'',
-        status: txHash.startsWith('PENDING_') ? 'escrow_pending' : 'escrow_locked',
+        status: 'escrow_locked',
         createdAt: new Date().toISOString()
       };
 
@@ -3057,34 +3059,36 @@ function checkoutPage() {
         ...savedOrder,
         items: cart,
         escrowContract: escrowAddress,
-        explorerUrl: txHash.startsWith('PENDING_')
-          ? null
-          : window.ARC.explorer+'/tx/'+txHash
+        explorerUrl: window.ARC.explorer+'/tx/'+txHash
       });
       localStorage.setItem('rh_orders', JSON.stringify(orders));
       saveCart([]); updateCartBadge();
       showToast('Escrow locked! Order '+orderId,'success');
       setTimeout(()=>window.location.href='/orders/'+orderId, 1500);
     } catch(err){
-      // API save failed but escrow tx may have succeeded — save locally
-      const orders = JSON.parse(localStorage.getItem('rh_orders')||'[]');
-      orders.push({
-        id: orderId, txHash, escrowTradeId,
-        buyerAddress: w.address, sellerAddress,
-        escrowContract: escrowAddress,
-        amount: total, token,
-        productId: cart[0]?.id||'',
-        items: cart,
-        status: txHash.startsWith('PENDING_') ? 'escrow_pending' : 'escrow_locked',
-        createdAt: new Date().toISOString(),
-        explorerUrl: txHash.startsWith('PENDING_') ? null : window.ARC.explorer+'/tx/'+txHash
-      });
-      localStorage.setItem('rh_orders', JSON.stringify(orders));
-      saveCart([]); updateCartBadge();
-      showToast('Order saved locally. '+
-        (txHash.startsWith('PENDING_') ? 'Awaiting relayer.' : 'Hash: '+txHash.substring(0,14)+'…'),
-        'success');
-      setTimeout(()=>window.location.href='/orders/'+orderId, 1500);
+      // API save failed but escrow tx succeeded — save locally with real hash
+      if(txHash && escrowTradeId){
+        const orders = JSON.parse(localStorage.getItem('rh_orders')||'[]');
+        orders.push({
+          id: orderId, txHash, escrowTradeId,
+          buyerAddress: w.address, sellerAddress,
+          escrowContract: escrowAddress,
+          amount: total, token,
+          productId: cart[0]?.id||'',
+          items: cart,
+          status: 'escrow_locked',
+          createdAt: new Date().toISOString(),
+          explorerUrl: window.ARC.explorer+'/tx/'+txHash
+        });
+        localStorage.setItem('rh_orders', JSON.stringify(orders));
+        saveCart([]); updateCartBadge();
+        showToast('Escrow locked! Hash: '+txHash.substring(0,14)+'…','success');
+        setTimeout(()=>window.location.href='/orders/'+orderId, 1500);
+      } else {
+        // Nothing was locked — surface the error
+        showToast('Order error: '+(err.message||''),'error');
+        if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-lock mr-2"></i>Confirm & Lock Funds';}
+      }
     }
   }
   </script>
@@ -3886,11 +3890,18 @@ function orderDetailPage(id: string) {
     // Build role-based action buttons
     let actionBtns='';
     var isDisputed=order.status==='dispute';
+    var isPending=order.status==='escrow_pending';
     if(isSeller){
       if(order.status==='escrow_locked') actionBtns+='<button data-oid="'+order.id+'" data-status="shipped" class="update-status-btn btn-primary"><i class="fas fa-shipping-fast mr-1"></i> Mark as Shipped</button>';
-      // Release Funds is BLOCKED while dispute is active
-      if(order.status==='completed')     actionBtns+='<button data-oid="'+order.id+'" data-status="funds_released" class="update-status-btn btn-primary bg-green-600 hover:bg-green-700"><i class="fas fa-coins mr-1"></i> Release Funds</button>';
-      if(isDisputed)                     actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm font-semibold"><i class="fas fa-lock"></i> Funds Locked — Dispute Active</span>';
+      // Release Funds: requires on-chain escrowTradeId — blocked for pending orders and disputes
+      if(order.status==='completed' && order.escrowTradeId)
+        actionBtns+='<button data-oid="'+order.id+'" data-status="funds_released" class="update-status-btn btn-primary bg-green-600 hover:bg-green-700"><i class="fas fa-coins mr-1"></i> Release Funds</button>';
+      if(order.status==='completed' && !order.escrowTradeId)
+        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm font-semibold"><i class="fas fa-exclamation-triangle"></i> Escrow not on-chain — cannot release</span>';
+      if(isPending)
+        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm font-semibold"><i class="fas fa-clock"></i> Awaiting escrow lock</span>';
+      if(isDisputed)
+        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm font-semibold"><i class="fas fa-lock"></i> Funds Locked — Dispute Active</span>';
     }
     if(isBuyer){
       if(order.status==='shipped') actionBtns+='<button data-oid="'+order.id+'" data-status="completed" class="update-status-btn btn-secondary"><i class="fas fa-check-circle mr-1"></i> Confirm Delivery</button>';
@@ -3901,13 +3912,29 @@ function orderDetailPage(id: string) {
       // Role badge
       +(isSeller ? '<div class="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm font-medium text-amber-800"><i class="fas fa-store"></i> You are the seller of this order</div>' : '')
       +(isBuyer  ? '<div class="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-xl text-sm font-medium text-blue-800"><i class="fas fa-shopping-bag"></i> You are the buyer of this order</div>' : '')
-      // Funds Released banner
+      // ── Escrow Pending warning banner ────────────────────────────
+      +(order.status==='escrow_pending'
+        ? '<div class="card p-5 bg-amber-50 border-amber-300">'
+          +'<div class="flex items-start gap-3">'
+          +'<i class="fas fa-exclamation-triangle text-amber-500 text-xl mt-0.5 shrink-0"></i>'
+          +'<div>'
+          +'<h3 class="font-bold text-amber-800 mb-1">Escrow Not Yet On-Chain</h3>'
+          +'<p class="text-amber-700 text-sm">Funds have NOT been deposited into the escrow contract yet. '
+          +'The relayer (<code>RELAYER_PRIVATE_KEY</code>) is not configured — '
+          +'<code>recordTrade()</code> was never called. No tokens are locked or at risk.</p>'
+          +'<p class="text-amber-600 text-xs mt-2 font-medium">To enable live escrow, set the <code>RELAYER_PRIVATE_KEY</code> Cloudflare secret and retry the checkout.</p>'
+          +'</div></div></div>'
+        : '')
+      // ── Funds Released banner ────────────────────────────────────
       +(order.status==='funds_released'
         ? '<div class="card p-6 text-center bg-emerald-50 border-emerald-200">'
           +'<div class="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-3">'
           +'<i class="fas fa-check-circle text-3xl text-emerald-500"></i></div>'
           +'<h3 class="text-xl font-bold text-emerald-800 mb-1">Funds Released!</h3>'
-          +'<p class="text-emerald-700 text-sm mb-4">The escrow has been fully completed. Funds were released to the seller wallet on Arc Network.</p>'
+          +'<p class="text-emerald-700 text-sm mb-3">Escrow completed on-chain. Funds transferred to seller on Arc Network.</p>'
+          +(order.releaseTxHash
+            ? '<p class="text-xs text-emerald-600 font-mono mb-4"><a href="'+(order.releaseTxUrl||('${ARC.explorer}/tx/'+order.releaseTxHash))+'" target="_blank" class="underline">'+order.releaseTxHash+'</a></p>'
+            : '')
           +'<button onclick="showReceiptModalDetail()" class="btn-primary mx-auto"><i class="fas fa-receipt mr-2"></i>View & Download Receipt</button>'
           +'</div>'
         : '')
@@ -3933,12 +3960,18 @@ function orderDetailPage(id: string) {
       +'<div class="space-y-3 text-sm">'
       +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Order ID</span><span class="font-mono font-medium text-right">'+order.id+'</span></div>'
       +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Escrow Contract</span><a href="'+('${ARC.explorer}'+'/address/'+(order.escrowContract||'${ARC.contracts.FxEscrow}'))+'" target="_blank" class="font-mono text-xs text-blue-600 hover:underline text-right break-all">'+(order.escrowContract||'${ARC.contracts.FxEscrow}')+'</a></div>'
-      +(order.escrowTradeId ? '<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Escrow Trade ID</span><span class="font-mono font-medium text-right">#'+order.escrowTradeId+'</span></div>' : '')
-      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Tx Hash</span>'
+      +(order.escrowTradeId ? '<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Escrow Trade ID</span><a href="'+'${ARC.explorer}'+'/address/'+'${ARC.contracts.FxEscrow}'+'" target="_blank" class="font-mono font-medium text-right text-blue-600 hover:underline">#'+order.escrowTradeId+'</a></div>' : '')
+      // Lock tx hash (recordTrade)
+      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Lock Tx</span>'
       +(order.txHash && !order.txHash.startsWith('PENDING_')
         ? '<a href="'+explorerTxUrl+'" target="_blank" class="font-mono text-xs text-blue-600 hover:underline text-right break-all">'+order.txHash+'</a>'
-        : '<span class="text-xs text-amber-600 font-medium">'+(order.txHash||'Pending relayer')+'</span>')
+        : '<span class="text-xs text-amber-600 font-medium flex items-center gap-1"><i class="fas fa-clock"></i> Not yet on-chain — relayer key not configured</span>')
       +'</div>'
+      // Release tx hash (takerDeliver) — only shown after release
+      +(order.releaseTxHash
+        ? '<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Release Tx</span>'
+          +'<a href="'+(order.releaseTxUrl||('${ARC.explorer}/tx/'+order.releaseTxHash))+'" target="_blank" class="font-mono text-xs text-emerald-600 hover:underline text-right break-all">'+order.releaseTxHash+'</a></div>'
+        : '')
       +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Buyer</span><span class="font-mono text-xs text-right break-all">'+(order.buyerAddress||'—')+'</span></div>'
       +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Seller</span><span class="font-mono text-xs text-right break-all">'+(order.sellerAddress||'—')+'</span></div>'
       +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Amount</span><span class="font-bold text-red-600">'+(order.amount||0)+' '+(order.token||'USDC')+'</span></div>'
@@ -3999,87 +4032,164 @@ function orderDetailPage(id: string) {
       return;
     }
 
-    // ── Release Funds: call escrow relayer (takerDeliver) ──────────
-    // Seller calls "Release Funds" when status transitions to funds_released.
-    // This calls takerDeliver on the FxEscrow contract via the relayer API,
-    // transferring the locked tokens from escrow to the seller.
+    // ══════════════════════════════════════════════════════════════════
+    //  RELEASE FUNDS — direct on-chain call, no relayer needed
+    //
+    //  Flow (buyer confirms delivery → releases to seller):
+    //   1. Buyer signs PermitWitnessTransferFrom with SingleTradeWitness(tradeId)
+    //      signed over Permit2 domain — off-chain, no gas
+    //   2. Buyer's wallet broadcasts takerDeliver(tradeId, permit, sig) directly
+    //      to FxEscrow contract — REAL on-chain tx, real hash
+    //   3. FxEscrow verifies permit2 sig, releases locked tokens to seller
+    //   4. UI updates ONLY after tx is confirmed (receipt.status === 1)
+    //
+    //  takerDeliver can be called by anyone who holds the taker's valid
+    //  PermitWitnessTransferFrom signature — here the buyer calls it directly.
+    // ══════════════════════════════════════════════════════════════════
     if(s==='funds_released'){
       const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
       const idx=orders.findIndex(o=>o.id===id);
       if(idx<0) return;
       const order=orders[idx];
+
       const btn=event && event.target;
-      if(btn){ btn.disabled=true; btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Releasing…'; }
-      showToast('Requesting fund release from escrow…','info');
+      const origLabel='<i class="fas fa-coins mr-1"></i> Release Funds';
+      if(btn){ btn.disabled=true; btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Initialising…'; }
+
+      // ── Guard: order must have been locked on-chain ──────────────
+      if(!order.escrowTradeId){
+        showToast(
+          'This order was not locked on-chain (no escrow trade ID). ' +
+          'Funds were never deposited into the escrow contract — nothing to release.',
+          'error'
+        );
+        if(btn){ btn.disabled=false; btn.innerHTML=origLabel; }
+        return;
+      }
+
       try {
-        if(order.escrowTradeId){
-          // ── Sign takerDeliver permit (buyer must confirm release) ──
-          // For release, we call the relayer with the tradeId.
-          // The relayer will call takerDeliver or makerDeliver depending on
-          // which party initiates release.
-          const w=getStoredWallet();
-          if(!w){ showToast('Connect wallet to release funds','error'); return; }
-          let signer;
-          if(w.type==='metamask' && window.ethereum){
-            const prov=new ethers.BrowserProvider(window.ethereum);
-            signer=await prov.getSigner();
-          } else if((w.type==='internal'||w.type==='imported') && w.privateKey && !w.privateKey.startsWith('[')){
-            const prov=new ethers.JsonRpcProvider(window.ARC.rpc);
-            signer=new ethers.Wallet(w.privateKey,prov);
-          } else {
-            showToast('Wallet unavailable for signing','error'); return;
+        // ── Connect wallet ───────────────────────────────────────────
+        const w=getStoredWallet();
+        if(!w){ showToast('Connect wallet to release funds','error'); if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return; }
+
+        let provider, signer;
+        if(w.type==='metamask' && window.ethereum){
+          provider = new ethers.BrowserProvider(window.ethereum);
+          // Ensure Arc Testnet
+          const net = await provider.getNetwork();
+          if(net.chainId !== BigInt(window.ARC.chainId)){
+            showToast('Please switch MetaMask to Arc Testnet (Chain 5042002)','warning');
+            if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return;
           }
-          const tokenAddress = order.token==='USDC' ? window.ARC.contracts.USDC : window.ARC.contracts.EURC;
-          const amountWei = ethers.parseUnits((order.amount||0).toFixed(6),6);
-          const nonce   = BigInt(Date.now());
-          const deadline= BigInt(Math.floor(Date.now()/1000)+3600);
-          // Determine role: buyer (taker) confirms delivery → releases to seller
-          const isBuyerRelease = w.address.toLowerCase()===order.buyerAddress?.toLowerCase();
-          const role = isBuyerRelease ? 'taker' : 'maker';
-          // EIP-712 permit for deliver
-          const domain={ name:'Permit2', chainId:window.ARC.chainId, verifyingContract:window.ARC.contracts.Permit2 };
-          const types={
-            PermitTransferFrom:[
-              {name:'permitted',type:'TokenPermissions'},
-              {name:'spender',type:'address'},
-              {name:'nonce',type:'uint256'},
-              {name:'deadline',type:'uint256'}
-            ],
-            TokenPermissions:[{name:'token',type:'address'},{name:'amount',type:'uint256'}]
-          };
-          const value={
-            permitted:{token:tokenAddress,amount:amountWei.toString()},
-            spender:window.ARC.contracts.FxEscrow,
-            nonce:nonce.toString(),deadline:deadline.toString()
-          };
-          showToast('Sign the release permit in your wallet…','info');
-          const deliverSig=await signer.signTypedData(domain,types,value);
-          const resp=await fetch('/api/escrow/deliver',{
-            method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({
-              role, tradeId:order.escrowTradeId,
-              permit:{permitted:{token:tokenAddress,amount:amountWei.toString()},nonce:nonce.toString(),deadline:deadline.toString()},
-              signature:deliverSig
-            })
-          });
-          const rd=await resp.json();
-          if(!rd.success && !rd.fallback) throw new Error(rd.message||'Release failed');
-          if(rd.txHash) order.releaseTxHash=rd.txHash;
+          signer = await provider.getSigner();
+        } else if((w.type==='internal'||w.type==='imported') && w.privateKey && !w.privateKey.startsWith('[')){
+          provider = new ethers.JsonRpcProvider(window.ARC.rpc);
+          signer   = new ethers.Wallet(w.privateKey, provider);
+        } else {
+          showToast('Private key unavailable. Re-import wallet to release funds.','error');
+          if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return;
         }
-        // Update local status
-        orders[idx].status='funds_released';
-        orders[idx].updatedAt=new Date().toISOString();
-        localStorage.setItem('rh_orders',JSON.stringify(orders));
-        showToast('Funds released to seller!','success');
-        setTimeout(()=>location.reload(),800);
+
+        const tradeId      = BigInt(order.escrowTradeId);
+        const tokenAddress = order.token==='USDC' ? window.ARC.contracts.USDC : window.ARC.contracts.EURC;
+        const amountWei    = ethers.parseUnits((order.amount||0).toFixed(6), 6);
+        const nonce        = BigInt(Date.now());
+        const deadline     = BigInt(Math.floor(Date.now()/1000) + 3600);
+
+        // ── STEP 1: Sign PermitWitnessTransferFrom (SingleTradeWitness) ──
+        // The FxEscrow contract uses SINGLE_TRADE_WITNESS_TYPE for takerDeliver:
+        //   "SingleTradeWitness witness)SingleTradeWitness(uint256 id)TokenPermissions(address token,uint256 amount)"
+        // Full Permit2 type = PermitWitnessTransferFrom(..., SingleTradeWitness witness) + suffix
+        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 1/2 — Sign release permit…';
+        showToast('Step 1/2: Sign the release permit in your wallet…','info');
+
+        const permitDomain = {
+          name: 'Permit2',
+          chainId: window.ARC.chainId,
+          verifyingContract: window.ARC.contracts.Permit2
+        };
+        const permitTypes = {
+          PermitWitnessTransferFrom: [
+            { name: 'permitted', type: 'TokenPermissions' },
+            { name: 'spender',   type: 'address' },
+            { name: 'nonce',     type: 'uint256' },
+            { name: 'deadline',  type: 'uint256' },
+            { name: 'witness',   type: 'SingleTradeWitness' }
+          ],
+          TokenPermissions: [
+            { name: 'token',  type: 'address' },
+            { name: 'amount', type: 'uint256' }
+          ],
+          SingleTradeWitness: [
+            { name: 'id', type: 'uint256' }
+          ]
+        };
+        const permitValue = {
+          permitted: { token: tokenAddress, amount: amountWei.toString() },
+          spender:   window.ARC.contracts.FxEscrow,
+          nonce:     nonce.toString(),
+          deadline:  deadline.toString(),
+          witness:   { id: tradeId.toString() }
+        };
+
+        const deliverSig = await signer.signTypedData(permitDomain, permitTypes, permitValue);
+        showToast('Release permit signed. Broadcasting…','success');
+
+        // ── STEP 2: Call takerDeliver directly on FxEscrow ────────────
+        // The buyer's wallet broadcasts this tx — no relayer needed.
+        // "to" address = FxEscrow contract = 0x867650F5eAe8df91445971f14d89fd84F0C9a9f8
+        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 2/2 — Sending to escrow…';
+        showToast('Step 2/2: Broadcasting release to FxEscrow…','info');
+
+        const DELIVER_ABI = [
+          'function takerDeliver(uint256 id, tuple(tuple(address token, uint256 amount) permitted, uint256 nonce, uint256 deadline) permit, bytes signature) nonpayable',
+          'function makerDeliver(uint256 id, tuple(tuple(address token, uint256 amount) permitted, uint256 nonce, uint256 deadline) permit, bytes signature) nonpayable'
+        ];
+        const escrowContract = new ethers.Contract(
+          window.ARC.contracts.FxEscrow,
+          DELIVER_ABI,
+          signer
+        );
+
+        const permitArg = {
+          permitted: { token: tokenAddress, amount: amountWei },
+          nonce,
+          deadline
+        };
+
+        // Buyer (taker) calls takerDeliver to release quote tokens to seller
+        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Waiting for confirmation…';
+        const txResponse = await escrowContract.takerDeliver(tradeId, permitArg, deliverSig);
+        showToast('Tx sent! Waiting for confirmation… '+txResponse.hash.slice(0,14)+'…','info');
+
+        // Wait for on-chain confirmation before updating UI
+        const receipt = await txResponse.wait(1);
+        if(!receipt || receipt.status === 0){
+          throw new Error('Transaction reverted on-chain. Check escrow state.');
+        }
+
+        const releaseTxHash = txResponse.hash;
+        showToast('Funds released! Tx: '+releaseTxHash.slice(0,14)+'…','success');
+
+        // ── Update order status ONLY after confirmed receipt ─────────
+        orders[idx].status         = 'funds_released';
+        orders[idx].releaseTxHash  = releaseTxHash;
+        orders[idx].releaseTxUrl   = window.ARC.explorer+'/tx/'+releaseTxHash;
+        orders[idx].updatedAt      = new Date().toISOString();
+        localStorage.setItem('rh_orders', JSON.stringify(orders));
+        setTimeout(()=>location.reload(), 800);
+
       } catch(err){
-        showToast('Release error: '+(err.message||''),'error');
-        if(btn){ btn.disabled=false; btn.innerHTML='<i class="fas fa-coins mr-1"></i> Release Funds'; }
+        const msg = err.code==='ACTION_REJECTED'||err.code===4001
+          ? 'Release rejected by user'
+          : 'Release error: '+(err.shortMessage||err.message||'');
+        showToast(msg, 'error');
+        if(btn){ btn.disabled=false; btn.innerHTML=origLabel; }
       }
       return;
     }
 
-    // Default: update status locally
+    // ── Default: update status locally (shipped, completed, etc.) ──
     const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
     const i=orders.findIndex(o=>o.id===id);
     if(i>=0){
