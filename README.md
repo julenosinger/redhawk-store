@@ -2,82 +2,59 @@
 
 ## Project Overview
 - **Name**: Shukly Store
-- **Goal**: Decentralized marketplace on Arc Testnet with trustless escrow via FxEscrow contract
-- **Language**: English-only
-- **Features**: Browse products, cart, checkout with escrow, order tracking, dispute resolution, seller dashboard
+- **Goal**: Decentralized marketplace on Arc Network with fully on-chain escrow
+- **Features**: Browse products, cart, checkout with on-chain escrow, seller dashboard, dispute system
 
 ## URLs
-- **GitHub**: https://github.com/julenosinger/Shukly Store
-- **Arc Testnet Explorer**: https://testnet.arcscan.app
-- **Faucet**: https://faucet.circle.com
+- **Production**: https://shukly-store.pages.dev
+- **Latest Deploy**: https://ab3af930.shukly-store.pages.dev
+- **GitHub**: https://github.com/julenosinger/redhawk-store
 
-## Escrow Architecture
+## Escrow Architecture (Direct On-Chain — No Relayer)
 
-### Token Flow (correct, trustless)
-```
-Buyer → approve(Permit2)          [on-chain, ERC-20, once per token]
-Buyer → sign EIP-712 witness      [off-chain, no gas]
-Relayer → recordTrade(FxEscrow)   [on-chain — tx "to" = escrow contract]
-                                    ↳ FxEscrow pulls tokens from buyer
-                                    ↳ Tokens locked in FxEscrow contract
-                                    ↳ Seller address NEVER receives direct transfer
-Buyer confirms delivery → sign release permit
-Relayer → takerDeliver(FxEscrow)  [on-chain — releases to seller]
-```
+All escrow actions are direct smart-contract calls from the user's wallet via MetaMask or internal wallet. **No relayer, no RELAYER_PRIVATE_KEY, no Permit2.**
 
-### Contracts on Arc Testnet
-| Contract   | Address |
-|------------|---------|
-| USDC       | `0x3600000000000000000000000000000000000000` |
-| EURC       | `0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a` |
-| Permit2    | `0x000000000022D473030F116dDEE9F6B43aC78BA3` |
-| FxEscrow   | `0x867650F5eAe8df91445971f14d89fd84F0C9a9f8` |
+### ShuklyEscrow Contract Functions
+| Function | Caller | Description |
+|---|---|---|
+| `createEscrow(orderId32, seller, token, amount)` | Buyer | Registers escrow slot on-chain |
+| `fundEscrow(orderId32)` | Buyer | Pulls tokens from buyer → escrow contract |
+| `confirmDelivery(orderId32)` | Buyer | Signals goods received |
+| `releaseFunds(orderId32)` | Buyer | Releases locked tokens to seller |
+| `refund(orderId32)` | Buyer | Returns tokens to buyer |
+| `openDispute(orderId32)` | Buyer/Seller | Locks funds, triggers dispute |
 
-### API Endpoints
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/escrow/record-trade` | Relayer: call `recordTrade()` on FxEscrow |
-| POST | `/api/escrow/deliver` | Relayer: call `takerDeliver/makerDeliver` to release funds |
-| POST | `/api/orders` | Save order metadata after escrow tx |
-| GET  | `/api/arc-config` | Returns ARC network config + contract addresses |
-| GET  | `/api/products` | List products |
-| POST | `/api/products` | Create product |
+### Full Transaction Flow
+1. **Checkout**: `approve(ShuklyEscrow, amount)` → `createEscrow(...)` → `fundEscrow(...)`
+2. **Seller ships**: Marks order as shipped (off-chain)
+3. **Buyer confirms**: `confirmDelivery(orderId32)` on-chain
+4. **Release**: `releaseFunds(orderId32)` → tokens transferred to seller
 
-## Dispute System
-- Buyer or seller can open dispute on any active order
-- Funds remain locked in FxEscrow during dispute (`disputeLockedFunds: true`)
-- "Release Funds" button hidden while status is `dispute`
-- Evidence (PNG/JPG/PDF) uploaded via drag-and-drop, stored in localStorage
-- Both parties can view uploaded evidence on the Disputes page
+Every tx is sent to the **escrow contract address** — never directly to the seller.
 
-## Relayer Configuration
-To enable live escrow transactions, set the `RELAYER_PRIVATE_KEY` Cloudflare secret:
-```bash
-npx wrangler pages secret put RELAYER_PRIVATE_KEY --project-name <project>
-```
-Without this key, orders are saved as `escrow_pending` — no tokens are ever sent directly to the seller.
+### Deploy Escrow Contract
+Visit `/deploy-escrow` to deploy the ShuklyEscrow contract via MetaMask. The deployed address is saved to localStorage and used for all subsequent checkouts.
+
+## Smart Contracts (Arc Testnet, Chain ID: 5042002)
+- **USDC**: `0x3600000000000000000000000000000000000000`
+- **EURC**: `0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a`
+- **ShuklyEscrow**: Deploy via `/deploy-escrow` page (bytecode embedded in frontend)
 
 ## Data Architecture
-- **Orders**: stored in `localStorage` key `rh_orders` (client-side)
-- **Dispute evidence**: stored in `localStorage` key `rh_dispute_evidence`
-- **Products**: stored in Cloudflare D1 SQLite database
-- **Storage**: Cloudflare D1 for product listings
+- **Orders**: localStorage (`rh_orders` key)
+- **Escrow address**: localStorage (`shukly_escrow_address` key)
+- **Products**: Cloudflare D1 SQLite (off-chain metadata)
+- **Dispute evidence**: localStorage (`rh_dispute_evidence` key)
+
+## API Endpoints
+- `GET /api/arc-config` — chain config for frontend
+- `GET /api/products` — list products
+- `POST /api/products` — create product
+- `GET /api/products/:id` — product detail
+- `POST /api/orders` — save order metadata
 
 ## Deployment
-- **Platform**: Cloudflare Pages / Workers
-- **Tech Stack**: Hono + TypeScript + Tailwind CSS + ethers.js v6
-- **Build**: `npm run build` → `dist/_worker.js`
-- **Status**: Active
-
-## User Guide
-1. Connect wallet (MetaMask or create internal wallet)
-2. Browse marketplace → Add to cart → Checkout
-3. Confirm & Lock Funds → 3-step escrow process:
-   - Approve Permit2 (once per token)
-   - Sign the escrow permit (off-chain)
-   - Relayer submits to FxEscrow contract
-4. Seller marks as shipped → Buyer confirms delivery
-5. Funds released via `takerDeliver` on FxEscrow
-
-## Last Updated
-2026-04-06
+- **Platform**: Cloudflare Pages
+- **Status**: ✅ Active
+- **Tech Stack**: Hono + TypeScript + TailwindCSS + ethers.js v6
+- **Last Updated**: 2026-04-06
