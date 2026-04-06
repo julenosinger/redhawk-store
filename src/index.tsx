@@ -2480,7 +2480,7 @@ function checkoutPage() {
         </button>
         <p class="text-xs text-slate-400 text-center mt-2">
           <i class="fas fa-shield-alt text-red-400 mr-1"></i>
-          Sua wallet será aberta para assinar — fundos bloqueados até confirmação de entrega
+          Your wallet will open to sign — funds locked until delivery is confirmed
         </p>
       </div>
     </div>
@@ -2640,7 +2640,7 @@ function checkoutPage() {
           txResponse = await eurcContract.transfer(sellerAddress, amountWei);
         }
         txHash = txResponse.hash;
-        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Confirmando na rede…';
+        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Confirming on network…';
         showToast('Tx sent! Hash: '+txHash.substring(0,14)+'…','info');
         try { await txResponse.wait(1); } catch(e){}
         showToast('Transaction confirmed!','success');
@@ -2657,7 +2657,7 @@ function checkoutPage() {
       // Usuário cancelou ou erro na tx
       const msg = err.code==='ACTION_REJECTED'||err.code===4001
         ? 'Transaction rejected by user'
-        : 'Erro na transação: '+(err.shortMessage||err.message||'');
+        : 'Transaction error: '+(err.shortMessage||err.message||'');
       showToast(msg,'error');
       if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-lock mr-2"></i>Confirm & Lock Funds';}
       return;
@@ -3709,7 +3709,7 @@ function orderDetailPage(id: string) {
       // File upload
       '<div>'+
       '<label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em;">Evidence Files <span style="font-weight:400;text-transform:none;letter-spacing:0;">(images &amp; PDFs, optional)</span></label>'+
-      '<div id="disp-dropzone" style="border:2px dashed #e2e8f0;border-radius:10px;padding:24px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s;" onclick="document.getElementById(\'disp-file-input\').click()">'+
+      '<div id="disp-dropzone" style="border:2px dashed #e2e8f0;border-radius:10px;padding:24px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s;">'+
       '<i class="fas fa-cloud-upload-alt" style="font-size:28px;color:#94a3b8;display:block;margin-bottom:8px;"></i>'+
       '<p style="font-size:13px;color:#64748b;margin:0;">Click to choose files or drag &amp; drop here</p>'+
       '<p style="font-size:11px;color:#94a3b8;margin:4px 0 0;">Accepted: PNG, JPG, PDF &bull; Up to 5 files &bull; 10 MB each</p>'+
@@ -3733,6 +3733,7 @@ function orderDetailPage(id: string) {
 
     // ── Dropzone styling
     var dz=document.getElementById('disp-dropzone');
+    dz.addEventListener('click',function(){ document.getElementById('disp-file-input').click(); });
     dz.addEventListener('dragover',function(e){e.preventDefault();this.style.borderColor='#dc2626';this.style.background='#fff5f5';});
     dz.addEventListener('dragleave',function(){this.style.borderColor='#e2e8f0';this.style.background='';});
     dz.addEventListener('drop',function(e){
@@ -3859,12 +3860,21 @@ function orderDetailPage(id: string) {
     // Delegate to the shared showReceiptModal function
     showReceiptModal('${id}');
   }
-  /* Robust init for order detail page */
-  if(document.readyState === 'loading'){
-    document.addEventListener('DOMContentLoaded', _orderDetailInit);
-  } else {
-    setTimeout(_orderDetailInit, 0);
-  }
+  /* Bootstrap — same IIFE pattern as orders.js (no setTimeout) */
+  (function(){
+    function _run(){
+      if(!document.getElementById('order-detail-container')){
+        document.addEventListener('DOMContentLoaded', _orderDetailInit);
+        return;
+      }
+      _orderDetailInit();
+    }
+    if(document.readyState==='loading'){
+      document.addEventListener('DOMContentLoaded', _run);
+    } else {
+      _run();
+    }
+  })();
   </script>
   `)
 }
