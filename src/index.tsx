@@ -3789,24 +3789,56 @@ function orderDetailPage(id: string) {
     let actionBtns='';
     var isDisputed=order.status==='dispute';
     var isPending=order.status==='escrow_pending';
+    // ── SELLER ACTIONS ──────────────────────────────────────────────────
+    // Only the seller sees seller-specific actions; buyer NEVER sees Release Funds
     if(isSeller){
-      if(order.status==='escrow_locked') actionBtns+='<button data-oid="'+order.id+'" data-status="shipped" class="update-status-btn btn-primary"><i class="fas fa-shipping-fast mr-1"></i> Mark as Shipped</button>';
-      if(isPending)
-        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm font-semibold"><i class="fas fa-clock"></i> Awaiting escrow lock</span>';
+      if(order.status==='escrow_pending')
+        // Funds not locked yet — warn seller
+        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm font-semibold"><i class="fas fa-clock"></i> Awaiting escrow lock by buyer</span>';
+
+      if(order.status==='escrow_locked')
+        // Funds locked — seller can now ship
+        actionBtns+='<button data-oid="'+order.id+'" data-status="shipped" class="update-status-btn btn-primary"><i class="fas fa-shipping-fast mr-1"></i> Mark as Shipped</button>';
+
+      if(order.status==='shipped')
+        // Shipped — waiting for buyer to confirm delivery
+        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 text-sm font-semibold"><i class="fas fa-clock"></i> Waiting for buyer confirmation</span>';
+
+      if(order.status==='delivery_confirmed'){
+        // Buyer confirmed delivery — seller CAN now release funds
+        if(order.orderId32)
+          actionBtns+='<button data-oid="'+order.id+'" data-status="funds_released" class="update-status-btn btn-primary" style="background:linear-gradient(135deg,#16a34a,#15803d);"><i class="fas fa-coins mr-1"></i> Release Funds</button>';
+        else
+          actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm font-semibold"><i class="fas fa-exclamation-triangle"></i> No on-chain escrow ID — cannot release</span>';
+      }
+
+      if(order.status==='funds_released')
+        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-semibold"><i class="fas fa-check-circle"></i> Funds released to you</span>';
+
       if(isDisputed)
         actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm font-semibold"><i class="fas fa-lock"></i> Funds Locked — Dispute Active</span>';
-      if(order.status==='delivery_confirmed')
-        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-green-50 border border-green-200 text-green-700 text-sm font-semibold"><i class="fas fa-check-circle"></i> Buyer confirmed delivery — awaiting fund release</span>';
     }
+
+    // ── BUYER ACTIONS ───────────────────────────────────────────────────
+    // Buyer sees ONLY: Confirm Delivery (when shipped)
+    // Buyer NEVER sees Release Funds — that is a seller-only action
     if(isBuyer){
-      // Step 1: buyer confirms receipt of goods (calls confirmDelivery on-chain)
+      if(order.status==='escrow_locked')
+        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-green-50 border border-green-200 text-green-700 text-sm font-semibold"><i class="fas fa-lock"></i> Funds locked in escrow — waiting for shipping</span>';
+
       if(order.status==='shipped')
+        // Buyer confirms receipt of goods → calls confirmDelivery on-chain
         actionBtns+='<button data-oid="'+order.id+'" data-status="delivery_confirmed" class="update-status-btn btn-secondary"><i class="fas fa-check-circle mr-1"></i> Confirm Delivery</button>';
-      // Step 2: buyer releases funds to seller (calls releaseFunds on-chain)
-      if(order.status==='delivery_confirmed' && order.orderId32)
-        actionBtns+='<button data-oid="'+order.id+'" data-status="funds_released" class="update-status-btn btn-primary bg-green-600 hover:bg-green-700"><i class="fas fa-coins mr-1"></i> Release Funds</button>';
-      if((order.status==='delivery_confirmed'||order.status==='shipped') && !order.orderId32)
-        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm font-semibold"><i class="fas fa-exclamation-triangle"></i> No on-chain escrow ID found</span>';
+
+      if(order.status==='delivery_confirmed')
+        // Delivery confirmed — waiting for seller to release funds
+        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-green-50 border border-green-200 text-green-700 text-sm font-semibold"><i class="fas fa-check-circle"></i> Delivery confirmed — waiting for seller to release funds</span>';
+
+      if(order.status==='funds_released')
+        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-semibold"><i class="fas fa-check-circle"></i> Order complete — funds released to seller</span>';
+
+      if(isDisputed)
+        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm font-semibold"><i class="fas fa-gavel"></i> Dispute Active — awaiting resolution</span>';
     }
 
     container.innerHTML=
@@ -3944,7 +3976,8 @@ function orderDetailPage(id: string) {
     }
 
     // ══════════════════════════════════════════════════════════════════
-    //  CONFIRM DELIVERY — buyer calls confirmDelivery(orderId32)
+    //  CONFIRM DELIVERY — BUYER calls confirmDelivery(orderId32)
+    //  Security: Only the buyer can confirm delivery.
     //  This signals goods received; seller can now call releaseFunds.
     // ══════════════════════════════════════════════════════════════════
     if(s==='delivery_confirmed'){
@@ -3957,6 +3990,21 @@ function orderDetailPage(id: string) {
       const origLabel='<i class="fas fa-check-circle mr-1"></i> Confirm Delivery';
       if(btn){ btn.disabled=true; btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Initialising…'; }
 
+      // ── ROLE CHECK: only the buyer can confirm delivery ────────────
+      const _w0 = getStoredWallet();
+      if(!_w0){
+        showToast('Connect wallet to confirm delivery','error');
+        if(btn){ btn.disabled=false; btn.innerHTML=origLabel; }
+        return;
+      }
+      const _isBuyer0 = order.buyerAddress && order.buyerAddress.toLowerCase() === _w0.address.toLowerCase();
+      if(!_isBuyer0){
+        showToast('Only the buyer can confirm delivery','error');
+        console.error('[confirmDelivery] Role check failed — caller is not the buyer');
+        if(btn){ btn.disabled=false; btn.innerHTML=origLabel; }
+        return;
+      }
+
       if(!order.orderId32){
         showToast('No on-chain order ID found. Cannot confirm delivery.','error');
         if(btn){ btn.disabled=false; btn.innerHTML=origLabel; }
@@ -3964,8 +4012,7 @@ function orderDetailPage(id: string) {
       }
 
       try {
-        const w=getStoredWallet();
-        if(!w){ showToast('Connect wallet to confirm delivery','error'); if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return; }
+        const w=_w0;  // reuse already-loaded wallet
 
         let provider, signer;
         if(w.type==='metamask' && window.ethereum){
@@ -4017,11 +4064,12 @@ function orderDetailPage(id: string) {
     }
 
     // ══════════════════════════════════════════════════════════════════
-    //  RELEASE FUNDS — buyer calls releaseFunds(orderId32) on ShuklyEscrow
+    //  RELEASE FUNDS — SELLER calls releaseFunds(orderId32) on ShuklyEscrow
+    //  Security: Only the seller can call this function.
     //  Direct on-chain call — no Permit2, no relayer, no signature
     //
     //  Flow:
-    //   1. Buyer calls releaseFunds(orderId32) on ShuklyEscrow
+    //   1. Seller calls releaseFunds(orderId32) on ShuklyEscrow
     //   2. Contract releases locked tokens to seller
     //   3. UI updates ONLY after tx is confirmed (receipt.status === 1)
     //
@@ -4036,6 +4084,28 @@ function orderDetailPage(id: string) {
       const btn=event && event.target;
       const origLabel='<i class="fas fa-coins mr-1"></i> Release Funds';
       if(btn){ btn.disabled=true; btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Initialising…'; }
+
+      // ── ROLE CHECK: only the seller can release funds ──────────────
+      const _w = getStoredWallet();
+      if(!_w){
+        showToast('Connect wallet to release funds','error');
+        if(btn){ btn.disabled=false; btn.innerHTML=origLabel; }
+        return;
+      }
+      const _isSeller = order.sellerAddress && order.sellerAddress.toLowerCase() === _w.address.toLowerCase();
+      if(!_isSeller){
+        showToast('Only the seller can release funds from escrow','error');
+        console.error('[releaseFunds] Role check failed — caller is not the seller');
+        if(btn){ btn.disabled=false; btn.innerHTML=origLabel; }
+        return;
+      }
+
+      // ── STATUS CHECK: must be delivery_confirmed ───────────────────
+      if(order.status !== 'delivery_confirmed'){
+        showToast('Cannot release funds — buyer has not confirmed delivery yet','error');
+        if(btn){ btn.disabled=false; btn.innerHTML=origLabel; }
+        return;
+      }
 
       if(!order.orderId32){
         showToast(
