@@ -194,9 +194,9 @@ const ARC = {
     USDC: '0x3600000000000000000000000000000000000000',
     EURC: '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a',
     Multicall3: '0xcA11bde05977b3631167028862bE2a173976CA11',
-    // ShuklyEscrow: deployed via /deploy-escrow page using owner wallet
-    // Set SHUKLY_ESCROW_ADDRESS env var or deploy via the admin page
-    ShuklyEscrow: '0x0000000000000000000000000000000000000000',
+    // ShuklyEscrow: set to the deployed contract address on Arc Testnet
+    // Deploy via /deploy-escrow page and update this address, or set SHUKLY_ESCROW_ADDRESS env var
+    ShuklyEscrow: '0x721eafa9c1e38dd7fff81d30ea1a5500b37cf658',
   }
 }
 
@@ -588,10 +588,19 @@ const USDC_ADDRESS = window.ARC.contracts.USDC;
 const EURC_ADDRESS = window.ARC.contracts.EURC;
 
 // ShuklyEscrow address — loaded from localStorage (set after deploy) or ARC config
+// Priority: localStorage override → ARC config (hardcoded) → zero address (not deployed)
 function getEscrowAddress() {
-  return localStorage.getItem('shukly_escrow_address')
-      || window.ARC.contracts.ShuklyEscrow
-      || '0x0000000000000000000000000000000000000000';
+  const local = localStorage.getItem('shukly_escrow_address');
+  if (local && local !== '0x0000000000000000000000000000000000000000') return local;
+  const fromConfig = window.ARC && window.ARC.contracts && window.ARC.contracts.ShuklyEscrow;
+  if (fromConfig && fromConfig !== '0x0000000000000000000000000000000000000000') return fromConfig;
+  return '0x0000000000000000000000000000000000000000';
+}
+
+// Check if escrow address is valid (non-zero)
+function isEscrowDeployed() {
+  const addr = getEscrowAddress();
+  return addr && addr !== '0x0000000000000000000000000000000000000000';
 }
 
 // Minimal ERC-20 ABI for balanceOf + approve + allowance
@@ -2721,207 +2730,221 @@ function checkoutPage() {
   // ════════════════════════════════════════════════════════════════════
   //  confirmOrder — Direct ShuklyEscrow contract calls (no relayer)
   //
-  //  Flow:
-  //   1. buyer approves ShuklyEscrow to spend tokens   [on-chain tx]
-  //   2. buyer calls createEscrow(orderId32, seller, token, amount)  [on-chain tx]
-  //   3. buyer calls fundEscrow(orderId32)              [on-chain tx — pulls tokens]
+  //  Flow (all on-chain, user signs each tx with their own wallet):
+  //   1. approve(escrowAddress, MaxUint256)  — ERC-20 approval
+  //   2. createEscrow(orderId32, seller, token, amount)
+  //   3. fundEscrow(orderId32)              — pulls tokens into escrow
   //
-  //  "to" address = ShuklyEscrow contract (never the seller directly).
-  //  Tokens locked in escrow until confirmDelivery + releaseFunds.
+  //  Funds go to ShuklyEscrow contract ONLY — never directly to seller.
   // ════════════════════════════════════════════════════════════════════
-  async function confirmOrder(){
-    const w=getStoredWallet();
-    if(!w){showToast('Connect a wallet first','error');window.location.href='/wallet';return;}
-
-    // ── Ensure Arc Testnet ─────────────────────────────────────────
-    if(w.type==='metamask' && window.ethereum){
-      const onArc=await isOnArcNetwork();
-      if(!onArc){
-        showToast('Switching to Arc Testnet…','info');
-        const switched = await switchToArc();
-        if(!switched){ showToast('Please switch to Arc Testnet in MetaMask','warning'); return; }
-      }
+  async function confirmOrder() {
+    const btn = document.getElementById('co-confirm-btn');
+    function resetBtn() {
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-lock mr-2"></i>Confirm & Lock Funds'; }
+    }
+    function setBtn(text) {
+      if (btn) btn.innerHTML = '<span class="loading-spinner inline-block mr-2"></span>' + text;
     }
 
-    const cart=getCart();
-    if(!cart.length){showToast('Cart is empty','error');return;}
-
-    // ── Validate escrow contract is deployed ───────────────────────
-    const escrowAddress = getEscrowAddress();
-    if(!escrowAddress || escrowAddress === '0x0000000000000000000000000000000000000000'){
-      showToast('Escrow contract not deployed yet. Visit /deploy-escrow to deploy it.','error');
+    // ── 1. Wallet check ──────────────────────────────────────────────
+    const w = getStoredWallet();
+    if (!w) {
+      showToast('Connect a wallet first — redirecting…', 'error');
+      setTimeout(() => { window.location.href = '/wallet'; }, 1200);
       return;
     }
 
-    const total   = cart.reduce((s,i)=>s+(parseFloat(i.price)||0)*((i.quantity||i.qty)||1),0);
-    const token   = document.querySelector('input[name="token"]:checked')?.value||'USDC';
-    const tokenAddress = token==='USDC' ? window.ARC.contracts.USDC : window.ARC.contracts.EURC;
-
-    // ── Resolve seller address ─────────────────────────────────────
-    let sellerAddress = '0x0000000000000000000000000000000000000000';
-    try {
-      const pid = cart[0]?.id;
-      if(pid){
-        const r = await fetch('/api/products/'+pid);
-        const d = await r.json();
-        if(d.product?.seller_id && d.product.seller_id.startsWith('0x')){
-          sellerAddress = d.product.seller_id;
+    // ── 2. Network check ─────────────────────────────────────────────
+    if (w.type === 'metamask' && window.ethereum) {
+      const onArc = await isOnArcNetwork();
+      if (!onArc) {
+        showToast('Switching to Arc Testnet…', 'info');
+        const switched = await switchToArc();
+        if (!switched) {
+          showToast('Please switch to Arc Testnet in MetaMask manually', 'warning');
+          return;
         }
       }
-    } catch(e){}
-
-    if(!sellerAddress || sellerAddress === '0x0000000000000000000000000000000000000000'){
-      showToast('Could not resolve seller address','error'); return;
-    }
-    if(w.address.toLowerCase() === sellerAddress.toLowerCase()){
-      showToast('You cannot purchase your own product','error'); return;
     }
 
-    // ── Show confirmation modal ────────────────────────────────────
-    const confirmResult = await showTxConfirmModal({
+    // ── 3. Cart check ────────────────────────────────────────────────
+    const cart = getCart();
+    if (!cart.length) { showToast('Cart is empty', 'error'); return; }
+
+    // ── 4. Escrow contract check ─────────────────────────────────────
+    const escrowAddress = getEscrowAddress();
+    console.log('[confirmOrder] escrowAddress:', escrowAddress);
+    if (!isEscrowDeployed()) {
+      showToast('Escrow contract not configured. Contact support or deploy at /deploy-escrow.', 'error');
+      console.error('[confirmOrder] ShuklyEscrow address is zero/unset. Set window.ARC.contracts.ShuklyEscrow or deploy.');
+      return;
+    }
+
+    // ── 5. Calculate amount & token ──────────────────────────────────
+    const total = cart.reduce((s, i) => s + (parseFloat(i.price) || 0) * ((i.quantity || i.qty) || 1), 0);
+    const tokenSel = document.querySelector('input[name="token"]:checked');
+    const token = tokenSel ? tokenSel.value : 'USDC';
+    const tokenAddress = token === 'USDC' ? window.ARC.contracts.USDC : window.ARC.contracts.EURC;
+    console.log('[confirmOrder] token:', token, tokenAddress, 'amount:', total);
+
+    // ── 6. Resolve seller ────────────────────────────────────────────
+    let sellerAddress = null;
+    try {
+      const pid = cart[0]?.id;
+      if (pid) {
+        const resp = await fetch('/api/products/' + pid);
+        const data = await resp.json();
+        if (data.product?.seller_id && data.product.seller_id.startsWith('0x')) {
+          sellerAddress = data.product.seller_id;
+        }
+      }
+    } catch (e) { console.warn('[confirmOrder] seller fetch error:', e); }
+
+    if (!sellerAddress) {
+      showToast('Could not resolve seller address from product API', 'error');
+      console.error('[confirmOrder] sellerAddress missing');
+      return;
+    }
+    if (w.address.toLowerCase() === sellerAddress.toLowerCase()) {
+      showToast('You cannot purchase your own product', 'error');
+      return;
+    }
+    console.log('[confirmOrder] sellerAddress:', sellerAddress);
+
+    // ── 7. Confirmation modal ────────────────────────────────────────
+    const confirmed = await showTxConfirmModal({
       action:  'Lock Funds in Escrow',
       amount:  total.toFixed(2),
       token:   token,
       network: 'Arc Testnet (Chain ID: 5042002)',
-      note:    'Funds go to the ShuklyEscrow contract — released only after delivery confirmation.\n"to" address = escrow contract, NOT the seller.'
+      note:    "Funds go to ShuklyEscrow - released only after delivery confirmation. to=escrow contract, NOT the seller."
     });
-    if(!confirmResult){showToast('Transaction cancelled','info');return;}
+    if (!confirmed) { showToast('Transaction cancelled', 'info'); return; }
 
-    const btn=document.getElementById('co-confirm-btn');
-    if(btn){btn.disabled=true;btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Waiting for wallet…';}
+    if (btn) btn.disabled = true;
+    setBtn('Connecting to wallet…');
 
-    // ── Build amounts ─────────────────────────────────────────────
-    const amountStr = (Math.round(total * 1_000_000) / 1_000_000).toFixed(6);
-    const amountWei = ethers.parseUnits(amountStr, 6);   // 6 decimals USDC/EURC
-
-    // ── Generate orderId as bytes32 ────────────────────────────────
-    const orderId     = 'ORD-'+Date.now()+'-'+Math.random().toString(36).slice(2,7);
-    const orderId32   = ethers.id(orderId);   // keccak256 → bytes32
-
-    // ── Get signer ────────────────────────────────────────────────
+    // ── 8. Get signer ────────────────────────────────────────────────
     let provider, signer;
     try {
-      if(w.type==='metamask' && window.ethereum){
+      if (w.type === 'metamask' && window.ethereum) {
         provider = new ethers.BrowserProvider(window.ethereum);
-        signer   = await provider.getSigner();
-      } else if((w.type==='internal'||w.type==='imported') && w.privateKey && !w.privateKey.startsWith('[')){
+        await provider.send('eth_requestAccounts', []);  // ensure MetaMask is unlocked
+        signer = await provider.getSigner();
+        console.log('[confirmOrder] MetaMask signer:', await signer.getAddress());
+      } else if ((w.type === 'internal' || w.type === 'imported') && w.privateKey && !w.privateKey.startsWith('[')) {
         provider = new ethers.JsonRpcProvider(window.ARC.rpc);
-        signer   = new ethers.Wallet(w.privateKey, provider);
+        signer = new ethers.Wallet(w.privateKey, provider);
+        console.log('[confirmOrder] Internal signer:', signer.address);
       } else {
-        showToast('Private key unavailable. Re-import wallet with seed phrase.','error');
-        if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-lock mr-2"></i>Confirm & Lock Funds';}
-        return;
+        showToast('Private key unavailable. Re-import wallet with seed phrase.', 'error');
+        resetBtn(); return;
       }
-    } catch(err){
-      showToast('Wallet error: '+(err.message||''),'error');
-      if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-lock mr-2"></i>Confirm & Lock Funds';}
-      return;
+    } catch (err) {
+      const msg = err.code === 4001 || err.code === 'ACTION_REJECTED'
+        ? 'Wallet connection rejected by user'
+        : 'Wallet error: ' + (err.message || String(err));
+      showToast(msg, 'error');
+      console.error('[confirmOrder] signer error:', err);
+      resetBtn(); return;
     }
 
-    const erc20Contract   = new ethers.Contract(tokenAddress,  ERC20_ABI,  signer);
-    const escrowContract  = new ethers.Contract(escrowAddress, ESCROW_ABI, signer);
+    // ── 9. Build amount & orderId ────────────────────────────────────
+    const amountWei = ethers.parseUnits((Math.round(total * 1_000_000) / 1_000_000).toFixed(6), 6);
+    const orderId   = 'ORD-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+    const orderId32 = ethers.id(orderId);
+    console.log('[confirmOrder] orderId:', orderId, '→ bytes32:', orderId32);
+    console.log('[confirmOrder] amountWei:', amountWei.toString());
 
-    // ═══════════════════════════════════════════════════════════
-    //  STEP 1: ERC-20 approve(ShuklyEscrow, amount)
-    //  "to" = token contract (USDC or EURC)
-    // ═══════════════════════════════════════════════════════════
+    const erc20Contract  = new ethers.Contract(tokenAddress,  ERC20_ABI,  signer);
+    const escrowContract = new ethers.Contract(escrowAddress, ESCROW_ABI, signer);
+
+    // ══ STEP 1/3: ERC-20 approve ════════════════════════════════════
     let approveTxHash = null;
     try {
-      if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 1/3 — Approve escrow…';
-      showToast('Step 1/3: Approve ShuklyEscrow to spend '+token+'…','info');
+      setBtn('Step 1/3 — Checking allowance…');
+      const signerAddr = await signer.getAddress();
+      const allowance = await erc20Contract.allowance(signerAddr, escrowAddress);
+      console.log('[confirmOrder] allowance:', allowance.toString(), 'need:', amountWei.toString());
 
-      const currentAllowance = await erc20Contract.allowance(w.address, escrowAddress);
-      if(currentAllowance < amountWei){
+      if (allowance < amountWei) {
+        setBtn('Step 1/3 — Approve token spend (confirm in wallet)…');
+        showToast('Step 1/3: Approve ' + token + ' for escrow — confirm in wallet…', 'info');
         const approveTx = await erc20Contract.approve(escrowAddress, ethers.MaxUint256);
-        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 1/3 — Waiting for approval…';
-        showToast('Approval sent. Waiting for confirmation…','info');
+        console.log('[confirmOrder] approve tx:', approveTx.hash);
+        setBtn('Step 1/3 — Waiting for approval confirmation…');
+        showToast('Approval tx sent: ' + approveTx.hash.slice(0, 14) + '… Waiting…', 'info');
         const approveReceipt = await approveTx.wait(1);
-        if(!approveReceipt || approveReceipt.status === 0){
-          throw new Error('Approval transaction reverted on-chain');
-        }
+        if (!approveReceipt || approveReceipt.status === 0) throw new Error('Approval tx reverted on-chain');
         approveTxHash = approveTx.hash;
-        showToast('Approved! Tx: '+approveTx.hash.slice(0,14)+'…','success');
+        showToast('Token approved! ✓ Tx: ' + approveTx.hash.slice(0, 14) + '…', 'success');
       } else {
-        showToast('Allowance already sufficient ✓','success');
+        showToast('Allowance sufficient ✓ — skipping approve', 'success');
       }
-    } catch(err){
-      const msg = (err.code==='ACTION_REJECTED'||err.code===4001)
+    } catch (err) {
+      const msg = (err.code === 'ACTION_REJECTED' || err.code === 4001)
         ? 'Approval rejected by user'
-        : 'Approval error: '+(err.shortMessage||err.message||'');
-      showToast(msg,'error');
-      if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-lock mr-2"></i>Confirm & Lock Funds';}
-      return;
+        : 'Approval failed: ' + (err.shortMessage || err.reason || err.message || String(err));
+      showToast(msg, 'error');
+      console.error('[confirmOrder] approve error:', err);
+      resetBtn(); return;
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  STEP 2: createEscrow(orderId32, seller, token, amount)
-    //  "to" = ShuklyEscrow contract
-    // ═══════════════════════════════════════════════════════════
+    // ══ STEP 2/3: createEscrow ══════════════════════════════════════
     let createTxHash = null;
     try {
-      if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 2/3 — Creating escrow…';
-      showToast('Step 2/3: Creating escrow slot on-chain…','info');
+      setBtn('Step 2/3 — Creating escrow slot (confirm in wallet)…');
+      showToast('Step 2/3: createEscrow — confirm in wallet…', 'info');
+      console.log('[confirmOrder] createEscrow args:', orderId32, sellerAddress, tokenAddress, amountWei.toString());
 
-      const createTx = await escrowContract.createEscrow(
-        orderId32,
-        sellerAddress,
-        tokenAddress,
-        amountWei
-      );
-      if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 2/3 — Waiting for confirmation…';
-      showToast('createEscrow sent: '+createTx.hash.slice(0,14)+'… Waiting…','info');
+      const createTx = await escrowContract.createEscrow(orderId32, sellerAddress, tokenAddress, amountWei);
+      console.log('[confirmOrder] createEscrow tx:', createTx.hash);
+      setBtn('Step 2/3 — Waiting for createEscrow confirmation…');
+      showToast('createEscrow sent: ' + createTx.hash.slice(0, 14) + '… Waiting…', 'info');
 
       const createReceipt = await createTx.wait(1);
-      if(!createReceipt || createReceipt.status === 0){
-        throw new Error('createEscrow transaction reverted — check contract address and inputs');
-      }
+      if (!createReceipt || createReceipt.status === 0) throw new Error('createEscrow tx reverted — check contract address and inputs');
       createTxHash = createTx.hash;
-      showToast('Escrow slot created! Tx: '+createTx.hash.slice(0,14)+'…','success');
-    } catch(err){
-      const msg = (err.code==='ACTION_REJECTED'||err.code===4001)
+      showToast('Escrow slot created! ✓ Tx: ' + createTx.hash.slice(0, 14) + '…', 'success');
+    } catch (err) {
+      const msg = (err.code === 'ACTION_REJECTED' || err.code === 4001)
         ? 'createEscrow rejected by user'
-        : 'createEscrow error: '+(err.shortMessage||err.message||'');
-      showToast(msg,'error');
-      if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-lock mr-2"></i>Confirm & Lock Funds';}
-      return;
+        : 'createEscrow failed: ' + (err.shortMessage || err.reason || err.message || String(err));
+      showToast(msg, 'error');
+      console.error('[confirmOrder] createEscrow error:', err);
+      resetBtn(); return;
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  STEP 3: fundEscrow(orderId32)
-    //  "to" = ShuklyEscrow contract — pulls tokens from buyer → escrow
-    // ═══════════════════════════════════════════════════════════
+    // ══ STEP 3/3: fundEscrow ════════════════════════════════════════
     let fundTxHash = null;
     try {
-      if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 3/3 — Locking funds…';
-      showToast('Step 3/3: Locking funds in escrow contract…','info');
+      setBtn('Step 3/3 — Locking funds in escrow (confirm in wallet)…');
+      showToast('Step 3/3: fundEscrow — confirm in wallet…', 'info');
+      console.log('[confirmOrder] fundEscrow orderId32:', orderId32);
 
       const fundTx = await escrowContract.fundEscrow(orderId32);
-      if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Step 3/3 — Waiting for confirmation…';
-      showToast('fundEscrow sent: '+fundTx.hash.slice(0,14)+'… Waiting…','info');
+      console.log('[confirmOrder] fundEscrow tx:', fundTx.hash);
+      setBtn('Step 3/3 — Waiting for fundEscrow confirmation…');
+      showToast('fundEscrow sent: ' + fundTx.hash.slice(0, 14) + '… Waiting…', 'info');
 
       const fundReceipt = await fundTx.wait(1);
-      if(!fundReceipt || fundReceipt.status === 0){
-        throw new Error('fundEscrow transaction reverted — check token allowance and escrow state');
-      }
+      if (!fundReceipt || fundReceipt.status === 0) throw new Error('fundEscrow tx reverted — check token allowance and escrow state');
       fundTxHash = fundTx.hash;
-      showToast('Funds locked in escrow! Tx: '+fundTx.hash.slice(0,14)+'…','success');
-    } catch(err){
-      const msg = (err.code==='ACTION_REJECTED'||err.code===4001)
+      showToast('Funds locked in escrow! ✓ Tx: ' + fundTx.hash.slice(0, 14) + '…', 'success');
+    } catch (err) {
+      const msg = (err.code === 'ACTION_REJECTED' || err.code === 4001)
         ? 'fundEscrow rejected by user'
-        : 'fundEscrow error: '+(err.shortMessage||err.message||'');
-      showToast(msg,'error');
-      if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-lock mr-2"></i>Confirm & Lock Funds';}
-      return;
+        : 'fundEscrow failed: ' + (err.shortMessage || err.reason || err.message || String(err));
+      showToast(msg, 'error');
+      console.error('[confirmOrder] fundEscrow error:', err);
+      resetBtn(); return;
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  Save order — only after on-chain confirmation
-    // ═══════════════════════════════════════════════════════════
+    // ══ Save order ══════════════════════════════════════════════════
     const orderData = {
-      orderId,
-      orderId32,
-      txHash:       createTxHash,   // createEscrow tx
-      fundTxHash:   fundTxHash,      // fundEscrow tx (main lock tx)
+      orderId, orderId32,
+      txHash:       createTxHash,
+      fundTxHash,
       buyerAddress: w.address,
       sellerAddress,
       amount:       total,
@@ -2930,18 +2953,18 @@ function checkoutPage() {
       items:        cart
     };
 
-    // Save to backend (optional metadata store)
+    // Backend save (optional — best effort)
     try {
       await fetch('/api/orders', {
         method: 'POST',
-        headers: {'Content-Type':'application/json'},
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(orderData)
       });
-    } catch(e){}
+    } catch (e) { console.warn('[confirmOrder] backend save error:', e); }
 
-    // Save to localStorage
-    const savedOrders = JSON.parse(localStorage.getItem('rh_orders')||'[]');
-    const newOrder = {
+    // LocalStorage save
+    const savedOrders = JSON.parse(localStorage.getItem('rh_orders') || '[]');
+    savedOrders.unshift({
       id:             orderId,
       orderId32,
       txHash:         createTxHash,
@@ -2955,17 +2978,16 @@ function checkoutPage() {
       items:          cart,
       status:         'escrow_locked',
       createdAt:      new Date().toISOString(),
-      explorerUrl:    window.ARC.explorer+'/tx/'+fundTxHash
-    };
-    savedOrders.unshift(newOrder);
+      explorerUrl:    window.ARC.explorer + '/tx/' + fundTxHash
+    });
     localStorage.setItem('rh_orders', JSON.stringify(savedOrders));
 
-    // Clear cart
     localStorage.removeItem('cart');
-    try{ CartStore._syncBadge([]); } catch(e){}
+    try { CartStore._syncBadge([]); } catch (e) {}
 
-    showToast('Funds locked in escrow! Order '+orderId,'success');
-    setTimeout(()=>{ window.location.href='/orders/'+orderId; }, 1200);
+    setBtn('Funds locked! Redirecting…');
+    showToast('✓ Funds locked in escrow! Order ' + orderId, 'success');
+    setTimeout(() => { window.location.href = '/orders/' + orderId; }, 1200);
   }
   </script>
   `)
@@ -5610,6 +5632,13 @@ function deployEscrowPage() {
       <button id="deploy-btn" onclick="deployContract()" class="btn-primary w-full justify-center py-3 text-base font-bold">
         <i class="fas fa-rocket mr-2"></i> Deploy ShuklyEscrow via MetaMask
       </button>
+      <div class="mt-4 border-t pt-4">
+        <p class="text-xs text-slate-500 mb-2">Already have a deployed contract? Set the address manually:</p>
+        <div class="flex gap-2">
+          <input id="manual-addr-input" type="text" class="input text-xs flex-1" placeholder="0x721eafa9c1e38dd7fff81d30ea1a5500b37cf658" value="0x721eafa9c1e38dd7fff81d30ea1a5500b37cf658"/>
+          <button onclick="setManualAddr()" class="btn-secondary text-xs px-3 py-2 whitespace-nowrap">Set Address</button>
+        </div>
+      </div>
       <p class="text-xs text-slate-400 mt-3 text-center">Deployer wallet becomes the contract owner. Gas paid in USDC on Arc Network.</p>
     </div>
 
@@ -5640,7 +5669,7 @@ function deployEscrowPage() {
   const ESCROW_BYTECODE = '0x60806040525f6002553480156012575f5ffd5b50600180546001600160a01b031916331790556111ad806100325f395ff3fe608060405234801561000f575f5ffd5b50600436106100a6575f3560e01c806374950ffd1161006e57806374950ffd146101695780638da5cb5b1461017c578063c92ee043146101a7578063f023b811146101ba578063f08ef6cb14610211578063f8e65d6114610224575f5ffd5b806324a9d853146100aa5780632d83549c146100c657806343a0e3e61461012e5780636e629653146101435780637249fbb614610156575b5f5ffd5b6100b360025481565b6040519081526020015b60405180910390f35b61011c6100d4366004610fb2565b5f602081905290815260409020805460018201546002830154600384015460048501546005909501546001600160a01b03948516959385169490921692909160ff9091169086565b6040516100bd96959493929190610fdd565b61014161013c366004611044565b610237565b005b61014161015136600461108d565b61049f565b610141610164366004610fb2565b61073f565b610141610177366004610fb2565b61090f565b60015461018f906001600160a01b031681565b6040516001600160a01b0390911681526020016100bd565b6101416101b5366004610fb2565b6109ef565b61011c6101c8366004610fb2565b5f908152602081905260409020805460018201546002830154600384015460048501546005909501546001600160a01b0394851696938516959490921693909260ff9091169190565b61014161021f366004610fb2565b610ca3565b610141610232366004610fb2565b610de1565b6001546001600160a01b031633146102835760405162461bcd60e51b815260206004820152600a60248201526927b7363c9037bbb732b960b11b60448201526064015b60405180910390fd5b5f8281526020819052604090206005600482015460ff1660058111156102ab576102ab610fc9565b146102e75760405162461bcd60e51b815260206004820152600c60248201526b139bdd08191a5cdc1d5d195960a21b604482015260640161027a565b81156103cf576004818101805460ff19166003908117909155600283015460018401549184015460405163a9059cbb60e01b81526001600160a01b03938416948101949094526024840152169063a9059cbb906044016020604051808303815f875af1158015610359573d5f5f3e3d5ffd5b505050506040513d601f19601f8201168201806040525081019061037d91906110ce565b50600181015460038201546040519081526001600160a01b039091169084907f75d86e5bfa1175e2dc677f3abe3aebba3069f2db6ae492f1734d4b4bc65f61c1906020015b60405180910390a3505050565b6004818101805460ff19168217905560028201548254600384015460405163a9059cbb60e01b81526001600160a01b03928316948101949094526024840152169063a9059cbb906044016020604051808303815f875af1158015610435573d5f5f3e3d5ffd5b505050506040513d601f19601f8201168201806040525081019061045991906110ce565b50805460038201546040519081526001600160a01b039091169084907ffc31a7ddbe933aa6e67f3c98c183fbc87addd2b602fcfb10238d2f85cf026617906020016103c2565b5f848152602081905260409020546001600160a01b0316156104fb5760405162461bcd60e51b8152602060048201526015602482015274457363726f7720616c72656164792065786973747360581b604482015260640161027a565b6001600160a01b0383166105425760405162461bcd60e51b815260206004820152600e60248201526d24b73b30b634b21039b2b63632b960911b604482015260640161027a565b336001600160a01b038416036105935760405162461bcd60e51b8152602060048201526016602482015275213abcb2b91031b0b73737ba1031329039b2b63632b960511b604482015260640161027a565b6001600160a01b0382166105d95760405162461bcd60e51b815260206004820152600d60248201526c24b73b30b634b2103a37b5b2b760991b604482015260640161027a565b5f811161061d5760405162461bcd60e51b81526020600482015260126024820152710416d6f756e74206d757374206265203e20360741b604482015260640161027a565b6040805160c0810182523381526001600160a01b03858116602083015284169181019190915260608101829052608081015f8152426020918201525f868152808252604090819020835181546001600160a01b03199081166001600160a01b039283161783559385015160018084018054871692841692909217909155928501516002830180549095169116179092556060830151600383015560808301516004830180549192909160ff1916908360058111156106dd576106dd610fc9565b021790555060a09190910151600590910155604080516001600160a01b03848116825260208201849052851691339187917fa659390cb932e6b1ea09aba8819db2052575206b54a121463b49371aa8dae6a7910160405180910390a450505050565b5f8181526020819052604090205481906001600160a01b031633146107765760405162461bcd60e51b815260040161027a906110f0565b5f8281526020819052604090206001600482015460ff16600581111561079e5761079e610fc9565b146107eb5760405162461bcd60e51b815260206004820152601e60248201527f43616e6e6f7420726566756e6420696e2063757272656e742073746174650000604482015260640161027a565b6004818101805460ff19168217905560028201548254600384015460405163a9059cbb60e01b81526001600160a01b039283169481019490945260248401525f9291169063a9059cbb906044016020604051808303815f875af1158015610854573d5f5f3e3d5ffd5b505050506040513d601f19601f8201168201806040525081019061087891906110ce565b9050806108c05760405162461bcd60e51b81526020600482015260166024820152751499599d5b99081d1c985b9cd9995c8819985a5b195960521b604482015260640161027a565b815460038301546040519081526001600160a01b039091169085907ffc31a7ddbe933aa6e67f3c98c183fbc87addd2b602fcfb10238d2f85cf026617906020015b60405180910390a350505050565b5f8181526020819052604090205481906001600160a01b031633146109465760405162461bcd60e51b815260040161027a906110f0565b5f8281526020819052604090206001600482015460ff16600581111561096e5761096e610fc9565b146109af5760405162461bcd60e51b8152602060048201526011602482015270115cd8dc9bddc81b9bdd08119553911151607a1b604482015260640161027a565b60048101805460ff19166002179055604051339084907ff46bccfdb06ecc81738bcfc5ee961cc50fe62e4a5060c050d8bf69bcd1d47731905f90a3505050565b5f81815260208190526040902080546001600160a01b0316331480610a20575060018101546001600160a01b031633145b610a635760405162461bcd60e51b815260206004820152601460248201527327b7363c90313abcb2b91037b91039b2b63632b960611b604482015260640161027a565b6002600482015460ff166005811115610a7e57610a7e610fc9565b14610ac25760405162461bcd60e51b8152602060048201526014602482015273115cd8dc9bddc81b9bdd0810d3d391925493515160621b604482015260640161027a565b60048101805460ff19166003908117909155600254908201545f9161271091610aeb9190611128565b610af59190611145565b90505f818360030154610b089190611164565b6002840154600185015460405163a9059cbb60e01b81526001600160a01b039182166004820152602481018490529293505f9291169063a9059cbb906044016020604051808303815f875af1158015610b63573d5f5f3e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610b8791906110ce565b905080610bd65760405162461bcd60e51b815260206004820152601960248201527f5472616e7366657220746f2073656c6c6572206661696c656400000000000000604482015260640161027a565b8215610c5657600284015460015460405163a9059cbb60e01b81526001600160a01b0391821660048201526024810186905291169063a9059cbb906044016020604051808303815f875af1158015610c30573d5f5f3e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610c5491906110ce565b505b60018401546040518381526001600160a01b039091169086907f75d86e5bfa1175e2dc677f3abe3aebba3069f2db6ae492f1734d4b4bc65f61c19060200160405180910390a35050505050565b5f81815260208190526040902080546001600160a01b0316331480610cd4575060018101546001600160a01b031633145b610d175760405162461bcd60e51b815260206004820152601460248201527327b7363c90313abcb2b91037b91039b2b63632b960611b604482015260640161027a565b6001600482015460ff166005811115610d3257610d32610fc9565b1480610d5657506002600482015460ff166005811115610d5457610d54610fc9565b145b610da25760405162461bcd60e51b815260206004820152601f60248201527f43616e6e6f74206469737075746520696e2063757272656e7420737461746500604482015260640161027a565b60048101805460ff19166005179055604051339083907fe7b614d99462ab012c8191c9348164cd62a4aec6d211f42371fd1f0759e5c220905f90a35050565b5f8181526020819052604090205481906001600160a01b03163314610e185760405162461bcd60e51b815260040161027a906110f0565b5f82815260208190526040812090600482015460ff166005811115610e3f57610e3f610fc9565b14610e8c5760405162461bcd60e51b815260206004820152601960248201527f457363726f77206e6f7420696e20454d50545920737461746500000000000000604482015260640161027a565b600281015460038201546040516323b872dd60e01b815233600482015230602482015260448101919091525f916001600160a01b0316906323b872dd906064016020604051808303815f875af1158015610ee8573d5f5f3e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610f0c91906110ce565b905080610f6a5760405162461bcd60e51b815260206004820152602660248201527f546f6b656e207472616e73666572206661696c65643a20636865636b20616c6c6044820152656f77616e636560d01b606482015260840161027a565b60048201805460ff191660011790556003820154604051908152339085907fb0f7b6ab70e0186c433938ee752b2498a7cab42018e6bf7596cd704c81c470bc90602001610901565b5f60208284031215610fc2575f5ffd5b5035919050565b634e487b7160e01b5f52602160045260245ffd5b6001600160a01b0387811682528681166020830152851660408201526060810184905260c081016006841061102057634e487b7160e01b5f52602160045260245ffd5b608082019390935260a00152949350505050565b8015158114611041575f5ffd5b50565b5f5f60408385031215611055575f5ffd5b82359150602083013561106781611034565b809150509250929050565b80356001600160a01b0381168114611088575f5ffd5b919050565b5f5f5f5f608085870312156110a0575f5ffd5b843593506110b060208601611072565b92506110be60408601611072565b9396929550929360600135925050565b5f602082840312156110de575f5ffd5b81516110e981611034565b9392505050565b6020808252600a908201526927b7363c90313abcb2b960b11b604082015260600190565b634e487b7160e01b5f52601160045260245ffd5b808202811582820484141761113f5761113f611114565b92915050565b5f8261115f57634e487b7160e01b5f52601260045260245ffd5b500490565b8181038181111561113f5761113f61111456fea2646970667358221220005a0901a06072c1c8d0bb8592692ff2bdda55f3fd069fcfda67dd532120acd064736f6c63430008220033';
 
   document.addEventListener('DOMContentLoaded', () => {
-    const addr = localStorage.getItem('shukly_escrow_address') || 'Not deployed yet';
+    const addr = localStorage.getItem('shukly_escrow_address') || window.ARC.contracts.ShuklyEscrow || 'Not set';
     document.getElementById('current-escrow-addr').textContent = addr;
     if(addr && addr.startsWith('0x') && addr !== '0x0000000000000000000000000000000000000000') {
       document.getElementById('deployed-addr-display').textContent = addr;
@@ -5648,6 +5677,21 @@ function deployEscrowPage() {
       document.getElementById('deployed-result').classList.remove('hidden');
     }
   });
+
+  function setManualAddr() {
+    const input = document.getElementById('manual-addr-input');
+    const addr = (input.value || '').trim();
+    if (!addr || !addr.startsWith('0x') || addr.length !== 42) {
+      alert('Invalid address — must be a 42-char hex address starting with 0x');
+      return;
+    }
+    localStorage.setItem('shukly_escrow_address', addr);
+    document.getElementById('current-escrow-addr').textContent = addr;
+    document.getElementById('deployed-addr-display').textContent = addr;
+    document.getElementById('deployed-explorer-link').href = window.ARC.explorer + '/address/' + addr;
+    document.getElementById('deployed-result').classList.remove('hidden');
+    document.getElementById('deploy-status').innerHTML = '<div class="p-4 rounded-lg border bg-emerald-50 border-emerald-200 text-emerald-800 text-sm"><i class="fas fa-check-circle mr-2"></i>Escrow address set to ' + addr + '. All checkouts will now use this contract.</div>';
+  }
 
   async function deployContract() {
     const statusEl = document.getElementById('deploy-status');
@@ -5681,8 +5725,8 @@ function deployEscrowPage() {
       setStatus('<i class="fas fa-spinner fa-spin mr-2"></i>Deploying from <code class="font-mono text-xs">'+deployerAddr.slice(0,14)+'…</code> — confirm in MetaMask…', 'info');
       btn.innerHTML = '<span class="loading-spinner inline-block mr-2"></span>Confirm in MetaMask…';
 
-      // Deploy using ContractFactory
-      const factory = new ethers.ContractFactory([], ESCROW_BYTECODE, signer);
+      // Deploy using ContractFactory with full ABI
+      const factory = new ethers.ContractFactory(ESCROW_ABI, ESCROW_BYTECODE, signer);
       const contract = await factory.deploy();
 
       setStatus('<i class="fas fa-spinner fa-spin mr-2"></i>Waiting for on-chain confirmation… <code class="font-mono text-xs">'+contract.deploymentTransaction().hash.slice(0,14)+'…</code>', 'info');
