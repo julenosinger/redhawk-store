@@ -793,11 +793,124 @@ let _walletAddress = null;
 let _walletProvider = null;
 let _ethersProvider = null;
 
-function getStoredWallet() {
-  try { return JSON.parse(localStorage.getItem('rh_wallet') || 'null') } catch { return null }
+// ══════════════════════════════════════════════════════════════
+//  AES-256-GCM Wallet Encryption — Web Crypto API (client-side only)
+//  Keys derived via PBKDF2 (SHA-256, 200_000 iterations, 256-bit)
+//  Storage key: rh_wallet_enc  (encrypted)  → persistent
+//  Session key: rh_wallet_sess (plain JSON) → sessionStorage only
+// ══════════════════════════════════════════════════════════════
+
+async function _walletDeriveKey(password, salt) {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 200000, hash: 'SHA-256' },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
 }
-function storeWallet(w) { localStorage.setItem('rh_wallet', JSON.stringify(w)) }
-function clearWallet() { localStorage.removeItem('rh_wallet') }
+
+async function walletEncrypt(walletObj, password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv   = crypto.getRandomValues(new Uint8Array(12));
+  const key  = await _walletDeriveKey(password, salt);
+  const enc  = new TextEncoder();
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    enc.encode(JSON.stringify(walletObj))
+  );
+  const toB64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+  return {
+    encryptedWallet: toB64(ciphertext),
+    iv:   toB64(iv),
+    salt: toB64(salt),
+    v: 1
+  };
+}
+
+async function walletDecrypt(encData, password) {
+  try {
+    const fromB64 = (s) => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+    const salt = fromB64(encData.salt);
+    const iv   = fromB64(encData.iv);
+    const ct   = fromB64(encData.encryptedWallet);
+    const key  = await _walletDeriveKey(password, salt);
+    const dec  = new TextDecoder();
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+    return JSON.parse(dec.decode(plain));
+  } catch {
+    return null; // wrong password or corrupted
+  }
+}
+
+// Save encrypted wallet to localStorage (persists across sessions)
+async function storeWalletEncrypted(walletObj, password) {
+  const enc = await walletEncrypt(walletObj, password);
+  localStorage.setItem('rh_wallet_enc', JSON.stringify(enc));
+  // Also activate session immediately
+  sessionStorage.setItem('rh_wallet_sess', JSON.stringify(walletObj));
+}
+
+// Checks if there is an encrypted wallet stored (not yet unlocked)
+function hasEncryptedWallet() {
+  try {
+    const enc = localStorage.getItem('rh_wallet_enc');
+    if (!enc) return false;
+    const parsed = JSON.parse(enc);
+    return !!(parsed && parsed.encryptedWallet && parsed.iv && parsed.salt);
+  } catch { return false; }
+}
+
+// Unlock: decrypt stored wallet with password, activate session
+async function unlockWallet(password) {
+  try {
+    const enc = JSON.parse(localStorage.getItem('rh_wallet_enc') || 'null');
+    if (!enc) return null;
+    const w = await walletDecrypt(enc, password);
+    if (!w) return null;
+    sessionStorage.setItem('rh_wallet_sess', JSON.stringify(w));
+    return w;
+  } catch { return null; }
+}
+
+// getStoredWallet — returns active wallet from session OR legacy plain rh_wallet
+function getStoredWallet() {
+  // 1. Check session (unlocked this tab/session)
+  try {
+    const sess = sessionStorage.getItem('rh_wallet_sess');
+    if (sess) return JSON.parse(sess);
+  } catch { /* ignore */ }
+  // 2. Legacy plain-text wallet (backwards compatibility)
+  try {
+    const plain = localStorage.getItem('rh_wallet');
+    if (plain) {
+      const w = JSON.parse(plain);
+      // If it has a privateKey in plain text, put in session and continue
+      if (w && w.address) {
+        sessionStorage.setItem('rh_wallet_sess', plain);
+        return w;
+      }
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+// storeWallet — legacy plain text (used by MetaMask connect flow)
+function storeWallet(w) {
+  localStorage.setItem('rh_wallet', JSON.stringify(w));
+  sessionStorage.setItem('rh_wallet_sess', JSON.stringify(w));
+}
+
+function clearWallet() {
+  localStorage.removeItem('rh_wallet');
+  localStorage.removeItem('rh_wallet_enc');
+  sessionStorage.removeItem('rh_wallet_sess');
+}
 
 function updateWalletBadge(address) {
   const el = document.getElementById('wallet-badge');
@@ -3050,6 +3163,51 @@ function walletPage() {
     <p class="text-slate-500 mb-2">Non-custodial wallet — your keys, your funds, on Arc Network.</p>
     <div id="wallet-network-status" class="mb-6"></div>
 
+    <!-- Unlock Wallet (shown when encrypted wallet exists but session not active) -->
+    <div id="unlock-wallet-state" class="hidden">
+      <div class="max-w-md mx-auto">
+        <div class="card p-8 text-center mb-4">
+          <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-red-500 to-red-800 flex items-center justify-center text-white text-2xl mx-auto mb-4 shadow-lg">
+            <i class="fas fa-lock"></i>
+          </div>
+          <h2 class="text-2xl font-bold text-slate-800 mb-2">Unlock Your Wallet</h2>
+          <p class="text-slate-500 text-sm mb-6">Your encrypted wallet is stored locally. Enter your password to access it.</p>
+          <div class="space-y-4 text-left">
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">Wallet Password</label>
+              <input id="unlock-password" type="password" placeholder="Enter your wallet password" class="input"
+                onkeydown="if(event.key==='Enter')unlockWalletUI()"/>
+            </div>
+            <div id="unlock-error" class="hidden p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
+              <i class="fas fa-exclamation-circle mr-1"></i> Senha incorreta. Tente novamente.
+            </div>
+            <button onclick="unlockWalletUI()" id="unlock-btn" class="btn-primary w-full justify-center py-3">
+              <i class="fas fa-unlock"></i> Unlock Wallet
+            </button>
+          </div>
+        </div>
+        <div class="text-center">
+          <p class="text-slate-400 text-xs mb-2">Forgot your password?</p>
+          <button onclick="showForgotPasswordUI()" class="text-red-500 text-sm hover:underline font-medium">
+            <i class="fas fa-key mr-1"></i> Reset with Seed Phrase
+          </button>
+        </div>
+        <!-- Forgot password panel (hidden by default) -->
+        <div id="forgot-password-panel" class="hidden card p-6 mt-4">
+          <h3 class="font-bold text-slate-800 mb-3 flex items-center gap-2">
+            <i class="fas fa-key text-amber-500"></i> Reset Wallet Password
+          </h3>
+          <p class="text-slate-500 text-sm mb-4">Import your wallet again using your seed phrase to set a new password.</p>
+          <a href="/wallet/import" class="btn-primary w-full justify-center mb-3">
+            <i class="fas fa-file-import"></i> Import with Seed Phrase
+          </a>
+          <button onclick="confirmResetWallet()" class="w-full text-center text-red-500 text-sm hover:underline py-2">
+            <i class="fas fa-trash-alt mr-1"></i> Delete stored wallet data
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- No Wallet -->
     <div id="no-wallet-state">
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
@@ -3372,17 +3530,29 @@ function walletPage() {
     if (w.type === 'metamask') { showToast('MetaMask wallets are managed by MetaMask directly', 'info'); return; }
     const confirmed = confirm('⚠️ WARNING: You are about to view your private key.\\nNEVER share it with anyone.\\nAnyone with your private key can steal ALL your funds.\\n\\nContinue?');
     if (!confirmed) return;
-    const pwd = prompt('Enter your wallet password:');
+    // Private key is already available in decrypted session
+    if (w.privateKey && !w.privateKey.startsWith('[')) {
+      alert('Private Key (KEEP SECRET — never share this):\\n' + w.privateKey);
+      showToast('Never share your private key!', 'error');
+      return;
+    }
+    // Re-enter password to confirm
+    const pwd = prompt('Re-enter your wallet password to confirm export:');
     if (!pwd) return;
-    alert('Private Key (KEEP SECRET):\\n' + (w.privateKey || '[Encrypted — enter correct password]'));
-    showToast('Never share your private key!', 'error');
+    unlockWallet(pwd).then(decrypted => {
+      if (!decrypted) { showToast('Incorrect password', 'error'); return; }
+      alert('Private Key (KEEP SECRET — never share this):\\n' + (decrypted.privateKey || '[not available]'));
+      showToast('Never share your private key!', 'error');
+    });
   }
 
   document.addEventListener('DOMContentLoaded', async () => {
     checkNetworkStatus(document.getElementById('wallet-network-status'));
     const w = getStoredWallet();
     if (w) {
+      // ── Active session: show wallet dashboard ──────────────────
       document.getElementById('no-wallet-state').classList.add('hidden');
+      document.getElementById('unlock-wallet-state').classList.add('hidden');
       document.getElementById('has-wallet-state').classList.remove('hidden');
       document.getElementById('wallet-addr-display').textContent = w.address;
       document.getElementById('receive-addr').textContent = w.address;
@@ -3404,8 +3574,49 @@ function walletPage() {
       await refreshBalances();
       // Load tx history
       await loadTxHistory(w.address);
+    } else if (hasEncryptedWallet()) {
+      // ── Encrypted wallet exists but no active session: show unlock ──
+      document.getElementById('no-wallet-state').classList.add('hidden');
+      document.getElementById('unlock-wallet-state').classList.remove('hidden');
+      setTimeout(() => { const el = document.getElementById('unlock-password'); if (el) el.focus(); }, 100);
     }
+    // else: show no-wallet-state (already visible by default)
   });
+
+  async function unlockWalletUI() {
+    const pwd = document.getElementById('unlock-password').value;
+    const errEl = document.getElementById('unlock-error');
+    const btn = document.getElementById('unlock-btn');
+    errEl.classList.add('hidden');
+    if (!pwd) { errEl.classList.remove('hidden'); return; }
+    btn.disabled = true;
+    btn.innerHTML = '<span class=\\"loading-spinner inline-block mr-2\\"></span>Unlocking…';
+    const w = await unlockWallet(pwd);
+    if (!w) {
+      errEl.classList.remove('hidden');
+      btn.disabled = false;
+      btn.innerHTML = '<i class=\\"fas fa-unlock\\"></i> Unlock Wallet';
+      document.getElementById('unlock-password').value = '';
+      document.getElementById('unlock-password').focus();
+      return;
+    }
+    // Success: update badge and reload
+    updateWalletBadge(w.address);
+    showToast('Wallet unlocked!', 'success');
+    setTimeout(() => location.reload(), 400);
+  }
+
+  function showForgotPasswordUI() {
+    const panel = document.getElementById('forgot-password-panel');
+    if (panel) panel.classList.toggle('hidden');
+  }
+
+  function confirmResetWallet() {
+    if (!confirm('⚠️ This will delete your encrypted wallet data from this browser.\\nYou will need your seed phrase to restore access.\\n\\nContinue?')) return;
+    clearWallet();
+    showToast('Wallet data removed. Import again with seed phrase.', 'info');
+    setTimeout(() => location.reload(), 1000);
+  }
   </script>
   `)
 }
@@ -3661,12 +3872,22 @@ function walletCreatePage() {
     const selected=document.querySelectorAll('[data-selected="true"]');
     if(selected.length<positions.length){showToast('Answer all verification questions','error');return;}
     if(document.querySelectorAll('.border-red-500').length>0){showToast('Some words are incorrect. Try again.','error');return;}
-    // Save wallet (private key stored locally — never sent to server)
-    storeWallet(_createdWallet);
-    updateWalletBadge(_createdWallet.address);
-    document.getElementById('final-address').textContent=_createdWallet.address;
-    goToStep(4);
-    showToast('Wallet created! Connect to Arc Testnet to start.','success');
+    // Get password entered in step 0
+    const pwd = document.getElementById('wallet-password').value;
+    if (!pwd || pwd.length < 8) { showToast('Password missing — go back to step 1','error'); return; }
+    // Encrypt wallet with AES-256 and save (async)
+    const btn = document.querySelector('[onclick="verifyAndCreate()"]');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="loading-spinner inline-block mr-2"></span>Encrypting…'; }
+    storeWalletEncrypted(_createdWallet, pwd).then(() => {
+      updateWalletBadge(_createdWallet.address);
+      document.getElementById('final-address').textContent = _createdWallet.address;
+      goToStep(4);
+      showToast('Wallet created and encrypted! You can now use it on Arc Testnet.','success');
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-check"></i> Verify & Create'; }
+    }).catch(err => {
+      showToast('Encryption error: ' + err.message, 'error');
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-check"></i> Verify & Create'; }
+    });
   }
 
   window.handleQuizClick=handleQuizClick;
@@ -3737,10 +3958,16 @@ function walletImportPage() {
         chainId:5042002,
         importedAt:new Date().toISOString()
       };
-      storeWallet(walletData);
-      updateWalletBadge(walletData.address);
-      showToast('Wallet imported! Address: '+walletData.address.substring(0,12)+'…','success');
-      setTimeout(()=>window.location.href='/wallet',1200);
+      const btn = document.querySelector('[onclick="importWallet()"]');
+      if (btn) { btn.disabled = true; btn.innerHTML = '<span class=\\"loading-spinner inline-block mr-2\\"></span>Encrypting…'; }
+      storeWalletEncrypted(walletData, pwd).then(() => {
+        updateWalletBadge(walletData.address);
+        showToast('Wallet imported and encrypted! Address: '+walletData.address.substring(0,12)+'…','success');
+        setTimeout(()=>window.location.href='/wallet',1200);
+      }).catch(err => {
+        showToast('Encryption error: '+err.message,'error');
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class=\\"fas fa-file-import\\"></i> Import to Arc Network Wallet'; }
+      });
     } catch(err) {
       showToast('Import failed: '+err.message,'error');
     }
