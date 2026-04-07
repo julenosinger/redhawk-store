@@ -2925,7 +2925,8 @@ function checkoutPage() {
       showToast('Step 2/3: createEscrow — confirm in wallet…', 'info');
       console.log('[confirmOrder] createEscrow args:', orderId32, sellerAddress, tokenAddress, amountWei.toString());
 
-      const createTx = await escrowContract.createEscrow(orderId32, sellerAddress, tokenAddress, amountWei);
+      // Arc Testnet eth_estimateGas can fail silently — pass explicit gasLimit to skip estimation
+      const createTx = await escrowContract.createEscrow(orderId32, sellerAddress, tokenAddress, amountWei, { gasLimit: 300000 });
       console.log('[confirmOrder] createEscrow tx:', createTx.hash);
       setBtn('Step 2/3 — Waiting for createEscrow confirmation…');
       showToast('createEscrow sent: ' + createTx.hash.slice(0, 14) + '… Waiting…', 'info');
@@ -2935,9 +2936,21 @@ function checkoutPage() {
       createTxHash = createTx.hash;
       showToast('Escrow slot created! ✓ Tx: ' + createTx.hash.slice(0, 14) + '…', 'success');
     } catch (err) {
-      const msg = (err.code === 'ACTION_REJECTED' || err.code === 4001)
-        ? 'createEscrow rejected by user'
-        : 'createEscrow failed: ' + (err.shortMessage || err.reason || err.message || String(err));
+      // Decode revert reason: Arc Testnet often returns no revert data
+      let msg;
+      if (err.code === 'ACTION_REJECTED' || err.code === 4001) {
+        msg = 'createEscrow rejected by user';
+      } else if (err.message && err.message.includes('missing revert data')) {
+        // Likely: buyer == seller, escrow already exists, or invalid inputs
+        const buyerAddr = (await signer.getAddress()).toLowerCase();
+        if (buyerAddr === sellerAddress.toLowerCase()) {
+          msg = 'Erro: você não pode comprar seu próprio produto (buyer = seller)';
+        } else {
+          msg = 'createEscrow revertido pela rede Arc (sem dados de revert). Verifique saldo USDC e endereços.';
+        }
+      } else {
+        msg = 'createEscrow falhou: ' + (err.shortMessage || err.reason || err.message || String(err));
+      }
       showToast(msg, 'error');
       console.error('[confirmOrder] createEscrow error:', err);
       resetBtn(); return;
@@ -2950,7 +2963,8 @@ function checkoutPage() {
       showToast('Step 3/3: fundEscrow — confirm in wallet…', 'info');
       console.log('[confirmOrder] fundEscrow orderId32:', orderId32);
 
-      const fundTx = await escrowContract.fundEscrow(orderId32);
+      // Arc Testnet eth_estimateGas can fail silently — pass explicit gasLimit
+      const fundTx = await escrowContract.fundEscrow(orderId32, { gasLimit: 200000 });
       console.log('[confirmOrder] fundEscrow tx:', fundTx.hash);
       setBtn('Step 3/3 — Waiting for fundEscrow confirmation…');
       showToast('fundEscrow sent: ' + fundTx.hash.slice(0, 14) + '… Waiting…', 'info');
@@ -2960,9 +2974,14 @@ function checkoutPage() {
       fundTxHash = fundTx.hash;
       showToast('Funds locked in escrow! ✓ Tx: ' + fundTx.hash.slice(0, 14) + '…', 'success');
     } catch (err) {
-      const msg = (err.code === 'ACTION_REJECTED' || err.code === 4001)
-        ? 'fundEscrow rejected by user'
-        : 'fundEscrow failed: ' + (err.shortMessage || err.reason || err.message || String(err));
+      let msg;
+      if (err.code === 'ACTION_REJECTED' || err.code === 4001) {
+        msg = 'fundEscrow rejected by user';
+      } else if (err.message && err.message.includes('missing revert data')) {
+        msg = 'fundEscrow revertido pela rede Arc. Verifique se o approve de ' + token + ' foi confirmado e se há saldo suficiente.';
+      } else {
+        msg = 'fundEscrow falhou: ' + (err.shortMessage || err.reason || err.message || String(err));
+      }
       showToast(msg, 'error');
       console.error('[confirmOrder] fundEscrow error:', err);
       resetBtn(); return;
@@ -4069,7 +4088,7 @@ function orderDetailPage(id: string) {
         if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Confirming delivery…';
         showToast('Sending confirmDelivery on-chain…','info');
 
-        const tx = await escrowContract.confirmDelivery(order.orderId32);
+        const tx = await escrowContract.confirmDelivery(order.orderId32, { gasLimit: 150000 });
         showToast('Tx sent: '+tx.hash.slice(0,14)+'… Waiting…','info');
         const receipt = await tx.wait(1);
         if(!receipt || receipt.status===0) throw new Error('confirmDelivery reverted');
@@ -4180,7 +4199,7 @@ function orderDetailPage(id: string) {
         if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Sending to escrow…';
         showToast('Broadcasting releaseFunds to ShuklyEscrow…','info');
 
-        const txResponse = await escrowContract.releaseFunds(order.orderId32);
+        const txResponse = await escrowContract.releaseFunds(order.orderId32, { gasLimit: 200000 });
         showToast('Tx sent! Waiting for confirmation… '+txResponse.hash.slice(0,14)+'…','info');
 
         // Wait for on-chain confirmation before updating UI
