@@ -18,13 +18,18 @@ var _safetyTimer     = null;    /* 9-second hard-stop handle                */
 function _getWallet() {
   /* 1. Try the registered helper if it's already available */
   if (typeof getStoredWallet === 'function') {
-    try { var w = getStoredWallet(); if (w) return w; } catch(e) {}
+    try { var w = getStoredWallet(); if (w) return w; } catch(e) {
+      console.warn('[Orders] getStoredWallet() failed:', e);
+    }
   }
   /* 2. Direct localStorage fallback — always available */
   try {
     var raw = localStorage.getItem('rh_wallet');
     if (raw) return JSON.parse(raw);
-  } catch(e) {}
+  } catch(e) {
+    console.error('[Orders] localStorage access blocked:', e);
+    console.warn('[Orders] Chrome may be blocking third-party storage. Try opening in Incognito or allowing cookies.');
+  }
   return null;
 }
 
@@ -39,6 +44,14 @@ function _showError(msg) {
     '<div class="card p-8 text-center">'
     + '<i class="fas fa-exclamation-triangle text-3xl text-yellow-400 mb-3 block"></i>'
     + '<p class="text-slate-500 text-sm mb-4">' + (msg || 'Could not load orders.') + '</p>'
+    + '<div class="text-xs text-slate-400 mb-4 p-3 bg-slate-50 rounded-lg border border-slate-200">'
+    + '<p class="mb-2"><strong>Troubleshooting:</strong></p>'
+    + '<ul class="text-left space-y-1">'
+    + '<li>• Chrome/Safari: Allow cookies in Settings → Privacy</li>'
+    + '<li>• Or try opening in Incognito/Private mode</li>'
+    + '<li>• Brave browser recommended (no restrictions)</li>'
+    + '</ul>'
+    + '</div>'
     + '<button onclick="_resetAndRender()" class="btn-secondary mx-auto text-sm">'
     + '<i class="fas fa-redo mr-1"></i>Retry</button>'
     + '</div>'
@@ -96,6 +109,8 @@ function renderOrders(tab) {
   if (_ordersLoading) return;
   _ordersLoading = true;
 
+  console.log('[Orders] renderOrders called for tab:', tab);
+
   /* Safety hard-stop: 9 s (belt-and-suspenders; renderOrders is synchronous) */
   if (_safetyTimer) clearTimeout(_safetyTimer);
   _safetyTimer = setTimeout(function() {
@@ -107,6 +122,7 @@ function renderOrders(tab) {
   try {
     /* Get wallet synchronously — no async polling */
     var wallet = _getWallet();
+    console.log('[Orders] Wallet detected:', wallet ? wallet.address : 'none');
 
     if (!wallet) {
       _setContainer(
@@ -124,13 +140,20 @@ function renderOrders(tab) {
 
     /* Load orders */
     var allOrders = [];
-    try { allOrders = JSON.parse(localStorage.getItem('rh_orders') || '[]'); } catch(e) {}
+    try { 
+      allOrders = JSON.parse(localStorage.getItem('rh_orders') || '[]');
+      console.log('[Orders] Loaded', allOrders.length, 'total orders from localStorage');
+    } catch(e) {
+      console.error('[Orders] Failed to load orders from localStorage:', e);
+    }
     allOrders = allOrders.map(_norm);
 
     /* Filter by tab */
     var orders = tab === 'purchases'
       ? allOrders.filter(function(o) { return o.buyerAddress  === myAddr; })
       : allOrders.filter(function(o) { return o.sellerAddress === myAddr; });
+    
+    console.log('[Orders] Filtered to', orders.length, tab, 'for address', myAddr);
 
     /* Empty state */
     if (!orders.length) {
