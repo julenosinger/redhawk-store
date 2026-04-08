@@ -570,7 +570,7 @@ function shell(title: string, body: string, extraHead = '') {
 
     /* Page fade-in animation */
     @keyframes pageFadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-    main,#main-content,.page-content,[class*="max-w-"]:not(nav *):not(footer *){animation:pageFadeIn .25s ease-out both}
+    body > *:not(nav):not(#testnet-banner):not(#mobile-bottom-nav):not(script):not(style):not(#global-toast){animation:pageFadeIn .22s ease-out both}
 
     /* Native tap highlight removal + smooth tap feedback */
     *{-webkit-tap-highlight-color:transparent}
