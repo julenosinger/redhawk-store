@@ -411,13 +411,60 @@ app.post('/api/escrow/save-address', async (c) => {
 
 // AI search: returns empty state since no real products exist yet
 app.post('/api/ai-search', async (c) => {
-  const { query } = await c.req.json()
-  return c.json({
-    results: [],
-    message: query
-      ? `No products found for "${query}". The marketplace is just getting started — check back soon or list your own product!`
-      : 'Ask me to search for products!'
-  })
+  try {
+    const { query, context } = await c.req.json()
+    await initDB(c.env.DB)
+    
+    // Get all products from database
+    const allProducts = await store.list(c.env)
+    
+    // Build context-aware response
+    let message = ''
+    let results = []
+    
+    if (!query || query.trim() === '') {
+      message = context?.page === 'product' && context?.productName
+        ? `I can help you with "${context.productName}" or find similar items. What would you like to know?`
+        : 'Ask me about products, prices, or how to buy on Arc Network!'
+      results = allProducts.slice(0, 3)
+    } else {
+      // Search products
+      const searchTerm = query.toLowerCase()
+      results = allProducts.filter(p => 
+        p.title.toLowerCase().includes(searchTerm) ||
+        p.description.toLowerCase().includes(searchTerm) ||
+        p.category.toLowerCase().includes(searchTerm)
+      )
+      
+      // Context-aware message
+      if (results.length > 0) {
+        message = context?.page === 'product' && context?.productName
+          ? `Found ${results.length} product${results.length > 1 ? 's' : ''} matching "${query}". Here are some options similar to "${context.productName}":`
+          : `Found ${results.length} product${results.length > 1 ? 's' : ''} for "${query}" on Arc Network:`
+      } else {
+        message = context?.page === 'product'
+          ? `No exact matches for "${query}". Here are other products you might like:`
+          : `No products found for "${query}". Try searching by category (Electronics, Fashion, etc.) or browse all items!`
+        results = allProducts.slice(0, 3) // Show some suggestions
+      }
+    }
+    
+    // Format results
+    const formattedResults = results.slice(0, 5).map(p => ({
+      id: p.id,
+      name: p.title,
+      price: p.price,
+      token: p.token,
+      category: p.category
+    }))
+    
+    return c.json({ message, results: formattedResults })
+  } catch (error) {
+    return c.json({
+      message: 'Error searching products. Please try again.',
+      results: []
+    })
+  }
 })
 
 // ─── Pages ───────────────────────────────────────────────────────────
@@ -1284,7 +1331,7 @@ function chatWidget() {
 <button onclick="toggleChat()" class="fixed bottom-6 right-6 w-14 h-14 rounded-full bg-gradient-to-br from-red-500 to-red-800 text-white shadow-xl flex items-center justify-center text-xl hover:scale-110 transition-transform z-50" title="HawkAI Assistant">
   <i class="fas fa-robot"></i>
 </button>
-<div id="chat-panel" class="hidden fixed bottom-24 right-6 w-80 sm:w-96 z-50">
+<div id="chat-panel" class="hidden fixed bottom-24 right-6 w-[420px] sm:w-[480px] z-50">
   <div class="card shadow-2xl overflow-hidden">
     <div class="bg-gradient-to-r from-red-600 to-red-800 px-4 py-3 flex items-center justify-between">
       <div class="flex items-center gap-2">
@@ -1298,35 +1345,66 @@ function chatWidget() {
       </div>
       <button onclick="toggleChat()" class="text-white/80 hover:text-white"><i class="fas fa-times"></i></button>
     </div>
-    <div id="chat-messages" class="p-4 h-64 overflow-y-auto flex flex-col gap-3 bg-gray-50">
+    <div id="chat-messages" class="p-4 h-[420px] overflow-y-auto flex flex-col gap-3 bg-gray-50">
       <div class="chat-bubble-ai text-sm text-slate-700">
         👋 Hi! I'm <strong>HawkAI</strong>, your Web3 shopping assistant.<br/><br/>
         The marketplace is live on <strong>Arc Network</strong> (Chain ID: 5042002).<br/>
-        Be the first to list a product or search for items!
+        Ask me about products, escrow protection, or how to buy!
       </div>
     </div>
     <div class="p-3 bg-white border-t border-slate-100 flex gap-2">
-      <input id="chat-input" type="text" placeholder="Search products…" class="flex-1 input py-2 text-sm" onkeydown="if(event.key==='Enter')sendChatMessage()"/>
+      <input id="chat-input" type="text" placeholder="Ask about products, prices, or how to buy…" class="flex-1 input py-2 text-sm" onkeydown="if(event.key==='Enter')sendChatMessage()"/>
       <button onclick="sendChatMessage()" class="btn-primary py-2 px-3 text-sm"><i class="fas fa-paper-plane"></i></button>
     </div>
   </div>
 </div>
 <script>
+// Get current page context for chat
+function getChatContext() {
+  const path = window.location.pathname;
+  const ctx = { page: 'home', productId: null, productName: null };
+  
+  // Product page context
+  if (path.startsWith('/product/')) {
+    ctx.page = 'product';
+    ctx.productId = path.split('/product/')[1];
+    const titleEl = document.querySelector('h1.text-3xl');
+    if (titleEl) ctx.productName = titleEl.textContent.trim();
+  }
+  // Marketplace page
+  else if (path === '/marketplace') ctx.page = 'marketplace';
+  // Cart page
+  else if (path === '/cart') ctx.page = 'cart';
+  // Checkout page
+  else if (path === '/checkout') ctx.page = 'checkout';
+  
+  return ctx;
+}
+
 async function sendChatMessage(overrideText) {
   const input = document.getElementById('chat-input');
   const query = overrideText || (input ? input.value.trim() : '');
   if (!query) return;
   if (input) input.value = '';
+  
   const msgs = document.getElementById('chat-messages');
   msgs.innerHTML += '<div class="flex justify-end"><div class="chat-bubble-user text-sm text-slate-700">' + query + '</div></div>';
   msgs.innerHTML += '<div id="ai-typing" class="chat-bubble-ai text-sm text-slate-500 flex items-center gap-2"><div class="loading-spinner"></div> Searching Arc Network…</div>';
   msgs.scrollTop = msgs.scrollHeight;
+  
   try {
-    const res = await fetch('/api/ai-search', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query})});
+    const context = getChatContext();
+    const res = await fetch('/api/ai-search', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ query, context })
+    });
     const data = await res.json();
     document.getElementById('ai-typing')?.remove();
+    
     let html = '<div class="chat-bubble-ai text-sm text-slate-700">';
     html += '<p class="mb-2">' + data.message + '</p>';
+    
     if (data.results && data.results.length > 0) {
       html += '<div class="flex flex-col gap-2">';
       data.results.slice(0,3).forEach(p => {
