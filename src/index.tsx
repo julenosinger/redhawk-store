@@ -435,7 +435,7 @@ app.get('/product/:id', async (c) => {
 app.get('/cart', (c) => c.html(cartPage()))
 app.get('/checkout', (c) => c.html(checkoutPage()))
 app.get('/wallet', (c) => c.html(walletPage()))
-app.get('/wallet/create', (c) => c.html(walletCreatePage()))
+app.get('/wallet/create', (c) => c.redirect('/wallet/import'))
 app.get('/wallet/import', (c) => c.html(walletImportPage()))
 app.get('/orders', (c) => c.html(ordersPage()))
 app.get('/orders/:id', (c) => c.html(orderDetailPage(c.req.param('id'))))
@@ -1053,7 +1053,7 @@ async function connectWallet(type) {
       updateWalletBadge(w.address);
       return w;
     }
-    window.location.href = '/wallet/create';
+    window.location.href = '/wallet/import';
     return null;
   }
 }
@@ -1366,7 +1366,7 @@ function footer() {
         <div>
           <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Wallet</p>
           <ul class="space-y-1.5">
-            ${['My Wallet:/wallet','Create:/wallet/create','Import:/wallet/import','Profile:/profile'].map(t=>{const[l,u]=t.split(':');return`<li><a href="${u}" class="text-xs text-slate-500 hover:text-red-400 transition-colors">${l}</a></li>`}).join('')}
+            ${['My Wallet:/wallet','Import:/wallet/import','Profile:/profile'].map(t=>{const[l,u]=t.split(':');return`<li><a href="${u}" class="text-xs text-slate-500 hover:text-red-400 transition-colors">${l}</a></li>`}).join('')}
           </ul>
         </div>
 
@@ -3210,17 +3210,7 @@ function walletPage() {
 
     <!-- No Wallet -->
     <div id="no-wallet-state">
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-        <a href="/wallet/create" class="card p-8 text-center hover:border-red-300 hover:shadow-lg transition-all group">
-          <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-red-500 to-red-800 flex items-center justify-center text-white text-2xl mx-auto mb-4 group-hover:scale-110 transition-transform shadow-lg">
-            <i class="fas fa-plus"></i>
-          </div>
-          <h2 class="text-xl font-bold text-slate-800 mb-2">Create New Wallet</h2>
-          <p class="text-slate-500 text-sm">Generate a non-custodial wallet. Keys generated client-side, never sent to server.</p>
-          <div class="inline-flex items-center gap-2 mt-4 text-green-600 text-sm font-medium">
-            <i class="fas fa-shield-alt"></i> 100% Non-Custodial · BIP39
-          </div>
-        </a>
+      <div class="grid grid-cols-1 gap-6 mb-8 max-w-md mx-auto">
         <a href="/wallet/import" class="card p-8 text-center hover:border-red-300 hover:shadow-lg transition-all group">
           <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-slate-500 to-slate-700 flex items-center justify-center text-white text-2xl mx-auto mb-4 group-hover:scale-110 transition-transform shadow-lg">
             <i class="fas fa-file-import"></i>
@@ -3617,286 +3607,6 @@ function walletPage() {
     showToast('Wallet data removed. Import again with seed phrase.', 'info');
     setTimeout(() => location.reload(), 1000);
   }
-  </script>
-  `)
-}
-
-// ─── PAGE: CREATE WALLET ────────────────────────────────────────────────
-function walletCreatePage() {
-  return shell('Create Wallet', `
-  <div class="max-w-2xl mx-auto px-4 py-8">
-    <div class="text-center mb-8">
-      <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-red-500 to-red-800 flex items-center justify-center text-white text-2xl mx-auto mb-4 shadow-xl">
-        <i class="fas fa-wallet"></i>
-      </div>
-      <h1 class="text-3xl font-extrabold text-slate-800 mb-2">Create Your Wallet</h1>
-      <p class="text-slate-500">100% client-side. Private key never leaves your browser. Ready for Arc Network.</p>
-    </div>
-
-    <!-- Step progress -->
-    <div class="flex items-center gap-2 mb-8">
-      ${['Setup','Security','Seed Phrase','Verify','Done'].map((step,i) => `
-        <div class="flex items-center gap-2 ${i<4?'flex-1':''}">
-          <div class="flex flex-col items-center">
-            <div id="step-circle-${i}" class="step-circle ${i===0?'':'pending'}">${i+1}</div>
-            <p class="text-xs mt-1 text-slate-400 whitespace-nowrap">${step}</p>
-          </div>
-          ${i<4?'<div class="flex-1 h-0.5 bg-slate-200 mb-4"></div>':''}
-        </div>`).join('')}
-    </div>
-
-    <!-- Step 0: Setup -->
-    <div id="step-0" class="card p-8">
-      <h2 class="text-xl font-bold text-slate-800 mb-2">Wallet Setup</h2>
-      <p class="text-slate-500 text-sm mb-6">Create a password to encrypt your wallet locally on your device.</p>
-      <div class="space-y-4">
-        <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">Wallet Name (optional)</label>
-          <input id="wallet-name" type="text" placeholder="My Shukly Store Wallet" class="input"/>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">Encryption Password *</label>
-          <input id="wallet-password" type="password" placeholder="Strong password (min 8 chars)" class="input"/>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">Confirm Password *</label>
-          <input id="wallet-password2" type="password" placeholder="Repeat password" class="input"/>
-        </div>
-        <div class="card p-4 bg-blue-50 border-blue-100 text-sm text-blue-800">
-          <i class="fas fa-info-circle mr-2"></i>
-          Password encrypts your wallet in <strong>your browser only</strong>. Shukly Store never sees it. Your wallet will work on Arc Testnet (Chain ID: 5042002).
-        </div>
-        <button onclick="goToStep1()" class="btn-primary w-full justify-center py-3">
-          <i class="fas fa-arrow-right"></i> Continue
-        </button>
-      </div>
-    </div>
-
-    <!-- Step 1: Security Warning -->
-    <div id="step-1" class="card p-8 hidden">
-      <h2 class="text-xl font-bold text-slate-800 mb-4">Security Warning</h2>
-      <div class="bg-red-50 border-2 border-red-200 rounded-2xl p-6 mb-6">
-        <div class="flex items-start gap-3">
-          <i class="fas fa-exclamation-triangle text-red-600 text-2xl mt-1"></i>
-          <div>
-            <h3 class="font-bold text-red-800 text-lg mb-3">⚠️ Critical Security Notice</h3>
-            <ul class="space-y-2 text-red-700 text-sm">
-              <li class="flex items-start gap-2"><i class="fas fa-times-circle mt-0.5"></i><strong>NEVER</strong> share your seed phrase with anyone</li>
-              <li class="flex items-start gap-2"><i class="fas fa-times-circle mt-0.5"></i>Shukly Store will <strong>NEVER</strong> ask for your seed phrase</li>
-              <li class="flex items-start gap-2"><i class="fas fa-times-circle mt-0.5"></i>Loss of seed phrase = <strong>permanent loss</strong> of funds</li>
-              <li class="flex items-start gap-2"><i class="fas fa-times-circle mt-0.5"></i>Screenshots of seed phrases are <strong>NOT safe</strong></li>
-            </ul>
-          </div>
-        </div>
-      </div>
-      <div class="network-ok mb-6 text-sm">
-        <i class="fas fa-check-circle text-green-600"></i>
-        <strong>Best practice:</strong> Write your seed phrase on paper and store in a secure, offline location.
-      </div>
-      <label class="flex items-start gap-3 cursor-pointer mb-6">
-        <input id="security-understood" type="checkbox" class="accent-red-600 mt-0.5 w-4 h-4"/>
-        <span class="text-sm text-slate-700">I understand that losing my seed phrase means <strong>permanent, irreversible loss</strong> of access to my wallet and any funds on Arc Network.</span>
-      </label>
-      <div class="flex gap-3">
-        <button onclick="goToStep(0)" class="btn-secondary flex-1 justify-center">Back</button>
-        <button onclick="goToStep2()" class="btn-primary flex-1 justify-center"><i class="fas fa-arrow-right"></i> I Understand</button>
-      </div>
-    </div>
-
-    <!-- Step 2: Seed Phrase -->
-    <div id="step-2" class="card p-8 hidden">
-      <h2 class="text-xl font-bold text-slate-800 mb-2">Your Seed Phrase</h2>
-      <p class="text-slate-500 text-sm mb-4">Write these 12 words in order. This is shown only once.</p>
-      <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-5 text-xs text-amber-800 font-medium flex items-center gap-2">
-        <i class="fas fa-eye-slash"></i> Ensure no one is watching your screen
-      </div>
-      <div id="seed-grid" class="grid grid-cols-3 gap-2 mb-5"></div>
-      <div class="card p-3 bg-slate-50 mb-5 text-xs text-slate-500">
-        <span class="font-semibold">Address:</span> <span id="wallet-address-preview" class="font-mono break-all"></span>
-      </div>
-      <label class="flex items-start gap-3 cursor-pointer mb-6">
-        <input id="seed-backed-up" type="checkbox" class="accent-red-600 mt-0.5 w-4 h-4"/>
-        <span class="text-sm text-slate-700">I have written down my seed phrase and stored it safely. I understand this is shown only once.</span>
-      </label>
-      <div class="flex gap-3">
-        <button onclick="goToStep(1)" class="btn-secondary flex-1 justify-center">Back</button>
-        <button onclick="goToStep3()" class="btn-primary flex-1 justify-center"><i class="fas fa-arrow-right"></i> I've Saved It</button>
-      </div>
-    </div>
-
-    <!-- Step 3: Verify -->
-    <div id="step-3" class="card p-8 hidden">
-      <h2 class="text-xl font-bold text-slate-800 mb-2">Verify Seed Phrase</h2>
-      <p class="text-slate-500 text-sm mb-6">Select the correct words to confirm you've saved your seed phrase.</p>
-      <div id="verify-quiz" class="space-y-4 mb-6"></div>
-      <div class="flex gap-3">
-        <button onclick="goToStep(2)" class="btn-secondary flex-1 justify-center">Back</button>
-        <button onclick="verifyAndCreate()" class="btn-primary flex-1 justify-center"><i class="fas fa-check"></i> Verify & Create</button>
-      </div>
-    </div>
-
-    <!-- Step 4: Done -->
-    <div id="step-4" class="card p-8 hidden text-center">
-      <div class="w-20 h-20 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
-        <i class="fas fa-check-circle text-green-500 text-4xl"></i>
-      </div>
-      <h2 class="text-2xl font-extrabold text-slate-800 mb-2">Wallet Created!</h2>
-      <p class="text-slate-500 mb-2">Your non-custodial wallet is ready for Arc Network.</p>
-      <div class="card p-4 bg-slate-50 mb-3">
-        <p class="text-xs text-slate-400 mb-1">Wallet Address</p>
-        <p class="font-mono text-sm text-slate-700 break-all" id="final-address">—</p>
-      </div>
-      <div class="card p-3 bg-blue-50 border-blue-100 mb-6 text-xs text-blue-800">
-        <i class="fas fa-faucet mr-1"></i>
-        Get free test USDC & EURC at <a href="https://faucet.circle.com" target="_blank" class="underline font-bold">faucet.circle.com</a>
-      </div>
-      <div class="grid grid-cols-2 gap-3">
-        <a href="/wallet" class="btn-primary justify-center py-3"><i class="fas fa-wallet"></i> Open Wallet</a>
-        <a href="/marketplace" class="btn-secondary justify-center py-3"><i class="fas fa-store"></i> Marketplace</a>
-      </div>
-    </div>
-  </div>
-
-  <script>
-  const BIP39_WORDS = [
-    'abandon','ability','able','about','above','absent','absorb','abstract','absurd','abuse',
-    'access','accident','account','accuse','achieve','acid','acoustic','acquire','across','act',
-    'action','actor','actress','actual','adapt','add','addict','address','adjust','admit',
-    'adult','advance','advice','aerobic','affair','afford','afraid','again','age','agent',
-    'agree','ahead','aim','air','airport','aisle','alarm','album','alcohol','alert',
-    'alien','all','alley','allow','almost','alone','alpha','already','also','alter',
-    'always','amateur','amazing','among','amount','amused','analyst','anchor','ancient','anger',
-    'angle','angry','animal','ankle','announce','annual','another','answer','antenna','antique',
-    'anxiety','any','apart','apology','appear','apple','approve','april','arch','arctic',
-    'area','arena','argue','arm','armed','armor','army','around','arrange','arrest',
-    'arrive','arrow','art','artefact','artist','artwork','ask','aspect','assault','asset',
-    'assist','assume','asthma','athlete','atom','attack','attend','attitude','attract','auction',
-    'audit','august','aunt','author','auto','autumn','average','avocado','avoid','awake',
-    'aware','away','awesome','awful','awkward','axis','baby','balance','bamboo','banana',
-    'banner','barely','bargain','barrel','base','basic','basket','battle','beach','bean',
-    'beauty','become','beef','before','begin','behave','behind','believe','below','bench',
-    'benefit','best','betray','better','between','beyond','bicycle','bid','bike','bind',
-    'biology','bird','birth','bitter','black','blade','blame','blanket','blast','bleak',
-    'bless','blind','blood','blossom','blouse','blue','blur','blush','board','boat',
-    'body','boil','bomb','bone','book','boost','border','boring','borrow','boss',
-    'bottom','bounce','box','boy','bracket','brain','brand','brave','breeze','brick',
-    'bridge','brief','bright','bring','brisk','broccoli','broken','bronze','broom','brother',
-    'brown','brush','bubble','buddy','budget','buffalo','build','bulb','bulk','bullet'
-  ];
-
-  let _createdWallet = null;
-  let _seedWords = [];
-
-  function goToStep(n) {
-    for (let i=0;i<5;i++) {
-      document.getElementById('step-'+i)?.classList.add('hidden');
-      const c=document.getElementById('step-circle-'+i);
-      if(c){
-        if(i<n){c.className='step-circle done';c.innerHTML='<i class="fas fa-check text-xs"></i>';}
-        else if(i===n){c.className='step-circle';c.textContent=i+1;}
-        else{c.className='step-circle pending';c.textContent=i+1;}
-      }
-    }
-    document.getElementById('step-'+n)?.classList.remove('hidden');
-  }
-
-  function goToStep1() {
-    const pwd=document.getElementById('wallet-password').value;
-    const pwd2=document.getElementById('wallet-password2').value;
-    if(!pwd||pwd.length<8){showToast('Password must be at least 8 characters','error');return;}
-    if(pwd!==pwd2){showToast('Passwords do not match','error');return;}
-    goToStep(1);
-  }
-
-  function goToStep2() {
-    if(!document.getElementById('security-understood').checked){showToast('Please confirm the security warning','error');return;}
-    // Generate wallet using Web Crypto API (client-side only)
-    const pkArray=new Uint8Array(32);
-    crypto.getRandomValues(pkArray);
-    const privateKey='0x'+Array.from(pkArray).map(b=>b.toString(16).padStart(2,'0')).join('');
-    // Generate address deterministically from private key using ethers.js
-    let address;
-    try {
-      const wallet = new ethers.Wallet(privateKey);
-      address = wallet.address;
-    } catch {
-      // Fallback if ethers not loaded
-      const addrArr=new Uint8Array(20); crypto.getRandomValues(addrArr);
-      address='0x'+Array.from(addrArr).map(b=>b.toString(16).padStart(2,'0')).join('');
-    }
-    // Generate BIP39-style seed (12 words from wordlist)
-    const seedIndices=new Uint8Array(12); crypto.getRandomValues(seedIndices);
-    _seedWords=Array.from(seedIndices).map(i=>BIP39_WORDS[i%BIP39_WORDS.length]);
-    _createdWallet={address,privateKey,seedPhrase:_seedWords.join(' '),type:'internal',network:'Arc Testnet',chainId:5042002,createdAt:new Date().toISOString()};
-    // Render seed grid
-    document.getElementById('seed-grid').innerHTML=_seedWords.map((w,i)=>
-      '<div class="seed-word"><span class="text-slate-400 text-xs">'+(i+1)+'.</span> '+w+'</div>'
-    ).join('');
-    document.getElementById('wallet-address-preview').textContent=address;
-    goToStep(2);
-  }
-
-  function goToStep3() {
-    if(!document.getElementById('seed-backed-up').checked){showToast('Confirm you saved your seed phrase','error');return;}
-    // Quiz: 3 random positions
-    const positions=[];
-    while(positions.length<3){const p=Math.floor(Math.random()*12);if(!positions.includes(p))positions.push(p);}
-    positions.sort((a,b)=>a-b);
-    document.getElementById('verify-quiz').innerHTML=positions.map(pos=>{
-      const correct=_seedWords[pos];
-      const wrong=[];
-      while(wrong.length<3){const w=BIP39_WORDS[Math.floor(Math.random()*BIP39_WORDS.length)];if(w!==correct&&!wrong.includes(w))wrong.push(w);}
-      const opts=[...wrong,correct].sort(()=>Math.random()-.5);
-      return '<div class="card p-4">'
-        +'<p class="font-semibold text-slate-700 text-sm mb-3">Word #'+(pos+1)+' of your seed phrase:</p>'
-        +'<div class="grid grid-cols-2 gap-2">'
-        +opts.map(o=>'<button onclick="handleQuizClick(this)" data-pos="'+pos+'" data-value="'+o+'" data-correct="'+correct+'" class="border-2 border-slate-200 rounded-lg py-2 px-3 text-sm font-medium hover:border-red-400 hover:bg-red-50 transition-all">'+o+'</button>').join('')
-        +'</div></div>';
-    }).join('');
-    goToStep(3);
-  }
-
-  function handleQuizClick(btn) {
-    const pos=btn.dataset.pos, word=btn.dataset.value, correct=btn.dataset.correct;
-    document.querySelectorAll('[data-pos="'+pos+'"]').forEach(b=>{
-      b.classList.remove('border-green-500','bg-green-50','border-red-500','bg-red-50');
-      b.classList.add('border-slate-200');
-    });
-    if(word===correct){btn.classList.remove('border-slate-200');btn.classList.add('border-green-500','bg-green-50');}
-    else{btn.classList.remove('border-slate-200');btn.classList.add('border-red-500','bg-red-50');}
-    btn.dataset.selected='true';
-  }
-
-  function verifyAndCreate() {
-    const positions=[...new Set([...document.querySelectorAll('[data-pos]')].map(b=>b.dataset.pos))];
-    const selected=document.querySelectorAll('[data-selected="true"]');
-    if(selected.length<positions.length){showToast('Answer all verification questions','error');return;}
-    if(document.querySelectorAll('.border-red-500').length>0){showToast('Some words are incorrect. Try again.','error');return;}
-    // Get password entered in step 0
-    const pwd = document.getElementById('wallet-password').value;
-    if (!pwd || pwd.length < 8) { showToast('Password missing — go back to step 1','error'); return; }
-    // Encrypt wallet with AES-256 and save (async)
-    const btn = document.querySelector('[onclick="verifyAndCreate()"]');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="loading-spinner inline-block mr-2"></span>Encrypting…'; }
-    storeWalletEncrypted(_createdWallet, pwd).then(() => {
-      updateWalletBadge(_createdWallet.address);
-      document.getElementById('final-address').textContent = _createdWallet.address;
-      goToStep(4);
-      showToast('Wallet created and encrypted! You can now use it on Arc Testnet.','success');
-      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-check"></i> Verify & Create'; }
-    }).catch(err => {
-      showToast('Encryption error: ' + err.message, 'error');
-      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-check"></i> Verify & Create'; }
-    });
-  }
-
-  window.handleQuizClick=handleQuizClick;
-  window.goToStep=goToStep;
-  window.goToStep1=goToStep1;
-  window.goToStep2=goToStep2;
-  window.goToStep3=goToStep3;
-  window.verifyAndCreate=verifyAndCreate;
-  goToStep(0);
   </script>
   `)
 }
@@ -5537,10 +5247,10 @@ function registerPage() {
           <div class="border-t pt-4">
             <p class="text-sm font-semibold text-slate-700 mb-3">Wallet Setup <span class="text-red-500">*</span></p>
             <div class="grid grid-cols-2 gap-3">
-              <a href="/wallet/create" class="card p-3 text-center hover:border-red-300 hover:bg-red-50 transition-all">
-                <i class="fas fa-plus-circle text-red-500 text-lg mb-1 block"></i>
-                <p class="font-semibold text-slate-700 text-sm">Create Wallet</p>
-                <p class="text-slate-400 text-xs">Non-custodial</p>
+              <a href="/wallet/import" class="card p-3 text-center hover:border-blue-300 hover:bg-blue-50 transition-all">
+                <i class="fas fa-file-import text-blue-500 text-lg mb-1 block"></i>
+                <p class="font-semibold text-slate-700 text-sm">Import Wallet</p>
+                <p class="text-slate-400 text-xs">BIP39 seed phrase</p>
               </a>
               <button onclick="connectWallet('metamask').then(w=>{if(w)showToast('MetaMask connected!','success')})" class="card p-3 text-center hover:border-orange-300 hover:bg-orange-50 transition-all">
                 <img src="https://upload.wikimedia.org/wikipedia/commons/3/36/MetaMask_Fox.svg" class="w-7 h-7 mx-auto mb-1"/>
