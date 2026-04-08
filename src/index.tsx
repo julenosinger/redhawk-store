@@ -2644,6 +2644,22 @@ function productPage(p: any) {
     .pd-btn-buy:hover{transform:translateY(-2px);box-shadow:0 10px 28px rgba(220,38,38,.45)}
     .pd-btn-buy:active{transform:translateY(0);box-shadow:0 4px 12px rgba(220,38,38,.3)}
     .pd-btn-buy:disabled{opacity:.55;cursor:not-allowed;transform:none;box-shadow:none}
+    
+    /* Escrow state-specific button styles */
+    .pd-btn-waiting{width:100%;padding:16px 24px;background:linear-gradient(135deg,#64748b,#475569);color:#fff;border:none;border-radius:14px;font-size:16px;font-weight:800;cursor:not-allowed;display:flex;align-items:center;justify-content:center;gap:10px;letter-spacing:.3px;box-shadow:0 4px 12px rgba(100,116,139,.25);opacity:.7}
+    
+    .pd-btn-confirm{width:100%;padding:16px 24px;background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;border:none;border-radius:14px;font-size:16px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;letter-spacing:.3px;box-shadow:0 6px 20px rgba(22,163,74,.35);transition:all .25s;position:relative;overflow:hidden}
+    .pd-btn-confirm::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(255,255,255,.15),transparent);pointer-events:none}
+    .pd-btn-confirm:hover{transform:translateY(-2px);box-shadow:0 10px 28px rgba(22,163,74,.45)}
+    .pd-btn-confirm:active{transform:translateY(0);box-shadow:0 4px 12px rgba(22,163,74,.3)}
+    
+    .pd-btn-completed{width:100%;padding:16px 24px;background:linear-gradient(135deg,#10b981,#059669);color:#fff;border:none;border-radius:14px;font-size:16px;font-weight:800;cursor:not-allowed;display:flex;align-items:center;justify-content:center;gap:10px;letter-spacing:.3px;box-shadow:0 4px 12px rgba(16,185,129,.25);opacity:.75}
+    
+    .pd-btn-dispute{width:100%;padding:16px 24px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;border:none;border-radius:14px;font-size:16px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;letter-spacing:.3px;box-shadow:0 6px 20px rgba(245,158,11,.35);transition:all .25s;position:relative;overflow:hidden}
+    .pd-btn-dispute::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(255,255,255,.15),transparent);pointer-events:none}
+    .pd-btn-dispute:hover{transform:translateY(-2px);box-shadow:0 10px 28px rgba(245,158,11,.45)}
+    .pd-btn-dispute:active{transform:translateY(0);box-shadow:0 4px 12px rgba(245,158,11,.3)}
+    
     .pd-btn-cart{width:100%;padding:13px 24px;background:#fff;color:#dc2626;border:2px solid #dc2626;border-radius:14px;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:all .2s}
     .pd-btn-cart:hover{background:#fef2f2;box-shadow:0 4px 12px rgba(220,38,38,.12)}
     .pd-btn-cart:active{transform:scale(.99)}
@@ -2832,6 +2848,160 @@ function productPage(p: any) {
     }
   })();
 
+  // ═══════════════════════════════════════════════════════════════════════
+  //  ESCROW-AWARE BUY BUTTON — Dynamic state following escrow lifecycle
+  // ═══════════════════════════════════════════════════════════════════════
+  
+  const ESCROW_STATES = {
+    IDLE: 'idle',                      // No interaction yet
+    PENDING_DEPOSIT: 'pending_deposit', // Escrow initialized, awaiting deposit
+    LOCKED: 'locked',                  // Funds deposited and locked
+    SHIPPED: 'shipped',                // Seller marked as shipped
+    COMPLETED: 'completed',            // Delivery confirmed, funds released
+    DISPUTED: 'disputed'               // Dispute opened
+  };
+
+  const BUTTON_CONFIG = {
+    [ESCROW_STATES.IDLE]: {
+      label: (price, token) => \`<i class="fas fa-bolt"></i> Buy Now &mdash; \${price} \${token}\`,
+      action: 'initiate',
+      disabled: false,
+      class: 'pd-btn-buy'
+    },
+    [ESCROW_STATES.PENDING_DEPOSIT]: {
+      label: () => '<i class="fas fa-coins"></i> Deposit to Escrow',
+      action: 'deposit',
+      disabled: false,
+      class: 'pd-btn-buy'
+    },
+    [ESCROW_STATES.LOCKED]: {
+      label: () => '<i class="fas fa-clock"></i> Awaiting Shipment',
+      action: 'none',
+      disabled: true,
+      class: 'pd-btn-waiting'
+    },
+    [ESCROW_STATES.SHIPPED]: {
+      label: () => '<i class="fas fa-check-circle"></i> Confirm Delivery',
+      action: 'confirm',
+      disabled: false,
+      class: 'pd-btn-confirm'
+    },
+    [ESCROW_STATES.COMPLETED]: {
+      label: () => '<i class="fas fa-check-double"></i> Completed',
+      action: 'none',
+      disabled: true,
+      class: 'pd-btn-completed'
+    },
+    [ESCROW_STATES.DISPUTED]: {
+      label: () => '<i class="fas fa-exclamation-triangle"></i> Resolve Dispute',
+      action: 'dispute',
+      disabled: false,
+      class: 'pd-btn-dispute'
+    }
+  };
+
+  // Get current escrow state for this product
+  async function getProductEscrowState(productId) {
+    try {
+      // Check localStorage for existing orders first
+      const orders = JSON.parse(localStorage.getItem('rh_orders') || '[]');
+      const wallet = getStoredWallet();
+      if (!wallet) return ESCROW_STATES.IDLE;
+
+      const myAddr = wallet.address.toLowerCase();
+      const order = orders.find(o => 
+        o.productId === productId && 
+        o.buyerAddress && 
+        o.buyerAddress.toLowerCase() === myAddr
+      );
+
+      if (!order) return ESCROW_STATES.IDLE;
+
+      // Map order status to escrow state
+      const statusMap = {
+        'escrow_pending': ESCROW_STATES.PENDING_DEPOSIT,
+        'escrow_locked': ESCROW_STATES.LOCKED,
+        'shipped': ESCROW_STATES.SHIPPED,
+        'delivery_confirmed': ESCROW_STATES.COMPLETED,
+        'funds_released': ESCROW_STATES.COMPLETED,
+        'completed': ESCROW_STATES.COMPLETED,
+        'dispute': ESCROW_STATES.DISPUTED
+      };
+
+      return statusMap[order.status] || ESCROW_STATES.IDLE;
+    } catch (e) {
+      console.error('[getProductEscrowState] error:', e);
+      return ESCROW_STATES.IDLE;
+    }
+  }
+
+  // Update buy button based on escrow state
+  async function updateBuyButton(productId, productName, price, token, image) {
+    const btn = document.getElementById('btn-buy-now');
+    const stickyBtn = document.querySelector('.pd-sticky-bar button');
+    if (!btn) return;
+
+    const state = await getProductEscrowState(productId);
+    const config = BUTTON_CONFIG[state];
+    
+    if (!config) return;
+
+    // Update button appearance
+    btn.className = config.class;
+    btn.innerHTML = typeof config.label === 'function' 
+      ? config.label(price, token) 
+      : config.label;
+    btn.disabled = config.disabled;
+
+    // Update sticky button if exists
+    if (stickyBtn) {
+      stickyBtn.className = config.class + ' pd-btn-buy';
+      stickyBtn.innerHTML = typeof config.label === 'function'
+        ? config.label(price, token)
+        : config.label;
+      stickyBtn.disabled = config.disabled;
+    }
+
+    // Set up action handler
+    btn.onclick = null; // Clear old handler
+    if (stickyBtn) stickyBtn.onclick = null;
+
+    if (!config.disabled) {
+      const handler = () => handleBuyButtonAction(config.action, productId, productName, price, token, image);
+      btn.onclick = handler;
+      if (stickyBtn) stickyBtn.onclick = handler;
+    }
+
+    // Auto-refresh every 10 seconds to sync with contract state
+    setTimeout(() => updateBuyButton(productId, productName, price, token, image), 10000);
+  }
+
+  // Handle different button actions based on escrow state
+  function handleBuyButtonAction(action, id, name, price, token, image) {
+    switch (action) {
+      case 'initiate':
+        pdBuyNow(id, name, price, token, image);
+        break;
+      case 'deposit':
+        // Redirect to checkout to complete deposit
+        showToast('Redirecting to checkout to complete deposit…', 'info');
+        window.location.href = '/checkout';
+        break;
+      case 'confirm':
+        // Redirect to orders page to confirm delivery
+        showToast('Redirecting to your orders to confirm delivery…', 'info');
+        window.location.href = '/orders';
+        break;
+      case 'dispute':
+        showToast('Redirecting to disputes…', 'info');
+        window.location.href = '/disputes';
+        break;
+      default:
+        console.log('[handleBuyButtonAction] No action for:', action);
+    }
+  }
+
+  // Original buy now function (initiate purchase)
   function pdBuyNow(id, name, price, token, image) {
     const btn = document.getElementById('btn-buy-now');
     if(btn){ btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing…'; }
@@ -2859,6 +3029,18 @@ function productPage(p: any) {
       setTimeout(() => { if(btn){ btn.classList.remove('copied'); btn.innerHTML = '<i class="fas fa-copy"></i>'; } }, 2000);
     }).catch(() => showToast('Copy not available', 'error'));
   }
+
+  // Initialize escrow-aware button on page load
+  (function() {
+    const productId = '${p.id}';
+    const productName = '${title.replace(/'/g,"\\'")}';
+    const price = ${price};
+    const token = '${tok}';
+    const image = '${imgUrl}';
+    
+    // Update button state on load
+    updateBuyButton(productId, productName, price, token, image);
+  })();
 
   // Smart sticky bar — activates only when page is scrollable and Buy Now is out of view
   (function(){
