@@ -2666,48 +2666,6 @@ function productPage(p: any) {
           <p class="pd-desc-text">${desc || '<span style="color:#94a3b8;font-style:italic">No description provided.</span>'}</p>
         </div>
 
-        <!-- Details Grid -->
-        <div>
-          <div class="pd-section-label"><i class="fas fa-list" style="color:#cbd5e1"></i> Details</div>
-          <div class="pd-details-grid">
-            <div class="pd-detail-item">
-              <div class="label">Network</div>
-              <div class="value"><i class="fas fa-network-wired" style="color:#3b82f6;font-size:11px"></i> Arc Testnet</div>
-            </div>
-            <div class="pd-detail-item">
-              <div class="label">Payment</div>
-              <div class="value"><i class="fas fa-coins" style="color:#f59e0b;font-size:11px"></i> ${tok}</div>
-            </div>
-            <div class="pd-detail-item">
-              <div class="label">Delivery</div>
-              <div class="value">
-                ${isDigital
-                  ? `<i class="fas fa-bolt" style="color:#059669;font-size:11px"></i> Instant`
-                  : `<i class="fas fa-clock" style="color:#d97706;font-size:11px"></i> Manual`}
-              </div>
-            </div>
-            <div class="pd-detail-item">
-              <div class="label">Category</div>
-              <div class="value"><i class="fas fa-tag" style="color:#dc2626;font-size:11px"></i> ${cat}</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Seller Info -->
-        <div>
-          <div class="pd-section-label"><i class="fas fa-user" style="color:#cbd5e1"></i> Seller</div>
-          <div class="pd-seller-box">
-            <div class="pd-seller-avatar">${seller ? seller.slice(2,4).toUpperCase() : '??'}</div>
-            <div class="pd-seller-info">
-              <div class="name">Verified Seller</div>
-              <div class="addr" id="seller-addr-display">${seller.slice(0,14)}…${seller.slice(-8)}</div>
-            </div>
-            <button class="pd-copy-btn" id="pd-copy-seller" onclick="pdCopySeller()" title="Copy seller address">
-              <i class="fas fa-copy"></i>
-            </button>
-          </div>
-        </div>
-
         <!-- Action Buttons -->
         <div id="product-action-btns" class="flex flex-col gap-3 mt-1">
           ${stockN > 0
