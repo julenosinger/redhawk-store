@@ -435,8 +435,8 @@ app.get('/product/:id', async (c) => {
 app.get('/cart', (c) => c.html(cartPage()))
 app.get('/checkout', (c) => c.html(checkoutPage()))
 app.get('/wallet', (c) => c.html(walletPage()))
-app.get('/wallet/create', (c) => c.redirect('/wallet/import'))
-app.get('/wallet/import', (c) => c.html(walletImportPage()))
+app.get('/wallet/create', (c) => c.redirect('/wallet'))
+app.get('/wallet/import', (c) => c.redirect('/wallet'))
 app.get('/orders', (c) => c.html(ordersPage()))
 app.get('/orders/:id', (c) => c.html(orderDetailPage(c.req.param('id'))))
 app.get('/sell', (c) => c.html(sellPage()))
@@ -1053,7 +1053,7 @@ async function connectWallet(type) {
       updateWalletBadge(w.address);
       return w;
     }
-    window.location.href = '/wallet/import';
+    window.location.href = '/wallet';
     return null;
   }
 }
@@ -1366,7 +1366,7 @@ function footer() {
         <div>
           <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Wallet</p>
           <ul class="space-y-1.5">
-            ${['My Wallet:/wallet','Import:/wallet/import','Profile:/profile'].map(t=>{const[l,u]=t.split(':');return`<li><a href="${u}" class="text-xs text-slate-500 hover:text-red-400 transition-colors">${l}</a></li>`}).join('')}
+            ${['My Wallet:/wallet','Profile:/profile'].map(t=>{const[l,u]=t.split(':');return`<li><a href="${u}" class="text-xs text-slate-500 hover:text-red-400 transition-colors">${l}</a></li>`}).join('')}
           </ul>
         </div>
 
@@ -3198,9 +3198,9 @@ function walletPage() {
             <i class="fas fa-key text-amber-500"></i> Reset Wallet Password
           </h3>
           <p class="text-slate-500 text-sm mb-4">Import your wallet again using your seed phrase to set a new password.</p>
-          <a href="/wallet/import" class="btn-primary w-full justify-center mb-3">
-            <i class="fas fa-file-import"></i> Import with Seed Phrase
-          </a>
+          <button onclick="showToast('Use MetaMask or WalletConnect to connect your wallet.','info')" class="btn-primary w-full justify-center mb-3">
+            <i class="fas fa-wallet"></i> Connect External Wallet
+          </button>
           <button onclick="confirmResetWallet()" class="w-full text-center text-red-500 text-sm hover:underline py-2">
             <i class="fas fa-trash-alt mr-1"></i> Delete stored wallet data
           </button>
@@ -3210,18 +3210,7 @@ function walletPage() {
 
     <!-- No Wallet -->
     <div id="no-wallet-state">
-      <div class="grid grid-cols-1 gap-6 mb-8 max-w-md mx-auto">
-        <a href="/wallet/import" class="card p-8 text-center hover:border-red-300 hover:shadow-lg transition-all group">
-          <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-slate-500 to-slate-700 flex items-center justify-center text-white text-2xl mx-auto mb-4 group-hover:scale-110 transition-transform shadow-lg">
-            <i class="fas fa-file-import"></i>
-          </div>
-          <h2 class="text-xl font-bold text-slate-800 mb-2">Import Existing Wallet</h2>
-          <p class="text-slate-500 text-sm">Restore using 12 or 24-word BIP39 seed phrase from MetaMask or any compatible wallet.</p>
-          <div class="inline-flex items-center gap-2 mt-4 text-blue-600 text-sm font-medium">
-            <i class="fas fa-key"></i> BIP39 Compatible
-          </div>
-        </a>
-      </div>
+
       <div class="card p-6">
         <h3 class="font-bold text-slate-800 mb-4">Connect External Wallet</h3>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -3606,81 +3595,6 @@ function walletPage() {
     clearWallet();
     showToast('Wallet data removed. Import again with seed phrase.', 'info');
     setTimeout(() => location.reload(), 1000);
-  }
-  </script>
-  `)
-}
-
-// ─── PAGE: IMPORT WALLET ────────────────────────────────────────────────
-function walletImportPage() {
-  return shell('Import Wallet', `
-  <div class="max-w-lg mx-auto px-4 py-8">
-    <div class="text-center mb-8">
-      <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-slate-600 to-slate-800 flex items-center justify-center text-white text-2xl mx-auto mb-4 shadow-xl">
-        <i class="fas fa-file-import"></i>
-      </div>
-      <h1 class="text-3xl font-extrabold text-slate-800 mb-2">Import Wallet</h1>
-      <p class="text-slate-500">Restore your wallet using a BIP39 seed phrase for Arc Network.</p>
-    </div>
-    <div class="card p-8">
-      <div class="network-ok mb-5 text-sm">
-        <i class="fas fa-shield-alt text-green-600"></i>
-        Seed phrase processed entirely in your browser. Never sent to any server.
-      </div>
-      <div class="mb-5">
-        <label class="block text-sm font-bold text-slate-700 mb-2">Seed Phrase (12 or 24 words)</label>
-        <textarea id="import-seed" rows="4" placeholder="Enter your 12 or 24-word seed phrase separated by spaces…" class="input resize-none"></textarea>
-      </div>
-      <div class="mb-5">
-        <label class="block text-sm font-bold text-slate-700 mb-2">New Encryption Password</label>
-        <input id="import-password" type="password" placeholder="Set a new local encryption password" class="input"/>
-      </div>
-      <button onclick="importWallet()" class="btn-primary w-full justify-center py-3 mb-3">
-        <i class="fas fa-file-import"></i> Import to Arc Network Wallet
-      </button>
-      <a href="/wallet" class="btn-secondary w-full justify-center text-sm">Cancel</a>
-    </div>
-  </div>
-  <script>
-  function importWallet() {
-    const seed=document.getElementById('import-seed').value.trim();
-    const pwd=document.getElementById('import-password').value;
-    const words=seed.split(/\\s+/);
-    if(words.length!==12&&words.length!==24){showToast('Seed phrase must be 12 or 24 words','error');return;}
-    if(!pwd||pwd.length<8){showToast('Password must be at least 8 characters','error');return;}
-    // Derive address from seed using ethers.js HDNode
-    try {
-      let wallet;
-      try {
-        wallet = ethers.Wallet.fromPhrase(seed);
-      } catch {
-        // Fallback: deterministic hash-based address (if phrase not BIP39 standard)
-        const hashNum=seed.split('').reduce((a,c)=>(a*31+c.charCodeAt(0))&0xFFFFFFFF,0);
-        const addrPart=Math.abs(hashNum).toString(16).padStart(40,'0').substring(0,40);
-        wallet={address:'0x'+addrPart, privateKey:'[derived-from-phrase]'};
-      }
-      const walletData={
-        address: wallet.address,
-        privateKey: wallet.privateKey||'[encrypted]',
-        seedPhrase: '[imported — stored encrypted locally]',
-        type:'imported',
-        network:'Arc Testnet',
-        chainId:5042002,
-        importedAt:new Date().toISOString()
-      };
-      const btn = document.querySelector('[onclick="importWallet()"]');
-      if (btn) { btn.disabled = true; btn.innerHTML = '<span class=\\"loading-spinner inline-block mr-2\\"></span>Encrypting…'; }
-      storeWalletEncrypted(walletData, pwd).then(() => {
-        updateWalletBadge(walletData.address);
-        showToast('Wallet imported and encrypted! Address: '+walletData.address.substring(0,12)+'…','success');
-        setTimeout(()=>window.location.href='/wallet',1200);
-      }).catch(err => {
-        showToast('Encryption error: '+err.message,'error');
-        if (btn) { btn.disabled = false; btn.innerHTML = '<i class=\\"fas fa-file-import\\"></i> Import to Arc Network Wallet'; }
-      });
-    } catch(err) {
-      showToast('Import failed: '+err.message,'error');
-    }
   }
   </script>
   `)
@@ -5246,12 +5160,7 @@ function registerPage() {
           <div><label class="block text-sm font-medium text-slate-700 mb-1">Password</label><input type="password" placeholder="Min 8 characters" class="input"/></div>
           <div class="border-t pt-4">
             <p class="text-sm font-semibold text-slate-700 mb-3">Wallet Setup <span class="text-red-500">*</span></p>
-            <div class="grid grid-cols-2 gap-3">
-              <a href="/wallet/import" class="card p-3 text-center hover:border-blue-300 hover:bg-blue-50 transition-all">
-                <i class="fas fa-file-import text-blue-500 text-lg mb-1 block"></i>
-                <p class="font-semibold text-slate-700 text-sm">Import Wallet</p>
-                <p class="text-slate-400 text-xs">BIP39 seed phrase</p>
-              </a>
+            <div class="grid grid-cols-1 gap-3 max-w-xs mx-auto">
               <button onclick="connectWallet('metamask').then(w=>{if(w)showToast('MetaMask connected!','success')})" class="card p-3 text-center hover:border-orange-300 hover:bg-orange-50 transition-all">
                 <img src="https://upload.wikimedia.org/wikipedia/commons/3/36/MetaMask_Fox.svg" class="w-7 h-7 mx-auto mb-1"/>
                 <p class="font-semibold text-slate-700 text-sm">MetaMask</p>
