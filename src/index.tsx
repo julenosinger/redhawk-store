@@ -3535,11 +3535,8 @@ function walletPage() {
         </div>
       </div>
 
-      <!-- Danger Zone -->
       <div class="card p-5 border-red-100">
-        <h3 class="font-bold text-red-700 mb-3 flex items-center gap-2"><i class="fas fa-exclamation-triangle"></i> Danger Zone</h3>
         <div class="flex flex-wrap gap-3">
-          <button onclick="exportWallet()" class="btn-secondary text-sm"><i class="fas fa-file-export"></i> Export Wallet</button>
           <button onclick="disconnectWallet()" class="bg-red-50 text-red-600 border-2 border-red-200 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-red-100">
             <i class="fas fa-sign-out-alt"></i> Disconnect
           </button>
@@ -3710,28 +3707,6 @@ function walletPage() {
     } else {
       showToast('Connect MetaMask to send real transactions on Arc Network', 'warning');
     }
-  }
-
-  function exportWallet() {
-    const w = getStoredWallet();
-    if (!w) return;
-    if (w.type === 'metamask') { showToast('MetaMask wallets are managed by MetaMask directly', 'info'); return; }
-    const confirmed = confirm('⚠️ WARNING: You are about to view your private key.\\nNEVER share it with anyone.\\nAnyone with your private key can steal ALL your funds.\\n\\nContinue?');
-    if (!confirmed) return;
-    // Private key is already available in decrypted session
-    if (w.privateKey && !w.privateKey.startsWith('[')) {
-      alert('Private Key (KEEP SECRET — never share this):\\n' + w.privateKey);
-      showToast('Never share your private key!', 'error');
-      return;
-    }
-    // Re-enter password to confirm
-    const pwd = prompt('Re-enter your wallet password to confirm export:');
-    if (!pwd) return;
-    unlockWallet(pwd).then(decrypted => {
-      if (!decrypted) { showToast('Incorrect password', 'error'); return; }
-      alert('Private Key (KEEP SECRET — never share this):\\n' + (decrypted.privateKey || '[not available]'));
-      showToast('Never share your private key!', 'error');
-    });
   }
 
   document.addEventListener('DOMContentLoaded', async () => {
