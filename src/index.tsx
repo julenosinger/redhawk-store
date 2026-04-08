@@ -588,6 +588,7 @@ function shell(title: string, body: string, extraHead = '') {
       localStorage.setItem('hideTestnetBanner','true');
     }
   </script>
+
   ${navbar()}
   ${body}
   ${chatWidget()}
