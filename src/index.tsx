@@ -473,7 +473,9 @@ function shell(title: string, body: string, extraHead = '') {
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
   <title>${title} | Shukly Store</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet"/>
@@ -557,6 +559,128 @@ function shell(title: string, body: string, extraHead = '') {
     .network-warning{background:#fef3c7;border:1px solid #fcd34d;border-radius:12px;padding:12px 16px;font-size:13px;color:#92400e;display:flex;align-items:center;gap:8px}
     .network-ok{background:#f0fdf4;border:1px solid #86efac;border-radius:12px;padding:12px 16px;font-size:13px;color:#166534;display:flex;align-items:center;gap:8px}
     .addr-mono{font-family:monospace;font-size:12px;word-break:break-all}
+
+    /* ═══════════════════════════════════════════════════
+       MOBILE-FIRST NATIVE APP FEEL — Global Enhancements
+       ═══════════════════════════════════════════════════ */
+
+    /* Smooth scroll & text rendering */
+    html{scroll-behavior:smooth;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+    body{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;overflow-x:hidden}
+
+    /* Page fade-in animation */
+    @keyframes pageFadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+    main,#main-content,.page-content,[class*="max-w-"]:not(nav *):not(footer *){animation:pageFadeIn .25s ease-out both}
+
+    /* Native tap highlight removal + smooth tap feedback */
+    *{-webkit-tap-highlight-color:transparent}
+    button,a,[role="button"]{touch-action:manipulation}
+
+    /* Tap press feedback on all interactive elements */
+    button:not(:disabled):active,a:active,[role="button"]:active{opacity:.82;transform:scale(.98);transition:opacity .08s,transform .08s}
+    .btn-primary:active{transform:scale(.97)!important;opacity:.9!important}
+    .btn-secondary:active{transform:scale(.97)!important}
+
+    /* Minimum touch target 44px */
+    button,a,input[type="button"],input[type="submit"],[role="button"]{min-height:44px}
+    .btn-primary,.btn-secondary{min-height:44px;align-items:center}
+
+    /* Better button spacing on mobile */
+    @media(max-width:639px){
+      .btn-primary,.btn-secondary{padding:12px 20px;border-radius:12px;font-size:15px}
+      .btn-primary i,.btn-secondary i{font-size:14px}
+    }
+
+    /* Card hover/tap feedback */
+    .card{transition:box-shadow .18s,transform .18s}
+    @media(hover:hover){.card:hover{box-shadow:0 4px 16px rgba(0,0,0,.1);transform:translateY(-1px)}}
+    .product-card:active{transform:scale(.99)!important}
+
+    /* Input mobile optimization */
+    @media(max-width:639px){
+      .input,.select{font-size:16px!important;padding:13px 14px;border-radius:12px}
+    }
+
+    /* Modal mobile full-screen */
+    @media(max-width:639px){
+      .modal{border-radius:20px 20px 0 0;max-height:92vh;position:fixed;bottom:0;left:0;right:0;width:100%;margin:0;animation:slideUpModal .28s cubic-bezier(.4,0,.2,1) both}
+      .modal-overlay{align-items:flex-end;padding:0}
+      @keyframes slideUpModal{from{transform:translateY(100%)}to{transform:translateY(0)}}
+    }
+
+    /* Toast mobile position */
+    @media(max-width:639px){
+      .toast{top:auto;bottom:80px;right:12px;left:12px;max-width:none;border-radius:14px;font-size:14px;padding:13px 16px}
+    }
+
+    /* ── Bottom Navigation Bar (mobile) ── */
+    #mobile-bottom-nav{
+      display:none;
+      position:fixed;bottom:0;left:0;right:0;
+      background:#fff;
+      border-top:1px solid #f1f5f9;
+      box-shadow:0 -2px 16px rgba(0,0,0,.07);
+      z-index:95;
+      padding:6px 0 max(8px, env(safe-area-inset-bottom));
+      grid-template-columns:repeat(4,1fr);
+    }
+    @media(max-width:767px){#mobile-bottom-nav{display:grid}}
+    .mob-nav-item{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:6px 4px;text-decoration:none;color:#64748b;font-size:9px;font-weight:600;letter-spacing:.3px;text-transform:uppercase;position:relative;min-height:44px;transition:color .15s}
+    .mob-nav-item.active,.mob-nav-item:active{color:#dc2626}
+    .mob-nav-item i{font-size:18px;line-height:1}
+    .mob-nav-item .mob-badge{position:absolute;top:4px;right:calc(50% - 18px);width:16px;height:16px;background:#dc2626;color:#fff;font-size:9px;font-weight:700;border-radius:50%;display:none;align-items:center;justify-content:center;border:1.5px solid #fff}
+    .mob-nav-item .mob-badge.show{display:flex}
+
+    /* Compensate for bottom nav on mobile */
+    @media(max-width:767px){
+      body{padding-bottom:calc(64px + env(safe-area-inset-bottom))}
+      /* Push toast above bottom nav */
+      .toast{bottom:calc(72px + env(safe-area-inset-bottom))!important}
+      /* AI chat button above bottom nav */
+      [onclick="toggleChat()"][class*="fixed"]{bottom:calc(72px + env(safe-area-inset-bottom))}
+      #chat-panel{bottom:calc(136px + env(safe-area-inset-bottom))}
+    }
+
+    /* ── Navbar mobile compacto ── */
+    @media(max-width:767px){
+      nav{top:0!important}
+      body.banner-hidden nav{top:0!important}
+      #testnet-banner{font-size:11px;min-height:28px;padding:5px 40px 5px 10px}
+    }
+
+    /* ── Safe area padding for fixed elements ── */
+    .pd-sticky-bar{padding-bottom:max(16px, env(safe-area-inset-bottom))!important}
+
+    /* ── Section card style on mobile ── */
+    @media(max-width:639px){
+      .card{border-radius:16px}
+      /* Horizontal padding for page sections */
+      .max-w-5xl.mx-auto.px-4,.max-w-4xl.mx-auto.px-4,.max-w-2xl.mx-auto.px-4,.max-w-lg.mx-auto.px-4{padding-left:16px;padding-right:16px}
+    }
+
+    /* ── Prevent horizontal overflow ── */
+    img,video,iframe,table{max-width:100%}
+    pre{overflow-x:auto}
+    /* Footer safe area on mobile */
+    @media(max-width:767px){.mob-footer{margin-bottom:calc(64px + env(safe-area-inset-bottom))}}
+
+    /* ── Typography mobile scale ── */
+    @media(max-width:639px){
+      h1{font-size:clamp(1.4rem,5vw,2rem)!important}
+      h2{font-size:clamp(1.1rem,4vw,1.5rem)!important}
+    }
+
+    /* ── Product grid mobile ── */
+    @media(max-width:479px){
+      .grid-cols-2{grid-template-columns:repeat(2,1fr)!important}
+      .product-card .p-4{padding:10px!important}
+    }
+
+    /* ── Scrollbar hide on mobile (cleaner) ── */
+    @media(max-width:767px){
+      ::-webkit-scrollbar{display:none}
+      *{scrollbar-width:none;-ms-overflow-style:none}
+    }
   </style>
   ${extraHead}
   <!-- Arc Network client config (injected server-side) -->
@@ -590,6 +714,50 @@ function shell(title: string, body: string, extraHead = '') {
   </script>
   ${navbar()}
   ${body}
+  <!-- ── Mobile Bottom Navigation Bar ── -->
+  <nav id="mobile-bottom-nav" role="navigation" aria-label="Mobile navigation">
+    <a href="/" class="mob-nav-item" id="mob-nav-home">
+      <i class="fas fa-home"></i>
+      <span>Home</span>
+    </a>
+    <a href="/marketplace" class="mob-nav-item" id="mob-nav-market">
+      <i class="fas fa-store"></i>
+      <span>Market</span>
+    </a>
+    <a href="/cart" class="mob-nav-item" id="mob-nav-cart">
+      <i class="fas fa-shopping-cart"></i>
+      <span>Cart</span>
+      <span class="mob-badge" id="mob-cart-badge">0</span>
+    </a>
+    <a href="/wallet" class="mob-nav-item" id="mob-nav-wallet">
+      <i class="fas fa-wallet"></i>
+      <span>Wallet</span>
+    </a>
+  </nav>
+  <script>
+  // ── Bottom nav active state & cart badge sync ──
+  (function(){
+    const path = window.location.pathname;
+    const map = {'mob-nav-home':'/', 'mob-nav-market':'/marketplace', 'mob-nav-cart':'/cart', 'mob-nav-wallet':'/wallet'};
+    Object.entries(map).forEach(([id, href]) => {
+      const el = document.getElementById(id);
+      if(!el) return;
+      if(path === href || (href !== '/' && path.startsWith(href))) el.classList.add('active');
+    });
+    // Sync cart badge
+    function syncMobCart() {
+      try {
+        const cart = JSON.parse(localStorage.getItem('rh_cart') || '[]');
+        const n = cart.reduce((s,i) => s + (i.qty||1), 0);
+        const b = document.getElementById('mob-cart-badge');
+        if(b){ b.textContent = n; n > 0 ? b.classList.add('show') : b.classList.remove('show'); }
+      } catch{}
+    }
+    syncMobCart();
+    window.addEventListener('storage', syncMobCart);
+    document.addEventListener('cart-updated', syncMobCart);
+  })();
+  </script>
   ${chatWidget()}
   ${toastContainer()}
   ${globalScript()}
@@ -1200,15 +1368,15 @@ function toggleChat() {
 // ─── Navbar ───────────────────────────────────────────────────────────
 function navbar() {
   return `<nav>
-  <div class="max-w-7xl mx-auto px-4 flex items-center justify-between h-16 gap-4">
+  <div class="max-w-7xl mx-auto px-3 sm:px-4 flex items-center justify-between h-14 sm:h-16 gap-3">
     <a href="/" class="flex items-center gap-2 shrink-0">
-      <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-red-500 to-red-800 flex items-center justify-center shadow">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+      <div class="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-br from-red-500 to-red-800 flex items-center justify-center shadow">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
           <path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="white" opacity=".9"/>
           <path d="M9 14l3-3 3 3" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
         </svg>
       </div>
-      <span class="font-extrabold text-xl tracking-tight text-slate-800">Shukly<span class="text-amber-500"> Store</span></span>
+      <span class="font-extrabold text-lg sm:text-xl tracking-tight text-slate-800">Shukly<span class="text-amber-500"> Store</span></span>
     </a>
     <div class="hidden md:flex flex-1 max-w-xl mx-4">
       <div class="relative w-full">
@@ -1217,7 +1385,7 @@ function navbar() {
         <button onclick="handleNavSearch()" class="absolute right-2 top-1/2 -translate-y-1/2 bg-red-600 text-white px-3 py-1 rounded-lg text-xs font-semibold hover:bg-red-700">Search</button>
       </div>
     </div>
-    <div class="flex items-center gap-2">
+    <div class="flex items-center gap-1 sm:gap-2">
       <a href="/marketplace" class="hidden sm:flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-colors">
         <i class="fas fa-store text-xs"></i> Marketplace
       </a>
@@ -1227,14 +1395,18 @@ function navbar() {
       <a href="/dashboard" class="hidden sm:flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-colors">
         <i class="fas fa-chart-line text-xs"></i> Dashboard
       </a>
-      <a href="/wallet" id="wallet-nav-btn" class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-red-50 text-red-700 hover:bg-red-100 transition-colors border border-red-100">
+      <!-- Mobile search button -->
+      <button id="mob-search-toggle" onclick="toggleMobileSearch()" class="flex md:hidden items-center justify-center w-9 h-9 rounded-lg text-slate-500 hover:bg-slate-100 transition-colors" aria-label="Search">
+        <i class="fas fa-search text-sm"></i>
+      </button>
+      <a href="/wallet" id="wallet-nav-btn" class="flex items-center gap-1.5 px-2.5 sm:px-3 py-2 rounded-lg text-sm font-medium bg-red-50 text-red-700 hover:bg-red-100 transition-colors border border-red-100">
         <i class="fas fa-wallet text-xs"></i>
-        <span id="wallet-badge">Wallet</span>
+        <span id="wallet-badge" class="hidden sm:inline">Wallet</span>
       </a>
-      <a href="/notifications" class="relative p-2 rounded-lg text-slate-500 hover:bg-slate-100">
+      <a href="/notifications" class="hidden sm:flex relative p-2 rounded-lg text-slate-500 hover:bg-slate-100">
         <i class="fas fa-bell"></i>
       </a>
-      <a href="/cart" class="relative p-2 rounded-lg text-slate-500 hover:bg-slate-100">
+      <a href="/cart" class="relative p-2 rounded-lg text-slate-500 hover:bg-slate-100 hidden md:flex">
         <i class="fas fa-shopping-cart"></i>
         <span id="cart-badge" class="absolute -top-1 -right-1 w-5 h-5 bg-red-600 text-white text-xs font-bold rounded-full hidden items-center justify-center">0</span>
       </a>
@@ -1243,12 +1415,37 @@ function navbar() {
       </a>
     </div>
   </div>
+  <!-- Mobile search bar (collapsible) -->
+  <div id="mob-search-bar" class="hidden md:hidden px-3 pb-3">
+    <div class="relative w-full">
+      <input id="nav-search-mob" type="text" placeholder="Search products…" class="w-full pl-10 pr-20 py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100 bg-slate-50"/>
+      <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm"></i>
+      <button onclick="handleNavSearchMob()" class="absolute right-2 top-1/2 -translate-y-1/2 bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold">Search</button>
+    </div>
+  </div>
   <script>
     function handleNavSearch() {
       const q = document.getElementById('nav-search')?.value.trim();
       if (q) { document.getElementById('chat-panel').classList.remove('hidden'); sendChatMessage(q); }
     }
     document.getElementById('nav-search')?.addEventListener('keydown', e => { if(e.key==='Enter') handleNavSearch() });
+    function toggleMobileSearch() {
+      const bar = document.getElementById('mob-search-bar');
+      if(!bar) return;
+      const isHidden = bar.classList.contains('hidden');
+      bar.classList.toggle('hidden');
+      if(isHidden) { document.getElementById('nav-search-mob')?.focus(); }
+    }
+    function handleNavSearchMob() {
+      const q = document.getElementById('nav-search-mob')?.value.trim();
+      if(q) {
+        document.getElementById('mob-search-bar')?.classList.add('hidden');
+        const cp = document.getElementById('chat-panel');
+        if(cp) cp.classList.remove('hidden');
+        sendChatMessage(q);
+      }
+    }
+    document.getElementById('nav-search-mob')?.addEventListener('keydown', e => { if(e.key==='Enter') handleNavSearchMob() });
   </script>
 </nav>`
 }
@@ -1332,7 +1529,7 @@ async function sendChatMessage(overrideText) {
 
 // ─── Footer ───────────────────────────────────────────────────────────
 function footer() {
-  return `<footer style="background:#0f172a;border-top:1px solid #1e293b;padding:32px 0 0;">
+  return `<footer style="background:#0f172a;border-top:1px solid #1e293b;padding:32px 0 0;" class="mob-footer">
     <div class="max-w-7xl mx-auto px-4">
 
       <!-- Main grid: brand + 3 link columns -->
