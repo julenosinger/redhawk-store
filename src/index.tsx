@@ -2555,9 +2555,10 @@ function productPage(p: any) {
     .pd-seller-panel .title{font-size:13px;font-weight:800;color:#92400e;display:flex;align-items:center;gap:7px;margin-bottom:6px}
     .pd-seller-panel p{font-size:12px;color:#78350f;line-height:1.5}
 
-    /* Sticky mobile buy bar */
-    .pd-sticky-bar{display:none;position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #f1f5f9;box-shadow:0 -4px 20px rgba(0,0,0,.1);padding:12px 16px 16px;z-index:90;gap:10px;align-items:center}
-    @media(max-width:1023px){.pd-sticky-bar{display:flex}}
+    /* Sticky buy bar — all screen sizes, scroll-triggered */
+    .pd-sticky-bar{display:flex;position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #f1f5f9;box-shadow:0 -4px 24px rgba(0,0,0,.12);padding:12px 16px 16px;z-index:90;gap:10px;align-items:center;transform:translateY(110%);opacity:0;transition:transform .3s cubic-bezier(.4,0,.2,1),opacity .3s ease,box-shadow .3s ease}
+    .pd-sticky-bar.visible{transform:translateY(0);opacity:1;box-shadow:0 -6px 32px rgba(220,38,38,.13)}
+    @media(min-width:640px){.pd-sticky-bar{padding:14px 24px 18px}}
 
     .pd-arc-badge{display:inline-flex;align-items:center;gap:5px;background:linear-gradient(135deg,#1e40af,#2563eb);color:#fff;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:.3px}
   </style>
@@ -2760,16 +2761,33 @@ function productPage(p: any) {
     }).catch(() => showToast('Copy not available', 'error'));
   }
 
-  // Hide sticky bar when main buy button is visible on desktop
+  // Smart sticky bar — activates only when page is scrollable and Buy Now is out of view
   (function(){
     const bar = document.getElementById('pd-sticky-bar');
     if(!bar) return;
-    const obs = new IntersectionObserver(([e]) => {
-      bar.style.opacity = e.isIntersecting ? '0' : '1';
-      bar.style.pointerEvents = e.isIntersecting ? 'none' : 'auto';
-    }, { threshold: 0.5 });
     const mainBtn = document.getElementById('btn-buy-now');
-    if(mainBtn) obs.observe(mainBtn);
+    if(!mainBtn) return;
+
+    // Only activate if page is tall enough to require scrolling (content > viewport)
+    const pageNeedsScroll = () => document.documentElement.scrollHeight > window.innerHeight + 80;
+
+    let active = false;
+    const obs = new IntersectionObserver(([e]) => {
+      // btn-buy-now is visible → hide bar; out of view → show bar (only if page scrolls)
+      if(!pageNeedsScroll()) { bar.classList.remove('visible'); return; }
+      if(e.isIntersecting) {
+        bar.classList.remove('visible');
+      } else {
+        bar.classList.add('visible');
+      }
+    }, { threshold: 0.3 });
+
+    obs.observe(mainBtn);
+
+    // Also re-check on resize in case layout changes
+    window.addEventListener('resize', () => {
+      if(!pageNeedsScroll()) bar.classList.remove('visible');
+    }, { passive: true });
   })();
   </script>
   `)
