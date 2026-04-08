@@ -475,6 +475,26 @@ function shell(title: string, body: string, extraHead = '') {
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>${title} | Shukly Store</title>
+  
+  <!-- Open Graph Meta Tags -->
+  <meta property="og:title" content="Shukly Store – Web3 Marketplace"/>
+  <meta property="og:description" content="Decentralized marketplace powered by smart contracts on Arc Testnet. Explore, test, and experience Web3 commerce in a secure environment."/>
+  <meta property="og:image" content="https://www.genspark.ai/api/files/s/eSPDBk0I"/>
+  <meta property="og:url" content="https://shukly-store.pages.dev/"/>
+  <meta property="og:type" content="website"/>
+  <meta property="og:site_name" content="Shukly Store"/>
+  
+  <!-- Twitter Card Meta Tags -->
+  <meta name="twitter:card" content="summary_large_image"/>
+  <meta name="twitter:title" content="Shukly Store – Web3 Marketplace"/>
+  <meta name="twitter:description" content="Decentralized marketplace powered by smart contracts on Arc Testnet. Explore, test, and experience Web3 commerce in a secure environment."/>
+  <meta name="twitter:image" content="https://www.genspark.ai/api/files/s/eSPDBk0I"/>
+  
+  <!-- Additional Meta Tags -->
+  <meta name="description" content="Decentralized marketplace powered by smart contracts on Arc Testnet. Explore, test, and experience Web3 commerce in a secure environment."/>
+  <meta name="keywords" content="Web3, marketplace, decentralized, Arc Network, smart contracts, blockchain, DeFi, crypto commerce"/>
+  <meta name="theme-color" content="#dc2626"/>
+  
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet"/>
   <script>
