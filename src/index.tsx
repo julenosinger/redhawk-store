@@ -2473,93 +2473,291 @@ function productPage(p: any) {
   const seller = (p.seller_id || '').replace(/</g, '&lt;')
   const imgUrl = p.image || ''
   const stockN = parseInt(p.stock) || 0
+  const delivType = p.delivery_type || 'manual'
+  const isDigital = delivType === 'instant' || delivType === 'digital'
 
   return shell(title, `
-  <div class="max-w-5xl mx-auto px-4 py-8">
+  <style>
+    /* ── Product Page Premium Styles ── */
+    .pd-breadcrumb{display:flex;align-items:center;gap:6px;font-size:13px;color:#94a3b8;margin-bottom:28px;flex-wrap:wrap}
+    .pd-breadcrumb a{color:#64748b;text-decoration:none;font-weight:500;transition:color .15s}
+    .pd-breadcrumb a:hover{color:#dc2626}
+    .pd-breadcrumb .sep{color:#cbd5e1;font-size:10px}
+    .pd-breadcrumb .current{color:#1e293b;font-weight:600}
+
+    .pd-image-wrap{position:relative;border-radius:20px;overflow:hidden;background:#f8fafc;border:1px solid #f1f5f9;box-shadow:0 4px 24px rgba(0,0,0,.07)}
+    .pd-image-wrap img{width:100%;max-height:500px;object-fit:cover;display:block;transition:transform .45s cubic-bezier(.25,.46,.45,.94)}
+    .pd-image-wrap:hover img{transform:scale(1.04)}
+    .pd-image-fallback{width:100%;min-height:360px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;color:#cbd5e1;background:linear-gradient(135deg,#f8fafc,#f1f5f9)}
+    .pd-image-fallback i{font-size:72px;opacity:.35}
+    .pd-image-fallback span{font-size:13px;color:#94a3b8;font-weight:500}
+
+    .pd-cat-badge{display:inline-flex;align-items:center;gap:5px;background:#fef2f2;color:#dc2626;border:1px solid #fecaca;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase}
+    .pd-delivery-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.3px}
+    .pd-delivery-badge.instant{background:#ecfdf5;color:#059669;border:1px solid #6ee7b7}
+    .pd-delivery-badge.manual{background:#fffbeb;color:#d97706;border:1px solid #fcd34d}
+
+    .pd-price-block{display:flex;align-items:baseline;gap:8px;margin:10px 0 4px}
+    .pd-price-main{font-size:2.6rem;font-weight:900;color:#dc2626;line-height:1;letter-spacing:-1px}
+    .pd-price-tok{font-size:1.1rem;font-weight:700;color:#ef4444;opacity:.85}
+    .pd-price-usd{font-size:13px;color:#94a3b8;font-weight:500;margin-left:4px}
+
+    .pd-stock-badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:5px 12px;border-radius:20px}
+    .pd-stock-badge.instock{background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0}
+    .pd-stock-badge.instock .dot{width:7px;height:7px;border-radius:50%;background:#16a34a;animation:pdpulse 1.8s ease-in-out infinite}
+    .pd-stock-badge.outstock{background:#fef2f2;color:#dc2626;border:1px solid #fecaca}
+    @keyframes pdpulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(1.3)}}
+
+    .pd-escrow-box{background:linear-gradient(135deg,#f0fdf4 0%,#dcfce7 100%);border:1.5px solid #86efac;border-radius:16px;padding:18px 20px;position:relative;overflow:hidden}
+    .pd-escrow-box::before{content:'';position:absolute;top:-20px;right:-20px;width:80px;height:80px;background:rgba(22,163,74,.08);border-radius:50%}
+    .pd-escrow-title{font-size:13px;font-weight:800;color:#15803d;display:flex;align-items:center;gap:7px;margin-bottom:10px;letter-spacing:.2px}
+    .pd-escrow-item{display:flex;align-items:center;gap:8px;font-size:12px;color:#166534;font-weight:500;margin-bottom:6px}
+    .pd-escrow-item:last-child{margin-bottom:0}
+    .pd-escrow-check{width:18px;height:18px;border-radius:50%;background:#16a34a;color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:9px}
+
+    .pd-keys-box{display:flex;align-items:center;gap:10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:12px 16px;font-size:12px;color:#1d4ed8;font-weight:500;position:relative}
+    .pd-keys-box .pd-tooltip-wrap{position:relative;display:inline-flex;cursor:help;margin-left:auto}
+    .pd-keys-box .pd-tooltip-wrap i{color:#93c5fd;font-size:13px}
+    .pd-keys-box .pd-tooltip{display:none;position:absolute;right:0;bottom:calc(100% + 8px);background:#1e293b;color:#fff;font-size:11px;font-weight:400;padding:7px 10px;border-radius:8px;white-space:nowrap;z-index:50;box-shadow:0 4px 12px rgba(0,0,0,.2)}
+    .pd-keys-box .pd-tooltip-wrap:hover .pd-tooltip{display:block}
+
+    .pd-section-label{font-size:11px;font-weight:700;color:#94a3b8;letter-spacing:.8px;text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+    .pd-section-label::after{content:'';flex:1;height:1px;background:#f1f5f9}
+
+    .pd-desc-text{font-size:14px;color:#475569;line-height:1.75;white-space:pre-line}
+
+    .pd-details-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .pd-detail-item{background:#f8fafc;border:1px solid #f1f5f9;border-radius:12px;padding:12px 14px}
+    .pd-detail-item .label{font-size:10px;font-weight:700;color:#94a3b8;letter-spacing:.5px;text-transform:uppercase;margin-bottom:4px}
+    .pd-detail-item .value{font-size:13px;font-weight:600;color:#334155;display:flex;align-items:center;gap:5px}
+
+    .pd-seller-box{background:#f8fafc;border:1px solid #f1f5f9;border-radius:12px;padding:14px 16px;display:flex;align-items:center;gap:12px}
+    .pd-seller-avatar{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;flex-shrink:0}
+    .pd-seller-info{flex:1;min-width:0}
+    .pd-seller-info .name{font-size:12px;font-weight:700;color:#1e293b;margin-bottom:2px}
+    .pd-seller-info .addr{font-size:11px;font-family:monospace;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .pd-copy-btn{flex-shrink:0;width:30px;height:30px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;color:#64748b;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;transition:all .15s}
+    .pd-copy-btn:hover{background:#fef2f2;border-color:#fecaca;color:#dc2626}
+    .pd-copy-btn.copied{background:#f0fdf4;border-color:#86efac;color:#16a34a}
+
+    .pd-btn-buy{width:100%;padding:16px 24px;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;border:none;border-radius:14px;font-size:16px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;letter-spacing:.3px;box-shadow:0 6px 20px rgba(220,38,38,.35);transition:all .25s;position:relative;overflow:hidden}
+    .pd-btn-buy::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(255,255,255,.15),transparent);pointer-events:none}
+    .pd-btn-buy:hover{transform:translateY(-2px);box-shadow:0 10px 28px rgba(220,38,38,.45)}
+    .pd-btn-buy:active{transform:translateY(0);box-shadow:0 4px 12px rgba(220,38,38,.3)}
+    .pd-btn-buy:disabled{opacity:.55;cursor:not-allowed;transform:none;box-shadow:none}
+    .pd-btn-cart{width:100%;padding:13px 24px;background:#fff;color:#dc2626;border:2px solid #dc2626;border-radius:14px;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:all .2s}
+    .pd-btn-cart:hover{background:#fef2f2;box-shadow:0 4px 12px rgba(220,38,38,.12)}
+    .pd-btn-cart:active{transform:scale(.99)}
+
+    .pd-outofstock{background:linear-gradient(135deg,#f8fafc,#f1f5f9);border:2px dashed #e2e8f0;border-radius:14px;padding:24px;text-align:center;color:#94a3b8}
+
+    .pd-seller-panel{background:linear-gradient(135deg,#fffbeb,#fef9c3);border:1.5px solid #fcd34d;border-radius:14px;padding:16px 20px}
+    .pd-seller-panel .title{font-size:13px;font-weight:800;color:#92400e;display:flex;align-items:center;gap:7px;margin-bottom:6px}
+    .pd-seller-panel p{font-size:12px;color:#78350f;line-height:1.5}
+
+    /* Sticky mobile buy bar */
+    .pd-sticky-bar{display:none;position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #f1f5f9;box-shadow:0 -4px 20px rgba(0,0,0,.1);padding:12px 16px 16px;z-index:90;gap:10px;align-items:center}
+    @media(max-width:1023px){.pd-sticky-bar{display:flex}}
+
+    .pd-arc-badge{display:inline-flex;align-items:center;gap:5px;background:linear-gradient(135deg,#1e40af,#2563eb);color:#fff;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:.3px}
+  </style>
+
+  <div class="max-w-5xl mx-auto px-4 py-6 pb-28 lg:pb-10">
+
     <!-- Breadcrumb -->
-    <nav class="text-sm text-slate-400 mb-6 flex items-center gap-2">
-      <a href="/marketplace" class="hover:text-red-600">Marketplace</a>
-      <i class="fas fa-chevron-right text-xs"></i>
-      <span class="text-slate-700 font-medium">${title}</span>
+    <nav class="pd-breadcrumb">
+      <a href="/"><i class="fas fa-home"></i></a>
+      <span class="sep"><i class="fas fa-chevron-right"></i></span>
+      <a href="/marketplace">Marketplace</a>
+      <span class="sep"><i class="fas fa-chevron-right"></i></span>
+      <span class="pd-breadcrumb-cat">${cat}</span>
+      <span class="sep"><i class="fas fa-chevron-right"></i></span>
+      <span class="current">${title.length > 32 ? title.slice(0,32)+'…' : title}</span>
     </nav>
 
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-10">
-      <!-- Image -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12 items-start">
+
+      <!-- ── LEFT: Image ── -->
       <div>
-        ${imgUrl
-          ? `<img src="${imgUrl}" alt="${title}" class="w-full rounded-2xl object-cover max-h-[480px] border border-slate-100 shadow-md"
-               onerror="this.style.display='none';document.getElementById('img-fallback').style.display='flex'">`
-          : ''}
-        <div id="img-fallback" style="${imgUrl ? 'display:none' : ''}"
-          class="w-full rounded-2xl bg-gradient-to-br from-slate-100 to-slate-200 h-72 flex items-center justify-center text-slate-300">
-          <i class="fas fa-image text-6xl"></i>
-        </div>
-      </div>
-
-      <!-- Details -->
-      <div class="flex flex-col gap-5">
-        <div>
-          <span class="tag mb-2 inline-block">${cat}</span>
-          <h1 class="text-3xl font-extrabold text-slate-800 mb-2">${title}</h1>
-          <p class="text-4xl font-extrabold text-red-600">${price} <span class="text-xl font-bold">${tok}</span></p>
-          <p class="text-xs text-slate-400 mt-1">Seller: <span class="font-mono">${seller.slice(0,10)}…${seller.slice(-6)}</span></p>
-        </div>
-
-        <!-- Trust badge -->
-        <div class="flex items-start gap-3 bg-green-50 border border-green-200 rounded-xl p-3">
-          <i class="fas fa-shield-alt text-green-600 mt-0.5"></i>
-          <div>
-            <p class="font-bold text-green-800 text-sm">Escrow Protection</p>
-            <p class="text-xs text-green-700">Funds locked in Arc Network smart contract until you confirm delivery.</p>
+        <div class="pd-image-wrap">
+          ${imgUrl
+            ? `<img src="${imgUrl}" alt="${title}"
+                 onerror="this.style.display='none';document.getElementById('img-fallback').style.display='flex'">`
+            : ''}
+          <div id="img-fallback" style="${imgUrl ? 'display:none' : 'display:flex'}" class="pd-image-fallback">
+            <i class="fas fa-image"></i>
+            <span>No image available</span>
           </div>
         </div>
 
-        <!-- Wallet transparency -->
-        <div class="flex items-start gap-3 bg-blue-50 border border-blue-100 rounded-xl p-3">
-          <i class="fas fa-lock text-blue-500 mt-0.5"></i>
-          <p class="text-xs text-blue-700">We never access your private keys. All transactions are signed locally in your wallet.</p>
+        <!-- Arc Network badge under image -->
+        <div class="flex items-center gap-3 mt-4 px-1">
+          <span class="pd-arc-badge"><i class="fas fa-network-wired"></i> Arc Network</span>
+          <span class="text-xs text-slate-400">Chain ID 5042002 · Testnet</span>
+          <a href="https://testnet.arcscan.app" target="_blank" class="ml-auto text-xs text-slate-400 hover:text-red-500 transition-colors">
+            <i class="fas fa-external-link-alt"></i> Explorer
+          </a>
+        </div>
+      </div>
+
+      <!-- ── RIGHT: Details ── -->
+      <div class="flex flex-col gap-5">
+
+        <!-- Header: category + badges -->
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="pd-cat-badge"><i class="fas fa-tag"></i> ${cat}</span>
+          ${isDigital
+            ? `<span class="pd-delivery-badge instant"><i class="fas fa-bolt"></i> Instant Delivery</span>`
+            : `<span class="pd-delivery-badge manual"><i class="fas fa-clock"></i> Manual Delivery</span>`}
+          ${stockN > 0
+            ? `<span class="pd-stock-badge instock"><span class="dot"></span> In stock (${stockN})</span>`
+            : `<span class="pd-stock-badge outstock"><i class="fas fa-times-circle" style="font-size:9px"></i> Out of stock</span>`}
+        </div>
+
+        <!-- Title -->
+        <div>
+          <h1 style="font-size:clamp(1.5rem,3vw,2rem);font-weight:900;color:#0f172a;line-height:1.2;letter-spacing:-.5px;margin-bottom:12px">${title}</h1>
+
+          <!-- Price -->
+          <div class="pd-price-block">
+            <span class="pd-price-main">${price}</span>
+            <span class="pd-price-tok">${tok}</span>
+          </div>
+          <p style="font-size:11px;color:#94a3b8;margin-top:2px">
+            <i class="fas fa-info-circle" style="margin-right:3px"></i>Paid via ${tok} on Arc Testnet
+          </p>
+        </div>
+
+        <!-- Escrow Protection Box -->
+        <div class="pd-escrow-box">
+          <div class="pd-escrow-title">
+            <div style="width:28px;height:28px;border-radius:8px;background:#16a34a;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+              <i class="fas fa-shield-alt" style="color:#fff;font-size:12px"></i>
+            </div>
+            Escrow Smart Contract Protection
+          </div>
+          <div class="pd-escrow-item">
+            <span class="pd-escrow-check"><i class="fas fa-check"></i></span>
+            Funds locked in Arc Network smart contract
+          </div>
+          <div class="pd-escrow-item">
+            <span class="pd-escrow-check"><i class="fas fa-check"></i></span>
+            Released only after you confirm delivery
+          </div>
+          <div class="pd-escrow-item">
+            <span class="pd-escrow-check"><i class="fas fa-check"></i></span>
+            Dispute resolution available if needed
+          </div>
+        </div>
+
+        <!-- Private Keys notice -->
+        <div class="pd-keys-box">
+          <i class="fas fa-lock" style="color:#3b82f6;font-size:15px;flex-shrink:0"></i>
+          <span>We <strong>never</strong> access your private keys — all transactions signed locally in your wallet.</span>
+          <div class="pd-tooltip-wrap">
+            <i class="fas fa-question-circle"></i>
+            <div class="pd-tooltip">Non-custodial: only you control your funds.</div>
+          </div>
         </div>
 
         <!-- Description -->
         <div>
-          <h3 class="font-bold text-slate-700 mb-2">Description</h3>
-          <p class="text-slate-600 text-sm leading-relaxed whitespace-pre-line">${desc}</p>
+          <div class="pd-section-label"><i class="fas fa-align-left" style="color:#cbd5e1"></i> Description</div>
+          <p class="pd-desc-text">${desc || '<span style="color:#94a3b8;font-style:italic">No description provided.</span>'}</p>
         </div>
 
-        <!-- Stock -->
-        <p class="text-sm text-slate-500"><i class="fas fa-box mr-1 text-slate-400"></i>Stock: <strong>${stockN}</strong> unit${stockN !== 1 ? 's' : ''} available</p>
+        <!-- Details Grid -->
+        <div>
+          <div class="pd-section-label"><i class="fas fa-list" style="color:#cbd5e1"></i> Details</div>
+          <div class="pd-details-grid">
+            <div class="pd-detail-item">
+              <div class="label">Network</div>
+              <div class="value"><i class="fas fa-network-wired" style="color:#3b82f6;font-size:11px"></i> Arc Testnet</div>
+            </div>
+            <div class="pd-detail-item">
+              <div class="label">Payment</div>
+              <div class="value"><i class="fas fa-coins" style="color:#f59e0b;font-size:11px"></i> ${tok}</div>
+            </div>
+            <div class="pd-detail-item">
+              <div class="label">Delivery</div>
+              <div class="value">
+                ${isDigital
+                  ? `<i class="fas fa-bolt" style="color:#059669;font-size:11px"></i> Instant`
+                  : `<i class="fas fa-clock" style="color:#d97706;font-size:11px"></i> Manual`}
+              </div>
+            </div>
+            <div class="pd-detail-item">
+              <div class="label">Category</div>
+              <div class="value"><i class="fas fa-tag" style="color:#dc2626;font-size:11px"></i> ${cat}</div>
+            </div>
+          </div>
+        </div>
 
-        <!-- Action buttons — rendered dynamically to support self-purchase check -->
-        <div id="product-action-btns" class="flex flex-col gap-3 mt-2">
+        <!-- Seller Info -->
+        <div>
+          <div class="pd-section-label"><i class="fas fa-user" style="color:#cbd5e1"></i> Seller</div>
+          <div class="pd-seller-box">
+            <div class="pd-seller-avatar">${seller ? seller.slice(2,4).toUpperCase() : '??'}</div>
+            <div class="pd-seller-info">
+              <div class="name">Verified Seller</div>
+              <div class="addr" id="seller-addr-display">${seller.slice(0,14)}…${seller.slice(-8)}</div>
+            </div>
+            <button class="pd-copy-btn" id="pd-copy-seller" onclick="pdCopySeller()" title="Copy seller address">
+              <i class="fas fa-copy"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div id="product-action-btns" class="flex flex-col gap-3 mt-1">
           ${stockN > 0
-            ? `<button id="btn-buy-now" onclick="addToCartAndBuy('${p.id}','${title.replace(/'/g,"\\'")}',${price},'${tok}','${imgUrl}')"
-                class="btn-primary justify-center py-4 text-base">
-                <i class="fas fa-bolt"></i> Buy Now — ${price} ${tok}
+            ? `<button id="btn-buy-now"
+                onclick="pdBuyNow('${p.id}','${title.replace(/'/g,"\\'")}',${price},'${tok}','${imgUrl}')"
+                class="pd-btn-buy">
+                <i class="fas fa-bolt"></i>
+                Buy Now &mdash; ${price} ${tok}
               </button>
-              <button id="btn-add-cart" onclick="addToCartOnly('${p.id}','${title.replace(/'/g,"\\'")}',${price},'${tok}','${imgUrl}')"
-                class="btn-secondary justify-center py-3">
+              <button id="btn-add-cart"
+                onclick="pdAddCart('${p.id}','${title.replace(/'/g,"\\'")}',${price},'${tok}','${imgUrl}')"
+                class="pd-btn-cart">
                 <i class="fas fa-cart-plus"></i> Add to Cart
               </button>`
-            : `<div class="card p-4 text-center text-slate-500 bg-slate-50">
-                <i class="fas fa-box-open mr-2"></i>Out of stock
+            : `<div class="pd-outofstock">
+                <i class="fas fa-box-open" style="font-size:28px;opacity:.3;display:block;margin-bottom:8px"></i>
+                <p style="font-weight:700;font-size:15px;color:#64748b;margin-bottom:4px">Out of Stock</p>
+                <p style="font-size:12px;color:#94a3b8">This product is currently unavailable</p>
               </div>`}
         </div>
 
-        <!-- Seller management panel (hidden by default, shown if viewer is the seller) -->
-        <div id="seller-actions" class="hidden mt-2 p-4 bg-amber-50 border border-amber-200 rounded-xl">
-          <p class="text-sm font-bold text-amber-800 flex items-center gap-2 mb-2">
-            <i class="fas fa-store"></i> Your listing
-          </p>
-          <p class="text-xs text-amber-700">You are the seller of this product. You cannot purchase your own product.</p>
+        <!-- Seller Management Panel (shown only if viewer is the seller) -->
+        <div id="seller-actions" class="hidden pd-seller-panel">
+          <div class="title"><i class="fas fa-store"></i> Your Listing</div>
+          <p>You are the seller of this product. You cannot purchase your own listing.</p>
         </div>
+
       </div>
     </div>
 
     <!-- Back link -->
-    <div class="mt-10">
-      <a href="/marketplace" class="btn-secondary text-sm py-2"><i class="fas fa-arrow-left mr-1"></i>Back to Marketplace</a>
+    <div class="mt-10 pt-6 border-t border-slate-100">
+      <a href="/marketplace" class="btn-secondary text-sm py-2 px-4">
+        <i class="fas fa-arrow-left"></i> Back to Marketplace
+      </a>
     </div>
   </div>
+
+  <!-- Mobile sticky buy bar -->
+  ${stockN > 0 ? `
+  <div class="pd-sticky-bar" id="pd-sticky-bar">
+    <div style="flex:1;min-width:0">
+      <div style="font-size:12px;color:#64748b;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${title}</div>
+      <div style="font-size:18px;font-weight:900;color:#dc2626;line-height:1.2">${price} <span style="font-size:13px;font-weight:700">${tok}</span></div>
+    </div>
+    <button onclick="pdBuyNow('${p.id}','${title.replace(/'/g,"\\'")}',${price},'${tok}','${imgUrl}')"
+      class="pd-btn-buy" style="width:auto;padding:13px 22px;font-size:14px;flex-shrink:0">
+      <i class="fas fa-bolt"></i> Buy Now
+    </button>
+  </div>` : ''}
 
   <script>
   (function(){
@@ -2569,18 +2767,52 @@ function productPage(p: any) {
     if(w && sellerAddr && w.address.toLowerCase() === sellerAddr){
       const btns = document.getElementById('product-action-btns');
       const panel = document.getElementById('seller-actions');
+      const bar = document.getElementById('pd-sticky-bar');
       if(btns) btns.classList.add('hidden');
       if(panel) panel.classList.remove('hidden');
+      if(bar) bar.style.display = 'none';
     }
   })();
 
-  function addToCartOnly(id, name, price, token, image) {
+  function pdBuyNow(id, name, price, token, image) {
+    const btn = document.getElementById('btn-buy-now');
+    if(btn){ btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing…'; }
     CartStore.addToCart({ id, title: name, price: parseFloat(price), currency: token, image });
-  }
-  function addToCartAndBuy(id, name, price, token, image) {
-    addToCartOnly(id, name, price, token, image);
     setTimeout(() => window.location.href = '/cart', 400);
   }
+  function pdAddCart(id, name, price, token, image) {
+    const btn = document.getElementById('btn-add-cart');
+    if(btn){ btn.disabled = true; btn.innerHTML = '<i class="fas fa-check"></i> Added!'; }
+    CartStore.addToCart({ id, title: name, price: parseFloat(price), currency: token, image });
+    showToast('Added to cart!', 'success');
+    setTimeout(() => { if(btn){ btn.disabled = false; btn.innerHTML = '<i class="fas fa-cart-plus"></i> Add to Cart'; } }, 1800);
+  }
+  // Keep legacy names working (called by other scripts)
+  function addToCartOnly(id, name, price, token, image) { pdAddCart(id, name, price, token, image); }
+  function addToCartAndBuy(id, name, price, token, image) { pdBuyNow(id, name, price, token, image); }
+
+  function pdCopySeller() {
+    const addr = '${seller}';
+    if(!addr) return;
+    navigator.clipboard.writeText(addr).then(() => {
+      const btn = document.getElementById('pd-copy-seller');
+      if(btn){ btn.classList.add('copied'); btn.innerHTML = '<i class="fas fa-check"></i>'; }
+      showToast('Seller address copied!', 'success');
+      setTimeout(() => { if(btn){ btn.classList.remove('copied'); btn.innerHTML = '<i class="fas fa-copy"></i>'; } }, 2000);
+    }).catch(() => showToast('Copy not available', 'error'));
+  }
+
+  // Hide sticky bar when main buy button is visible on desktop
+  (function(){
+    const bar = document.getElementById('pd-sticky-bar');
+    if(!bar) return;
+    const obs = new IntersectionObserver(([e]) => {
+      bar.style.opacity = e.isIntersecting ? '0' : '1';
+      bar.style.pointerEvents = e.isIntersecting ? 'none' : 'auto';
+    }, { threshold: 0.5 });
+    const mainBtn = document.getElementById('btn-buy-now');
+    if(mainBtn) obs.observe(mainBtn);
+  })();
   </script>
   `)
 }
