@@ -1328,10 +1328,10 @@ function toastContainer() {
 // ─── AI Chat Widget ───────────────────────────────────────────────────
 function chatWidget() {
   return `
-<button onclick="toggleChat()" class="fixed bottom-6 right-6 w-14 h-14 rounded-full bg-gradient-to-br from-red-500 to-red-800 text-white shadow-xl flex items-center justify-center text-xl hover:scale-110 transition-transform z-50" title="HawkAI Assistant">
+<button onclick="toggleChat()" class="fixed bottom-6 right-6 w-14 h-14 rounded-full bg-gradient-to-br from-red-500 to-red-800 text-white shadow-xl flex items-center justify-center text-xl hover:scale-110 transition-transform z-[300]" title="HawkAI Assistant">
   <i class="fas fa-robot"></i>
 </button>
-<div id="chat-panel" class="hidden fixed bottom-24 right-6 w-[420px] sm:w-[480px] z-50">
+<div id="chat-panel" class="hidden fixed bottom-24 right-6 w-[420px] sm:w-[480px] z-[300]">
   <div class="card shadow-2xl overflow-hidden">
     <div class="bg-gradient-to-r from-red-600 to-red-800 px-4 py-3 flex items-center justify-between">
       <div class="flex items-center gap-2">
