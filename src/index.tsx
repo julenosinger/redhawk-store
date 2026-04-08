@@ -2577,7 +2577,7 @@ function productPage(p: any) {
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12 items-start">
 
-      <!-- ── LEFT: Image ── -->
+      <!-- ── LEFT: Image + Description ── -->
       <div>
         <div class="pd-image-wrap">
           ${imgUrl
@@ -2597,6 +2597,12 @@ function productPage(p: any) {
           <a href="https://testnet.arcscan.app" target="_blank" class="ml-auto text-xs text-slate-400 hover:text-red-500 transition-colors">
             <i class="fas fa-external-link-alt"></i> Explorer
           </a>
+        </div>
+
+        <!-- Description (below image) -->
+        <div style="margin-top:24px">
+          <div class="pd-section-label"><i class="fas fa-align-left" style="color:#cbd5e1"></i> Description</div>
+          <p class="pd-desc-text">${desc || '<span style="color:#94a3b8;font-style:italic">No description provided.</span>'}</p>
         </div>
       </div>
 
@@ -2658,12 +2664,6 @@ function productPage(p: any) {
             <i class="fas fa-question-circle"></i>
             <div class="pd-tooltip">Non-custodial: only you control your funds.</div>
           </div>
-        </div>
-
-        <!-- Description -->
-        <div>
-          <div class="pd-section-label"><i class="fas fa-align-left" style="color:#cbd5e1"></i> Description</div>
-          <p class="pd-desc-text">${desc || '<span style="color:#94a3b8;font-style:italic">No description provided.</span>'}</p>
         </div>
 
         <!-- Action Buttons -->
