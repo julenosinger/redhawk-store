@@ -5123,6 +5123,155 @@ function orderDetailPage(id: string) {
 // ─── PAGE: SELL ─────────────────────────────────────────────────────────
 function sellPage() {
   return shell('Sell on Shukly Store', `
+  <style>
+    /* ── Multi-image upload system ───────────────────────────── */
+    .mi-drop-zone {
+      border: 2px dashed #cbd5e1;
+      border-radius: 16px;
+      padding: 32px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+      position: relative;
+    }
+    .mi-drop-zone.drag-over {
+      border-color: #dc2626;
+      background: rgba(220,38,38,.04);
+    }
+    .mi-drop-zone.has-images {
+      padding: 16px 20px;
+      border-color: #e2e8f0;
+    }
+    .mi-drop-zone:hover { border-color: #dc2626; background: rgba(220,38,38,.02); }
+
+    /* Grid of previews */
+    .mi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    @media (max-width: 480px) {
+      .mi-grid { grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 8px; }
+    }
+
+    .mi-thumb {
+      position: relative;
+      aspect-ratio: 1;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 2px solid #e2e8f0;
+      background: #f8fafc;
+      cursor: grab;
+      transition: transform .2s, box-shadow .2s, border-color .2s;
+      animation: miThumbIn .25s cubic-bezier(.34,1.56,.64,1) both;
+    }
+    @keyframes miThumbIn {
+      from { opacity:0; transform:scale(.7); }
+      to   { opacity:1; transform:scale(1); }
+    }
+    .mi-thumb.is-cover {
+      border-color: #dc2626;
+      box-shadow: 0 0 0 3px rgba(220,38,38,.18);
+    }
+    .mi-thumb:active { cursor: grabbing; }
+    .mi-thumb.dragging { opacity: .4; transform: scale(.95); }
+    .mi-thumb.drag-target { border-color: #dc2626; box-shadow: 0 0 0 2px #dc2626; }
+
+    .mi-thumb img {
+      width: 100%; height: 100%;
+      object-fit: cover;
+      display: block;
+      pointer-events: none;
+    }
+
+    /* Cover badge */
+    .mi-cover-badge {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      background: linear-gradient(0deg, rgba(220,38,38,.85) 0%, transparent 100%);
+      color: #fff;
+      font-size: 9px; font-weight: 700; letter-spacing: .4px;
+      padding: 10px 4px 4px;
+      text-align: center;
+      text-transform: uppercase;
+    }
+
+    /* Remove button */
+    .mi-remove {
+      position: absolute; top: 4px; right: 4px;
+      width: 22px; height: 22px;
+      background: rgba(15,23,42,.7);
+      border: none; border-radius: 50%;
+      color: #fff; font-size: 10px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0;
+      transition: opacity .15s, background .15s;
+    }
+    .mi-thumb:hover .mi-remove { opacity: 1; }
+    .mi-remove:hover { background: #dc2626; }
+
+    /* Drag handle */
+    .mi-drag-handle {
+      position: absolute; top: 4px; left: 4px;
+      width: 20px; height: 20px;
+      background: rgba(15,23,42,.55);
+      border-radius: 5px;
+      color: rgba(255,255,255,.8); font-size: 9px;
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0;
+      transition: opacity .15s;
+      cursor: grab;
+    }
+    .mi-thumb:hover .mi-drag-handle { opacity: 1; }
+
+    /* Add-more slot */
+    .mi-add-slot {
+      aspect-ratio: 1;
+      border-radius: 12px;
+      border: 2px dashed #cbd5e1;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+      color: #94a3b8;
+      font-size: 11px; font-weight: 600;
+      gap: 4px;
+      background: #f8fafc;
+    }
+    .mi-add-slot:hover { border-color: #dc2626; color: #dc2626; background: #fef2f2; }
+    .mi-add-slot i { font-size: 20px; }
+
+    /* Counter + hint bar */
+    .mi-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 12px; color: #64748b;
+      margin-bottom: 8px;
+    }
+    .mi-bar .mi-count { font-weight: 700; color: #1e293b; }
+    .mi-bar .mi-hint  { color: #94a3b8; font-size: 11px; }
+
+    /* Error message */
+    .mi-error {
+      background: #fef2f2; border: 1px solid #fecaca;
+      border-radius: 8px; padding: 8px 12px;
+      font-size: 12px; color: #dc2626;
+      display: flex; align-items: center; gap-6px;
+      margin-top: 8px; animation: miThumbIn .2s ease both;
+    }
+
+    /* Processing overlay */
+    .mi-processing {
+      position: absolute; inset: 0;
+      background: rgba(248,250,252,.85);
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 10px;
+    }
+
+    /* URL tab */
+    #img-panel-url input { transition: border-color .2s; }
+  </style>
+
   <div class="max-w-3xl mx-auto px-4 py-8">
     <div class="text-center mb-8">
       <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-red-500 to-red-800 flex items-center justify-center text-white text-2xl mx-auto mb-4 shadow-xl">
@@ -5179,85 +5328,92 @@ function sellPage() {
             <input type="number" id="prod-stock" placeholder="1" min="1" class="input"/>
           </div>
         </div>
-        <!-- Image Upload -->
+
+        <!-- ═══════════════════════════════════════════════════════
+             MULTI-IMAGE UPLOAD (max 5)
+             ═══════════════════════════════════════════════════ -->
         <div>
-          <label class="block text-sm font-semibold text-slate-700 mb-2">
-            Product Image <span class="font-normal text-slate-400">(optional)</span>
-          </label>
-          <!-- Tabs -->
-          <div class="flex gap-1 mb-3 bg-slate-100 rounded-lg p-1 w-fit flex-wrap">
-            <button type="button" id="tab-upload" onclick="switchImgTab('upload')"
-              class="px-4 py-1.5 rounded-md text-xs font-semibold transition-all bg-white text-slate-800 shadow-sm">
-              <i class="fas fa-camera mr-1"></i> Upload Photo
-            </button>
-            <button type="button" id="tab-url" onclick="switchImgTab('url')"
-              class="px-4 py-1.5 rounded-md text-xs font-semibold transition-all text-slate-500 hover:text-slate-700">
-              <i class="fas fa-link mr-1"></i> URL / IPFS
-            </button>
+          <div class="flex items-center justify-between mb-2">
+            <label class="block text-sm font-semibold text-slate-700">
+              Product Images <span class="font-normal text-slate-400">(1–5 images)</span>
+            </label>
+            <!-- Source tab switcher -->
+            <div class="flex gap-1 bg-slate-100 rounded-lg p-1">
+              <button type="button" id="tab-upload" onclick="miSwitchTab('upload')"
+                class="px-3 py-1 rounded-md text-xs font-semibold transition-all bg-white text-slate-800 shadow-sm">
+                <i class="fas fa-camera mr-1"></i>Upload
+              </button>
+              <button type="button" id="tab-url" onclick="miSwitchTab('url')"
+                class="px-3 py-1 rounded-md text-xs font-semibold transition-all text-slate-500 hover:text-slate-700">
+                <i class="fas fa-link mr-1"></i>URL
+              </button>
+            </div>
           </div>
 
-          <!-- Upload panel -->
+          <!-- ── UPLOAD tab ──────────────────────────── -->
           <div id="img-panel-upload">
-            <!-- Drop zone -->
-            <div id="img-drop-zone"
-              class="border-2 border-dashed border-slate-300 rounded-xl p-6 text-center cursor-pointer hover:border-red-400 hover:bg-red-50/30 transition-all"
-              onclick="document.getElementById('img-file-input').click()"
-              ondragover="event.preventDefault();this.classList.add('border-red-400','bg-red-50')"
-              ondragleave="this.classList.remove('border-red-400','bg-red-50')"
-              ondrop="handleImgDrop(event)">
-              <div id="img-drop-content">
-                <i class="fas fa-camera text-3xl text-slate-300 mb-2 block"></i>
-                <p class="text-sm font-medium text-slate-500">Drag photo here or <span class="text-red-600 font-semibold">click to choose</span></p>
-                <p class="text-xs text-slate-400 mt-1">JPG, PNG, GIF, WEBP — max 10 MB · Auto-compressed</p>
-              </div>
-            </div>
-            <input type="file" id="img-file-input" accept="image/jpeg,image/png,image/gif,image/webp"
-              class="hidden" onchange="handleImgFile(this)"/>
 
-            <!-- Upload progress bar (hidden by default) -->
-            <div id="img-upload-progress" class="hidden mt-3">
-              <div class="flex items-center gap-2 mb-1">
+            <!-- Drop zone (doubles as grid container when images exist) -->
+            <div id="mi-drop-zone" class="mi-drop-zone"
+              ondragover="miDragOver(event)"
+              ondragleave="miDragLeave(event)"
+              ondrop="miDrop(event)"
+              onclick="miZoneClick(event)">
+
+              <!-- counter bar (visible when images > 0) -->
+              <div id="mi-bar" class="mi-bar hidden">
+                <span><span id="mi-count" class="mi-count">0</span>/5 images
+                  <span class="text-xs text-red-600 font-semibold ml-2" id="mi-cover-hint">First image = cover</span>
+                </span>
+                <span class="mi-hint"><i class="fas fa-grip-vertical mr-1"></i>Drag to reorder</span>
+              </div>
+
+              <!-- thumbnails grid -->
+              <div id="mi-grid" class="mi-grid hidden"></div>
+
+              <!-- empty state (shown when no images) -->
+              <div id="mi-empty-state">
+                <i class="fas fa-images text-4xl text-slate-200 mb-3 block"></i>
+                <p class="text-sm font-semibold text-slate-500 mb-1">
+                  Drag &amp; drop images here or <span class="text-red-600">click to choose</span>
+                </p>
+                <p class="text-xs text-slate-400">JPG, PNG, WEBP · Max 5 MB per image · Up to 5 images · Auto-compressed</p>
+              </div>
+
+              <!-- global processing overlay (shown while any image is compressing) -->
+              <div id="mi-processing-overlay" class="hidden" style="pointer-events:none;position:absolute;inset:0;background:rgba(255,255,255,.7);border-radius:14px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:13px;color:#64748b;">
                 <span class="loading-spinner inline-block"></span>
-                <span id="img-upload-status" class="text-xs text-slate-500">Processing image…</span>
-              </div>
-              <div class="w-full bg-slate-200 rounded-full h-1.5">
-                <div id="img-upload-bar" class="bg-red-500 h-1.5 rounded-full transition-all duration-300" style="width:0%"></div>
+                <span id="mi-processing-text">Processing…</span>
               </div>
             </div>
 
-            <!-- Preview after upload -->
-            <div id="img-preview-wrap" class="hidden mt-3">
-              <div class="flex items-start gap-4 p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <img id="img-preview" src="" alt="Preview" class="w-24 h-24 rounded-xl object-cover border border-slate-200 shadow-sm flex-shrink-0"/>
-                <div class="flex-1 min-w-0">
-                  <p id="img-file-name" class="text-xs font-semibold text-slate-700 truncate mb-0.5"></p>
-                  <p id="img-file-size" class="text-xs text-slate-400 mb-0.5"></p>
-                  <p id="img-compressed-size" class="text-xs text-green-600 mb-2"></p>
-                  <div class="flex gap-2 flex-wrap">
-                    <button type="button" onclick="document.getElementById('img-file-input').click()"
-                      class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors">
-                      <i class="fas fa-sync-alt text-xs"></i> Change photo
-                    </button>
-                    <button type="button" onclick="clearImgUpload()"
-                      class="text-xs bg-red-50 hover:bg-red-100 text-red-500 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors">
-                      <i class="fas fa-trash-alt text-xs"></i> Remove
-                    </button>
-                  </div>
-                </div>
-              </div>
+            <!-- Hidden file input (multiple) -->
+            <input type="file" id="mi-file-input" accept="image/jpeg,image/png,image/webp"
+              multiple class="hidden" onchange="miHandleFiles(this.files)"/>
+
+            <!-- Error message container -->
+            <div id="mi-error" class="hidden mi-error">
+              <i class="fas fa-exclamation-circle mr-1.5"></i>
+              <span id="mi-error-text"></span>
+            </div>
+
+            <!-- Info strip -->
+            <div class="flex items-center gap-2 mt-2 text-xs text-slate-400">
+              <i class="fas fa-info-circle text-blue-400"></i>
+              <span>First image is the cover. Drag thumbnails to reorder. Max 5 images, 5 MB each.</span>
             </div>
           </div>
 
-          <!-- URL / IPFS panel -->
+          <!-- ── URL / IPFS tab ──────────────────────── -->
           <div id="img-panel-url" class="hidden">
-            <input type="url" id="prod-img" placeholder="https://... ou ipfs://..." class="input mb-2"/>
+            <input type="url" id="prod-img" placeholder="https://... or ipfs://..." class="input mb-2"/>
             <div id="img-url-preview-wrap" class="hidden mt-2 flex items-center gap-3">
               <img id="img-url-preview" src="" alt="Preview"
                 class="w-20 h-20 rounded-xl object-cover border border-slate-200 shadow-sm"
                 onerror="this.parentElement.classList.add('hidden')"/>
               <div>
                 <p class="text-xs font-semibold text-slate-600">Preview</p>
-                <p class="text-xs text-slate-400 mt-0.5">The image will load on the product</p>
+                <p class="text-xs text-slate-400 mt-0.5">Image will be loaded on the product page</p>
               </div>
             </div>
             <p class="text-xs text-slate-400 mt-2 leading-relaxed">
@@ -5267,9 +5423,10 @@ function sellPage() {
             </p>
           </div>
 
-          <!-- Hidden field that always holds the final image value sent to listProduct() -->
+          <!-- Hidden field — always holds the primary/cover image for listProduct() -->
           <input type="hidden" id="prod-img-final"/>
         </div>
+
         <!-- Fee Breakdown Card -->
         <div class="card p-5 bg-slate-50 border-slate-200" id="fee-breakdown-card">
           <h4 class="font-bold text-slate-700 mb-3 flex items-center gap-2">
@@ -5277,8 +5434,7 @@ function sellPage() {
           </h4>
           <div class="space-y-2 text-sm">
             <div class="flex justify-between text-slate-600">
-              <span>Product Price</span>
-              <span id="fee-product-price">—</span>
+              <span>Product Price</span><span id="fee-product-price">—</span>
             </div>
             <div class="flex justify-between text-slate-600">
               <span>Platform Fee (2%)</span>
@@ -5295,59 +5451,415 @@ function sellPage() {
           </div>
           <p class="text-xs text-slate-400 mt-3"><i class="fas fa-info-circle mr-1"></i>Platform fee is deducted from the sale amount when escrow is released.</p>
         </div>
+
         <!-- Escrow Policy -->
         <div class="card p-4 bg-red-50 border-red-100">
           <h4 class="font-bold text-red-800 mb-1 flex items-center gap-2"><i class="fas fa-shield-alt"></i> Escrow Policy</h4>
           <p class="text-sm text-red-700">All sales are protected by escrow via smart contract on Arc Network. Funds are only released after the buyer confirms delivery.</p>
         </div>
-        <button onclick="listProduct()" class="btn-primary w-full justify-center py-3 text-base">
+
+        <button onclick="listProduct()" id="sell-submit-btn" class="btn-primary w-full justify-center py-3 text-base">
           <i class="fas fa-tag mr-2"></i> List Product
         </button>
       </div>
     </div>
   </div>
+
   <script>
+  // ════════════════════════════════════════════════════════════════════════
+  //  MULTI-IMAGE UPLOAD SYSTEM — max 5 images
+  //  State: _miImages = [{ dataUrl, name, originalSize, compressedSize }]
+  //  Cover = _miImages[0]
+  // ════════════════════════════════════════════════════════════════════════
+  const MI_MAX         = 5;
+  const MI_MAX_BYTES   = 5 * 1024 * 1024; // 5 MB per image
+  const MI_VALID_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+  let _miImages       = [];  // array of { dataUrl, name, origSize, compSize }
+  let _miDragIdx      = -1;  // index of thumb being dragged
+  let _miProcessing   = false;
+
+  // ── compress one File → dataURL ──────────────────────────────────────
+  function miCompress(file, maxW, maxH, quality) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = reject;
+      reader.onload = ev => {
+        const img = new Image();
+        img.onerror = reject;
+        img.onload = () => {
+          let w = img.width, h = img.height;
+          if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+          if (h > maxH) { w = Math.round(w * maxH / h); h = maxH; }
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.src = ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // ── process a batch of dropped / selected Files ──────────────────────
+  async function miHandleFiles(fileList) {
+    if (_miProcessing) return;
+    const files = Array.from(fileList);
+
+    // Validate types first (show inline error)
+    const invalidType = files.find(f => !MI_VALID_TYPES.includes(f.type));
+    if (invalidType) {
+      miShowError('Invalid file type "' + invalidType.name + '". Only JPG, PNG and WEBP are accepted.');
+      return;
+    }
+
+    // Size check
+    const tooBig = files.find(f => f.size > MI_MAX_BYTES);
+    if (tooBig) {
+      miShowError('"' + tooBig.name + '" exceeds the 5 MB limit (' + (tooBig.size / 1024 / 1024).toFixed(1) + ' MB).');
+      return;
+    }
+
+    // Limit check
+    const available = MI_MAX - _miImages.length;
+    if (available <= 0) {
+      miShowError('Maximum of ' + MI_MAX + ' images reached. Remove one before adding more.');
+      return;
+    }
+    const batch = files.slice(0, available);
+    if (files.length > available) {
+      miShowError('Only ' + available + ' slot(s) remaining. ' + (files.length - available) + ' file(s) were ignored.');
+    } else {
+      miHideError();
+    }
+
+    // Duplicate check (by name + size)
+    const existing = new Set(_miImages.map(i => i.name + ':' + i.origSize));
+    const dupes = batch.filter(f => existing.has(f.name + ':' + f.size));
+    if (dupes.length) {
+      miShowError('Duplicate image(s) skipped: ' + dupes.map(d => d.name).join(', '));
+    }
+    const unique = batch.filter(f => !existing.has(f.name + ':' + f.size));
+    if (!unique.length) return;
+
+    // Show processing overlay
+    _miProcessing = true;
+    const overlay = document.getElementById('mi-processing-overlay');
+    const procText = document.getElementById('mi-processing-text');
+    if (overlay) { overlay.classList.remove('hidden'); overlay.style.display = 'flex'; }
+
+    for (let i = 0; i < unique.length; i++) {
+      const file = unique[i];
+      if (procText) procText.textContent = 'Compressing ' + (i + 1) + '/' + unique.length + '…';
+
+      try {
+        // First pass: 1200×1200 at 0.82
+        let dataUrl = await miCompress(file, 1200, 1200, 0.82);
+        // If still large, second pass
+        if (dataUrl.length > 800 * 1024) {
+          dataUrl = await miCompress(file, 900, 900, 0.65);
+        }
+
+        const origSize = file.size;
+        const compSize = Math.round(dataUrl.length * 0.75);
+
+        _miImages.push({ dataUrl, name: file.name, origSize, compSize });
+      } catch (err) {
+        console.error('[miHandleFiles] compress error:', err);
+      }
+    }
+
+    _miProcessing = false;
+    if (overlay) { overlay.classList.add('hidden'); overlay.style.display = 'none'; }
+
+    miRender();
+    miSyncFinal();
+  }
+
+  // ── render the grid ───────────────────────────────────────────────────
+  function miRender() {
+    const grid      = document.getElementById('mi-grid');
+    const bar       = document.getElementById('mi-bar');
+    const countEl   = document.getElementById('mi-count');
+    const empty     = document.getElementById('mi-empty-state');
+    const zone      = document.getElementById('mi-drop-zone');
+    const n         = _miImages.length;
+
+    if (!grid) return;
+
+    // Toggle empty state vs grid
+    if (n === 0) {
+      grid.classList.add('hidden');
+      bar.classList.add('hidden');
+      empty.classList.remove('hidden');
+      zone.classList.remove('has-images');
+    } else {
+      grid.classList.remove('hidden');
+      bar.classList.remove('hidden');
+      empty.classList.add('hidden');
+      zone.classList.add('has-images');
+    }
+
+    if (countEl) countEl.textContent = n;
+
+    // Build thumb nodes
+    grid.innerHTML = '';
+
+    _miImages.forEach((img, idx) => {
+      const thumb = document.createElement('div');
+      thumb.className = 'mi-thumb' + (idx === 0 ? ' is-cover' : '');
+      thumb.dataset.idx = idx;
+      thumb.draggable = true;
+
+      // Drag events
+      thumb.addEventListener('dragstart', e => {
+        _miDragIdx = idx;
+        setTimeout(() => thumb.classList.add('dragging'), 0);
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      thumb.addEventListener('dragend', () => {
+        thumb.classList.remove('dragging');
+        document.querySelectorAll('.mi-thumb').forEach(t => t.classList.remove('drag-target'));
+        _miDragIdx = -1;
+      });
+      thumb.addEventListener('dragover', e => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        document.querySelectorAll('.mi-thumb').forEach(t => t.classList.remove('drag-target'));
+        if (_miDragIdx !== -1 && _miDragIdx !== idx) thumb.classList.add('drag-target');
+      });
+      thumb.addEventListener('dragleave', () => thumb.classList.remove('drag-target'));
+      thumb.addEventListener('drop', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        thumb.classList.remove('drag-target');
+        if (_miDragIdx === -1 || _miDragIdx === idx) return;
+        // Reorder
+        const moved = _miImages.splice(_miDragIdx, 1)[0];
+        _miImages.splice(idx, 0, moved);
+        miRender();
+        miSyncFinal();
+      });
+
+      // Image element
+      const image = document.createElement('img');
+      image.src = img.dataUrl;
+      image.alt = img.name;
+
+      // Drag handle
+      const handle = document.createElement('div');
+      handle.className = 'mi-drag-handle';
+      handle.innerHTML = '<i class="fas fa-grip-vertical"></i>';
+      handle.title = 'Drag to reorder';
+
+      // Remove button
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'mi-remove';
+      removeBtn.innerHTML = '<i class="fas fa-times"></i>';
+      removeBtn.title = 'Remove image';
+      removeBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        miRemove(idx);
+      });
+
+      // Cover badge (only index 0)
+      if (idx === 0) {
+        const badge = document.createElement('div');
+        badge.className = 'mi-cover-badge';
+        badge.textContent = 'Cover';
+        thumb.appendChild(badge);
+      }
+
+      thumb.appendChild(image);
+      thumb.appendChild(handle);
+      thumb.appendChild(removeBtn);
+      grid.appendChild(thumb);
+    });
+
+    // Add "+" slot if below max
+    if (n < MI_MAX) {
+      const addSlot = document.createElement('div');
+      addSlot.className = 'mi-add-slot';
+      addSlot.innerHTML = '<i class="fas fa-plus"></i><span>' + (n === 0 ? 'Add image' : 'Add more') + '</span>';
+      addSlot.title = 'Add image (' + n + '/' + MI_MAX + ')';
+      addSlot.addEventListener('click', e => {
+        e.stopPropagation();
+        document.getElementById('mi-file-input').click();
+      });
+      grid.appendChild(addSlot);
+    }
+  }
+
+  // ── remove by index ───────────────────────────────────────────────────
+  function miRemove(idx) {
+    _miImages.splice(idx, 1);
+    miRender();
+    miSyncFinal();
+    miHideError();
+  }
+
+  // ── sync cover image → hidden field used by listProduct() ────────────
+  function miSyncFinal() {
+    const field = document.getElementById('prod-img-final');
+    if (field) field.value = _miImages.length > 0 ? _miImages[0].dataUrl : '';
+  }
+
+  // ── zone click (only when clicking empty area, not on thumbs) ────────
+  function miZoneClick(e) {
+    // Don't open picker if clicking a thumb or the add-slot (handled separately)
+    if (e.target.closest('.mi-thumb') || e.target.closest('.mi-add-slot')) return;
+    if (_miImages.length >= MI_MAX) return;
+    document.getElementById('mi-file-input').click();
+  }
+
+  // ── drag & drop on zone ───────────────────────────────────────────────
+  function miDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    // Only add visual if it's an external file drag (not a thumb reorder)
+    if (_miDragIdx === -1) {
+      document.getElementById('mi-drop-zone').classList.add('drag-over');
+    }
+  }
+  function miDragLeave(e) {
+    // Only remove if leaving the zone entirely
+    if (!document.getElementById('mi-drop-zone').contains(e.relatedTarget)) {
+      document.getElementById('mi-drop-zone').classList.remove('drag-over');
+    }
+  }
+  function miDrop(e) {
+    e.preventDefault();
+    document.getElementById('mi-drop-zone').classList.remove('drag-over');
+    if (_miDragIdx !== -1) return; // thumb reorder handled on thumb's own drop
+    const files = e.dataTransfer.files;
+    if (files && files.length) miHandleFiles(files);
+  }
+
+  // ── error helpers ─────────────────────────────────────────────────────
+  function miShowError(msg) {
+    const el = document.getElementById('mi-error');
+    const tx = document.getElementById('mi-error-text');
+    if (tx) tx.textContent = msg;
+    if (el) { el.classList.remove('hidden'); el.style.display = 'flex'; }
+  }
+  function miHideError() {
+    const el = document.getElementById('mi-error');
+    if (el) { el.classList.add('hidden'); el.style.display = 'none'; }
+  }
+
+  // ── tab switcher ──────────────────────────────────────────────────────
+  function miSwitchTab(tab) {
+    const isUpload = tab === 'upload';
+    document.getElementById('img-panel-upload').classList.toggle('hidden', !isUpload);
+    document.getElementById('img-panel-url').classList.toggle('hidden', isUpload);
+    const tu = document.getElementById('tab-upload');
+    const tl = document.getElementById('tab-url');
+    const active   = 'px-3 py-1 rounded-md text-xs font-semibold transition-all bg-white text-slate-800 shadow-sm';
+    const inactive = 'px-3 py-1 rounded-md text-xs font-semibold transition-all text-slate-500 hover:text-slate-700';
+    if (tu) tu.className = isUpload ? active : inactive;
+    if (tl) tl.className = isUpload ? inactive : active;
+    if (!isUpload) {
+      // Clear upload images from final when switching to URL tab
+      document.getElementById('prod-img-final').value = '';
+    } else {
+      miSyncFinal();
+    }
+  }
+  // Keep old name as alias (called from URL tab)
+  function switchImgTab(tab) { miSwitchTab(tab); }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  listProduct — unchanged except reads prod-img-final (set by miSyncFinal)
+  // ════════════════════════════════════════════════════════════════════════
+  async function listProduct() {
+    const w = getStoredWallet();
+    if (!w) { showToast('Connect a wallet first', 'error'); window.location.href = '/wallet'; return; }
+    const name     = document.getElementById('prod-name').value.trim();
+    const cat      = document.getElementById('prod-cat').value;
+    const desc     = document.getElementById('prod-desc').value.trim();
+    const priceVal = parseFloat(document.getElementById('prod-price').value);
+    const token    = document.getElementById('prod-token').value;
+    const stockVal = parseInt(document.getElementById('prod-stock').value) || 1;
+    const img      = document.getElementById('prod-img-final').value.trim();
+
+    if (!name || !cat || !desc || !priceVal) { showToast('Please fill in all required fields', 'error'); return; }
+    if (priceVal <= 0) { showToast('Price must be greater than zero', 'error'); return; }
+
+    const btn = document.getElementById('sell-submit-btn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="loading-spinner inline-block mr-2"></span>Publishing…'; }
+
+    try {
+      const res = await fetch('/api/products', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: name, description: desc, price: priceVal,
+          token, image: img, category: cat, stock: stockVal,
+          seller_id: w.address
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        showToast(data.error || 'Error publishing product', 'error');
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-tag mr-2"></i> List Product'; }
+        return;
+      }
+      showToast('Product listed successfully!', 'success');
+      setTimeout(() => { window.location.href = '/marketplace'; }, 1200);
+    } catch (err) {
+      showToast('Network error. Please try again.', 'error');
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-tag mr-2"></i> List Product'; }
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  DOMContentLoaded — wallet check, fee breakdown, URL tab preview
+  // ════════════════════════════════════════════════════════════════════════
   document.addEventListener('DOMContentLoaded', async () => {
     checkNetworkStatus(document.getElementById('sell-network-status'));
-    const w=getStoredWallet();
-    const wc=document.getElementById('sell-wallet-check');
-    if(!w){
-      wc.innerHTML='<div class="network-warning"><i class="fas fa-exclamation-triangle"></i>You need to connect a wallet to list products. <a href="/wallet" class="underline font-bold ml-1">Connect Wallet →</a></div>';
+    const w  = getStoredWallet();
+    const wc = document.getElementById('sell-wallet-check');
+    if (!w) {
+      wc.innerHTML = '<div class="network-warning"><i class="fas fa-exclamation-triangle"></i>You need to connect a wallet to list products. <a href="/wallet" class="underline font-bold ml-1">Connect Wallet →</a></div>';
     } else {
-      wc.innerHTML='<div class="network-ok"><i class="fas fa-check-circle text-green-600"></i>Seller: <span class="font-mono text-xs ml-1">'+w.address+'</span></div>';
+      wc.innerHTML = '<div class="network-ok"><i class="fas fa-check-circle text-green-600"></i>Seller: <span class="font-mono text-xs ml-1">' + w.address + '</span></div>';
     }
+
     // Fee breakdown live update
-    function updateFeeBreakdown(){
-      const priceEl=document.getElementById('prod-price');
-      const tokenEl=document.getElementById('prod-token');
-      if(!priceEl||!tokenEl) return;
-      const p=parseFloat(priceEl.value)||0;
-      const tok=tokenEl.value||'USDC';
-      const platformFee=p*0.02;
-      const arcFee=0.001;
-      const youReceive=Math.max(0,p-platformFee-arcFee);
-      const fpEl=document.getElementById('fee-product-price');
-      const fplatEl=document.getElementById('fee-platform');
-      const farcEl=document.getElementById('fee-arc');
-      const fyoEl=document.getElementById('fee-you-receive');
-      if(fpEl) fpEl.textContent=p>0?p.toFixed(6)+' '+tok:'—';
-      if(fplatEl) fplatEl.textContent=p>0?platformFee.toFixed(6)+' '+tok:'—';
-      if(farcEl) farcEl.textContent='~0.001 '+tok;
-      if(fyoEl) fyoEl.textContent=p>0?youReceive.toFixed(6)+' '+tok:'—';
+    function updateFeeBreakdown() {
+      const priceEl = document.getElementById('prod-price');
+      const tokenEl = document.getElementById('prod-token');
+      if (!priceEl || !tokenEl) return;
+      const p          = parseFloat(priceEl.value) || 0;
+      const tok        = tokenEl.value || 'USDC';
+      const platformFee= p * 0.02;
+      const arcFee     = 0.001;
+      const youReceive = Math.max(0, p - platformFee - arcFee);
+      const fpEl   = document.getElementById('fee-product-price');
+      const fplatEl= document.getElementById('fee-platform');
+      const farcEl = document.getElementById('fee-arc');
+      const fyoEl  = document.getElementById('fee-you-receive');
+      if (fpEl)    fpEl.textContent   = p > 0 ? p.toFixed(6) + ' ' + tok : '—';
+      if (fplatEl) fplatEl.textContent= p > 0 ? platformFee.toFixed(6) + ' ' + tok : '—';
+      if (farcEl)  farcEl.textContent = '~0.001 ' + tok;
+      if (fyoEl)   fyoEl.textContent  = p > 0 ? youReceive.toFixed(6) + ' ' + tok : '—';
     }
-    const priceInput=document.getElementById('prod-price');
-    const tokenSelect=document.getElementById('prod-token');
-    if(priceInput) priceInput.addEventListener('input',updateFeeBreakdown);
-    if(tokenSelect) tokenSelect.addEventListener('change',updateFeeBreakdown);
+    const priceInput  = document.getElementById('prod-price');
+    const tokenSelect = document.getElementById('prod-token');
+    if (priceInput)  priceInput.addEventListener('input', updateFeeBreakdown);
+    if (tokenSelect) tokenSelect.addEventListener('change', updateFeeBreakdown);
     updateFeeBreakdown();
+
     // URL field live preview
     const urlInput = document.getElementById('prod-img');
     if (urlInput) {
-      urlInput.addEventListener('input', function() {
+      urlInput.addEventListener('input', function () {
         const val = this.value.trim();
         document.getElementById('prod-img-final').value = val;
-        const wrap = document.getElementById('img-url-preview-wrap');
-        const previewEl = document.getElementById('img-url-preview');
+        const wrap     = document.getElementById('img-url-preview-wrap');
+        const previewEl= document.getElementById('img-url-preview');
         if (val && (val.startsWith('http') || val.startsWith('ipfs'))) {
           const src = val.startsWith('ipfs://') ? val.replace('ipfs://', 'https://ipfs.io/ipfs/') : val;
           previewEl.src = src;
@@ -5357,172 +5869,10 @@ function sellPage() {
         }
       });
     }
+
+    // Init grid render (empty state)
+    miRender();
   });
-  async function listProduct(){
-    const w=getStoredWallet();
-    if(!w){showToast('Connect a wallet first','error');window.location.href='/wallet';return;}
-    const name=document.getElementById('prod-name').value.trim();
-    const cat=document.getElementById('prod-cat').value;
-    const desc=document.getElementById('prod-desc').value.trim();
-    const priceVal=parseFloat(document.getElementById('prod-price').value);
-    const token=document.getElementById('prod-token').value;
-    const stockVal=parseInt(document.getElementById('prod-stock').value)||1;
-    const img=document.getElementById('prod-img-final').value.trim();
-    if(!name||!cat||!desc||!priceVal){showToast('Please fill in all required fields','error');return;}
-    if(priceVal<=0){showToast('Price must be greater than zero','error');return;}
-
-    // Disable button to prevent double submit
-    const btn=document.querySelector('button[onclick="listProduct()"]');
-    if(btn){btn.disabled=true;btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Publishing…';}
-
-    try {
-      const res=await fetch('/api/products',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-          title:name, description:desc, price:priceVal,
-          token, image:img, category:cat, stock:stockVal,
-          seller_id:w.address
-        })
-      });
-      const data=await res.json();
-      if(!res.ok||data.error){
-        showToast(data.error||'Error publishing product','error');
-        if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-tag mr-2"></i> List Product';}
-        return;
-      }
-      showToast('Product listed successfully!','success');
-      // Redirect to marketplace after short delay
-      setTimeout(()=>{ window.location.href='/marketplace'; },1200);
-    } catch(err){
-      showToast('Network error. Please try again.','error');
-      if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-tag mr-2"></i> List Product';}
-    }
-  }
-
-  // ── Image tab switcher ──────────────────────────────────────
-  function switchImgTab(tab) {
-    const isUpload = tab === 'upload';
-    document.getElementById('img-panel-upload').classList.toggle('hidden', !isUpload);
-    document.getElementById('img-panel-url').classList.toggle('hidden', isUpload);
-    const tu = document.getElementById('tab-upload');
-    const tl = document.getElementById('tab-url');
-    const activeClass  = 'px-4 py-1.5 rounded-md text-xs font-semibold transition-all bg-white text-slate-800 shadow-sm';
-    const inactiveClass= 'px-4 py-1.5 rounded-md text-xs font-semibold transition-all text-slate-500 hover:text-slate-700';
-    tu.className = isUpload ? activeClass : inactiveClass;
-    tl.className = isUpload ? inactiveClass : activeClass;
-    // limpa o campo oculto ao trocar de aba
-    document.getElementById('prod-img-final').value = '';
-  }
-
-  // ── Comprime imagem via Canvas e retorna dataURL ─────────────
-  function compressImage(file, maxW, maxH, quality) {
-    return new Promise(function(resolve) {
-      const reader = new FileReader();
-      reader.onload = function(ev) {
-        const img = new Image();
-        img.onload = function() {
-          let w = img.width, h = img.height;
-          if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
-          if (h > maxH) { w = Math.round(w * maxH / h); h = maxH; }
-          const canvas = document.createElement('canvas');
-          canvas.width = w; canvas.height = h;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, w, h);
-          resolve(canvas.toDataURL('image/jpeg', quality));
-        };
-        img.src = ev.target.result;
-      };
-      reader.readAsDataURL(file);
-    });
-  }
-
-  // ── File upload handler (com compressão automática) ─────────
-  async function handleImgFile(input) {
-    const file = input.files[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/')) { showToast('Please select a valid image', 'error'); input.value=''; return; }
-    const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
-    if (file.size > MAX_BYTES) { showToast('Image must be at most 10 MB', 'error'); input.value=''; return; }
-
-    // Mostrar barra de progresso
-    const progressWrap = document.getElementById('img-upload-progress');
-    const progressBar  = document.getElementById('img-upload-bar');
-    const statusText   = document.getElementById('img-upload-status');
-    const previewWrap  = document.getElementById('img-preview-wrap');
-    const dropContent  = document.getElementById('img-drop-content');
-
-    progressWrap.classList.remove('hidden');
-    previewWrap.classList.add('hidden');
-    dropContent.classList.add('hidden');
-    progressBar.style.width = '20%';
-    statusText.textContent  = 'Reading file…';
-
-    try {
-      progressBar.style.width = '50%';
-      statusText.textContent  = 'Compressing image…';
-
-      // Comprimir: máx 1200×1200px, qualidade 0.82 → resulta em ~100-300 KB
-      let dataUrl = await compressImage(file, 1200, 1200, 0.82);
-
-      // Se ainda muito grande (> 800 KB base64), comprimir mais
-      if (dataUrl.length > 800 * 1024) {
-        statusText.textContent = 'Reducing quality…';
-        progressBar.style.width = '70%';
-        dataUrl = await compressImage(file, 900, 900, 0.65);
-      }
-
-      progressBar.style.width = '90%';
-      statusText.textContent  = 'Finalizing…';
-
-      // Calcular tamanho comprimido
-      const compressedBytes = Math.round(dataUrl.length * 0.75); // base64 → bytes aprox
-      const originalKB      = (file.size / 1024).toFixed(1);
-      const compressedKB    = (compressedBytes / 1024).toFixed(1);
-
-      // Mostrar preview
-      document.getElementById('img-preview').src = dataUrl;
-      document.getElementById('img-file-name').textContent  = file.name;
-      document.getElementById('img-file-size').textContent  = 'Original: ' + originalKB + ' KB';
-      document.getElementById('img-compressed-size').textContent = '✓ Comprimida: ' + compressedKB + ' KB';
-      previewWrap.classList.remove('hidden');
-      document.getElementById('prod-img-final').value = dataUrl;
-
-      progressBar.style.width = '100%';
-      statusText.textContent  = 'Pronto!';
-      setTimeout(function() { progressWrap.classList.add('hidden'); }, 800);
-
-    } catch(err) {
-      progressWrap.classList.add('hidden');
-      dropContent.classList.remove('hidden');
-      showToast('Erro ao processar imagem', 'error');
-    }
-  }
-
-  // ── Drag & drop ─────────────────────────────────────────────
-  function handleImgDrop(e) {
-    e.preventDefault();
-    document.getElementById('img-drop-zone').classList.remove('border-red-400','bg-red-50');
-    const file = e.dataTransfer.files[0];
-    if (!file || !file.type.startsWith('image/')) { showToast('Please drop an image file', 'error'); return; }
-    const dt = new DataTransfer();
-    dt.items.add(file);
-    const input = document.getElementById('img-file-input');
-    input.files = dt.files;
-    handleImgFile(input);
-  }
-
-  // ── Limpar upload ────────────────────────────────────────────
-  function clearImgUpload() {
-    document.getElementById('img-file-input').value = '';
-    document.getElementById('img-preview').src = '';
-    document.getElementById('img-preview-wrap').classList.add('hidden');
-    document.getElementById('img-upload-progress').classList.add('hidden');
-    document.getElementById('img-drop-content').classList.remove('hidden');
-    document.getElementById('prod-img-final').value = '';
-  }
-
-  // ── URL field live preview (inicializado no DOMContentLoaded acima) ──
   </script>
   `)
 }
