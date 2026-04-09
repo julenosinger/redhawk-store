@@ -3435,8 +3435,12 @@ function checkoutPage() {
       console.error('[confirmOrder] sellerAddress missing');
       return;
     }
+    
+    // CRITICAL: Check buyer != seller BEFORE any transaction
     if (w.address.toLowerCase() === sellerAddress.toLowerCase()) {
-      showToast('You cannot purchase your own product', 'error');
+      showToast('Você não pode comprar seu próprio produto', 'error');
+      console.error('[confirmOrder] Blocked: buyer === seller');
+      resetBtn();
       return;
     }
     console.log('[confirmOrder] sellerAddress:', sellerAddress);
@@ -3488,6 +3492,26 @@ function checkoutPage() {
 
     const erc20Contract  = new ethers.Contract(tokenAddress,  ERC20_ABI,  signer);
     const escrowContract = new ethers.Contract(escrowAddress, ESCROW_ABI, signer);
+
+    // ══ PRE-VALIDATION: Check token balance ════════════════════════
+    try {
+      const signerAddr = await signer.getAddress();
+      const balance = await erc20Contract.balanceOf(signerAddr);
+      console.log('[confirmOrder] Token balance:', ethers.formatUnits(balance, 6), token);
+      
+      if (balance < amountWei) {
+        const needed = ethers.formatUnits(amountWei, 6);
+        const have = ethers.formatUnits(balance, 6);
+        showToast('Saldo insuficiente: você tem ' + have + ' ' + token + ', precisa de ' + needed + ' ' + token + '. Obtenha tokens em faucet.circle.com', 'error');
+        console.error('[confirmOrder] Insufficient balance:', have, '<', needed);
+        console.log('[confirmOrder] Get test tokens at: https://faucet.circle.com');
+        resetBtn();
+        return;
+      }
+    } catch (err) {
+      console.warn('[confirmOrder] Balance check failed:', err);
+      // Continue anyway - will fail at tx time if really insufficient
+    }
 
     // ══ STEP 1/3: ERC-20 approve ════════════════════════════════════
     let approveTxHash = null;
@@ -3541,20 +3565,24 @@ function checkoutPage() {
       // Decode revert reason: Arc Testnet often returns no revert data
       let msg;
       if (err.code === 'ACTION_REJECTED' || err.code === 4001) {
-        msg = 'createEscrow rejected by user';
+        msg = 'Transação rejeitada pelo usuário';
       } else if (err.message && err.message.includes('missing revert data')) {
         // Likely: buyer == seller, escrow already exists, or invalid inputs
         const buyerAddr = (await signer.getAddress()).toLowerCase();
         if (buyerAddr === sellerAddress.toLowerCase()) {
-          msg = 'Erro: você não pode comprar seu próprio produto (buyer = seller)';
+          msg = 'Erro: você não pode comprar seu próprio produto';
         } else {
-          msg = 'createEscrow revertido pela rede Arc (sem dados de revert). Verifique saldo USDC e endereços.';
+          msg = 'createEscrow revertido. Possíveis causas: Saldo insuficiente de ' + token + ', Endereços inválidos, Escrow já existe com esse ID';
         }
+      } else if (err.message && err.message.includes('execution reverted')) {
+        // Generic revert - provide helpful guidance
+        msg = 'Transação revertida no contrato. Verifique: Você tem ' + token + ' suficiente? Endereço do seller está correto? Não está comprando seu próprio produto?';
       } else {
         msg = 'createEscrow falhou: ' + (err.shortMessage || err.reason || err.message || String(err));
       }
       showToast(msg, 'error');
       console.error('[confirmOrder] createEscrow error:', err);
+      console.error('[confirmOrder] Full error object:', JSON.stringify(err, null, 2));
       resetBtn(); return;
     }
 
