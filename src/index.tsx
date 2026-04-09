@@ -208,6 +208,80 @@ app.get('/api/arc-config', (c) => {
   return c.json({ arc: ARC })
 })
 
+// ─── Arc Commerce — Payment info & network endpoint ──────────────────────────
+// GET  /api/arc-payment/info — returns network info and token addresses
+app.get('/api/arc-payment/info', (c) => {
+  return c.json({
+    network:   'Arc Testnet',
+    chainId:   ARC.chainId,
+    chainHex:  ARC.chainIdHex,
+    rpc:       ARC.rpc,
+    explorer:  ARC.explorer,
+    faucet:    ARC.faucet,
+    tokens: {
+      USDC: { address: ARC.contracts.USDC, decimals: 6, symbol: 'USDC', name: 'USD Coin' },
+      EURC: { address: ARC.contracts.EURC, decimals: 6, symbol: 'EURC', name: 'Euro Coin' },
+    },
+    escrow: {
+      address:  ARC.contracts.ShuklyEscrow,
+      deployed: ARC.contracts.ShuklyEscrow !== '0x0000000000000000000000000000000000000000',
+      explorer: `${ARC.explorer}/address/${ARC.contracts.ShuklyEscrow}`,
+    },
+    integration: {
+      name:        'Arc Commerce',
+      version:     '1.0.0',
+      description: 'Circle USDC payment layer — non-destructive extension',
+      source:      'https://github.com/circlefin/arc-commerce',
+      isTestnet:   true,
+    }
+  })
+})
+
+// POST /api/arc-payment/validate — validate payment inputs server-side
+app.post('/api/arc-payment/validate', async (c) => {
+  try {
+    const body = await c.req.json() as any
+    const { buyerAddress, sellerAddress, amount, token = 'USDC', orderId } = body
+
+    const errors: string[] = []
+
+    // Address validation (basic)
+    const addrRe = /^0x[0-9a-fA-F]{40}$/
+    if (!addrRe.test(buyerAddress))  errors.push('Invalid buyer address')
+    if (!addrRe.test(sellerAddress)) errors.push('Invalid seller address')
+    if (buyerAddress && sellerAddress &&
+        buyerAddress.toLowerCase() === sellerAddress.toLowerCase())
+      errors.push('Buyer and seller cannot be the same address')
+    if (!amount || isNaN(Number(amount)) || Number(amount) <= 0)
+      errors.push('Amount must be a positive number')
+    if (!['USDC', 'EURC'].includes(token))
+      errors.push('Token must be USDC or EURC')
+    if (!orderId || typeof orderId !== 'string' || orderId.trim() === '')
+      errors.push('orderId is required')
+
+    if (errors.length > 0) {
+      return c.json({ valid: false, errors }, 400)
+    }
+
+    return c.json({
+      valid: true,
+      payment: {
+        orderId:         orderId.trim(),
+        buyerAddress:    buyerAddress.toLowerCase(),
+        sellerAddress:   sellerAddress.toLowerCase(),
+        amount:          Number(amount).toFixed(6),
+        token,
+        tokenAddress:    token === 'EURC' ? ARC.contracts.EURC : ARC.contracts.USDC,
+        escrowAddress:   ARC.contracts.ShuklyEscrow,
+        network:         'Arc Testnet',
+        chainId:         ARC.chainId,
+      }
+    })
+  } catch (e: any) {
+    return c.json({ valid: false, errors: [e.message] }, 500)
+  }
+})
+
 // ─── Products CRUD (off-chain D1 database) ──────────────────────────────────
 
 // GET /api/products — list all active products (optional ?category=&seller=&q=)
@@ -632,6 +706,8 @@ function shell(title: string, body: string, extraHead = '') {
   </script>
   <!-- ethers.js v6 via CDN for wallet + RPC interaction -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
+  <!-- Arc Commerce — Circle USDC payment service layer (non-destructive extension) -->
+  <script src="/static/arcPayments.js" defer></script>
 </head>
 <body>
   <!-- Testnet Banner -->
@@ -2796,7 +2872,15 @@ function productPage(p: any) {
                 onclick="pdAddCart('${p.id}','${title.replace(/'/g,"\\'")}',${price},'${tok}','${imgUrl}')"
                 class="pd-btn-cart">
                 <i class="fas fa-cart-plus"></i> Add to Cart
-              </button>`
+              </button>
+              <!-- Arc Commerce badge — non-destructive, lazy-loaded -->
+              <div id="arc-pd-badge" style="display:none;align-items:center;gap:6px;font-size:11px;color:#1d4ed8;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:6px 10px;">
+                <span style="background:#1e40af;color:#fff;padding:1px 6px;border-radius:9999px;font-size:10px;font-weight:700;">
+                  <i class="fas fa-circle" style="font-size:6px;color:#93c5fd;margin-right:2px;"></i>Arc Commerce
+                </span>
+                <span>Pay with USDC · Arc Testnet</span>
+                <span id="arc-pd-balance" style="margin-left:auto;font-weight:600;"></span>
+              </div>`
             : `<div class="pd-outofstock">
                 <i class="fas fa-box-open" style="font-size:28px;opacity:.3;display:block;margin-bottom:8px"></i>
                 <p style="font-weight:700;font-size:15px;color:#64748b;margin-bottom:4px">Out of Stock</p>
@@ -3041,6 +3125,44 @@ function productPage(p: any) {
     
     // Update button state on load
     updateBuyButton(productId, productName, price, token, image);
+  })();
+
+  // ── Arc Commerce: lazy-load USDC balance badge on product page ────────
+  (function(){
+    async function loadArcBadge() {
+      const badge = document.getElementById('arc-pd-badge');
+      if (!badge) return;
+
+      // Wait for ArcPayments to be available (loaded via defer)
+      let tries = 0;
+      while (typeof window.ArcPayments === 'undefined' && tries++ < 30) {
+        await new Promise(r => setTimeout(r, 200));
+      }
+      if (!window.ArcPayments) return;
+
+      const wallet = getStoredWallet();
+      if (!wallet || !wallet.address) return; // no wallet — keep badge hidden
+
+      // Show badge
+      badge.style.display = 'flex';
+
+      const balEl = document.getElementById('arc-pd-balance');
+      if (balEl) balEl.textContent = '…';
+
+      try {
+        const res = await Promise.race([
+          window.ArcPayments.getBalance(wallet.address, 'USDC'),
+          new Promise(r => setTimeout(() => r({ ok: false }), 4000))
+        ]);
+        if (balEl) {
+          balEl.textContent = res.ok ? parseFloat(res.balance).toFixed(2) + ' USDC' : '';
+        }
+      } catch (_) {
+        if (balEl) balEl.textContent = '';
+      }
+    }
+    // Run after DOM settles, non-blocking
+    setTimeout(loadArcBadge, 800);
   })();
 
   // Breadcrumb scroll behavior — hides on scroll up, shows on scroll down
@@ -3346,6 +3468,11 @@ function checkoutPage() {
           <p><span class="font-medium">Step 2:</span> Create escrow slot on-chain (<code>createEscrow</code>)</p>
           <p><span class="font-medium">Step 3:</span> Lock funds in escrow (<code>fundEscrow</code>) — "to" = escrow contract, never seller</p>
         </div>
+
+        <!-- ── Arc Commerce — USDC balance & payment status ── -->
+        <div id="arc-payment-status" class="mt-3 p-3 rounded-lg border text-xs hidden">
+          <!-- populated by initArcPaymentUI() -->
+        </div>
       </div>
     </div>
   </div>
@@ -3387,6 +3514,9 @@ function checkoutPage() {
         +'<p class="text-slate-400 text-xs addr-mono">'+w.address+'</p></div>';
       document.getElementById('co-wallet-link').style.display='none';
     }
+
+    // ── Arc Commerce: show USDC balance panel (non-blocking) ──────────
+    initArcPaymentUI(w);
   });
 
   // ════════════════════════════════════════════════════════════════════
@@ -3406,6 +3536,8 @@ function checkoutPage() {
     }
     function setBtn(text) {
       if (btn) btn.innerHTML = '<span class="loading-spinner inline-block mr-2"></span>' + text;
+      // ── Arc Commerce: mirror step in status panel ──────────────────
+      updateArcPaymentStatus('loading', text);
     }
 
     // ── 1. Wallet check ──────────────────────────────────────────────
@@ -3697,6 +3829,112 @@ function checkoutPage() {
     setBtn('Funds locked! Redirecting…');
     showToast('✓ Funds locked in escrow! Order ' + orderId, 'success');
     setTimeout(() => { window.location.href = '/orders/' + orderId; }, 1200);
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  //  ARC COMMERCE — USDC Balance Panel + Status Hook
+  //  Non-destructive: only adds UI, does NOT change confirmOrder flow
+  // ════════════════════════════════════════════════════════════════════
+
+  /**
+   * initArcPaymentUI — shows USDC balance and Arc Commerce badge.
+   * Called once after wallet is confirmed on DOMContentLoaded.
+   * Never throws — all errors are silent (panel stays hidden).
+   */
+  async function initArcPaymentUI(wallet) {
+    const panel = document.getElementById('arc-payment-status');
+    if (!panel) return;
+
+    try {
+      // Wait for arcPayments.js to load (defer may not have fired yet)
+      if (typeof window.ArcPayments === 'undefined') {
+        await new Promise(resolve => {
+          let tries = 0;
+          const id = setInterval(() => {
+            tries++;
+            if (window.ArcPayments || tries > 20) { clearInterval(id); resolve(); }
+          }, 150);
+        });
+      }
+
+      if (!window.ArcPayments) return; // script failed to load — silent
+
+      // Show loading state
+      panel.className = 'mt-3 p-3 rounded-lg border border-blue-200 bg-blue-50 text-xs text-blue-800';
+      panel.innerHTML = '<i class="fas fa-circle-notch fa-spin mr-1"></i> Checking USDC balance via Arc Network…';
+      panel.classList.remove('hidden');
+
+      if (!wallet || !wallet.address) {
+        panel.className = 'mt-3 p-3 rounded-lg border border-slate-200 bg-slate-50 text-xs text-slate-500 hidden';
+        return;
+      }
+
+      // Get USDC balance (non-blocking — 5s timeout)
+      const balResult = await Promise.race([
+        window.ArcPayments.getBalance(wallet.address, 'USDC'),
+        new Promise(r => setTimeout(() => r({ ok: false, balance: '?' }), 5000))
+      ]);
+
+      const isAvailable = window.ArcPayments.isAvailable();
+      const balFormatted = balResult.ok ? parseFloat(balResult.balance).toFixed(2) : '—';
+
+      // Get cart total for balance check
+      const cart = getCart();
+      const total = cart.reduce((s, i) => s + (parseFloat(i.price)||0) * ((i.quantity||i.qty)||1), 0);
+      const totalWithFee = total + total * 0.015;
+      const hasSufficientBalance = balResult.ok && parseFloat(balResult.balance) >= totalWithFee;
+
+      if (isAvailable) {
+        panel.className = 'mt-3 p-3 rounded-lg border border-green-200 bg-green-50 text-xs text-green-800';
+        panel.innerHTML =
+          '<div class="flex items-center gap-2 mb-1">'
+          + '<span class="inline-flex items-center gap-1 bg-blue-700 text-white px-2 py-0.5 rounded-full text-xs font-semibold">'
+          + '<i class="fas fa-circle text-blue-300" style="font-size:7px"></i> Arc Commerce</span>'
+          + '<span class="font-semibold">USDC Payment Ready</span>'
+          + '</div>'
+          + '<div class="flex items-center justify-between">'
+          + '<span>Your USDC balance: <strong>' + balFormatted + ' USDC</strong></span>'
+          + (hasSufficientBalance
+              ? '<span class="text-green-700 font-semibold"><i class="fas fa-check-circle mr-1"></i>Sufficient</span>'
+              : '<a href="https://faucet.circle.com" target="_blank" class="text-orange-700 font-semibold underline"><i class="fas fa-exclamation-circle mr-1"></i>Get USDC</a>'
+            )
+          + '</div>'
+          + '<p class="mt-1 text-green-700 opacity-75">Powered by Circle · Arc Testnet (Chain ID 5042002)</p>';
+      } else {
+        panel.className = 'mt-3 p-3 rounded-lg border border-slate-200 bg-slate-50 text-xs text-slate-500';
+        panel.innerHTML =
+          '<i class="fas fa-info-circle mr-1"></i> Arc Commerce: escrow contract not configured. '
+          + 'USDC balance: <strong>' + balFormatted + ' USDC</strong>';
+      }
+    } catch (e) {
+      // Silent fail — never disrupt checkout
+      console.warn('[Arc Commerce UI]', e.message);
+    }
+  }
+
+  /**
+   * updateArcPaymentStatus — updates the panel during confirmOrder steps.
+   * Called by the ArcPayments onStatus hook (non-destructive).
+   */
+  function updateArcPaymentStatus(step, message) {
+    const panel = document.getElementById('arc-payment-status');
+    if (!panel) return;
+    panel.className = 'mt-3 p-3 rounded-lg border border-blue-200 bg-blue-50 text-xs text-blue-800';
+    panel.classList.remove('hidden');
+    const icons = {
+      validate:    'fas fa-check-circle',
+      network:     'fas fa-wifi',
+      signer:      'fas fa-key',
+      approve:     'fas fa-stamp',
+      createEscrow:'fas fa-lock',
+      fundEscrow:  'fas fa-coins',
+      complete:    'fas fa-check-double',
+    };
+    const icon = icons[step] || 'fas fa-circle-notch fa-spin';
+    panel.innerHTML =
+      '<span class="inline-flex items-center gap-1 bg-blue-700 text-white px-2 py-0.5 rounded-full text-xs font-semibold mr-2">'
+      + '<i class="fas fa-circle text-blue-300" style="font-size:7px"></i> Arc Commerce</span>'
+      + '<i class="' + icon + ' mr-1"></i>' + message;
   }
   </script>
   `)
