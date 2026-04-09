@@ -2678,7 +2678,7 @@ function productPage(p: any) {
     .pd-arc-badge{display:inline-flex;align-items:center;gap:5px;background:linear-gradient(135deg,#1e40af,#2563eb);color:#fff;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:.3px}
   </style>
 
-  <div class="max-w-5xl mx-auto px-4 py-6 pb-28 lg:pb-10">
+  <div class="max-w-5xl mx-auto px-4 pt-8 pb-28 lg:pb-10">
 
     <!-- Breadcrumb -->
     <nav class="pd-breadcrumb">
