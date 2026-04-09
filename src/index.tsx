@@ -2578,7 +2578,8 @@ function productPage(p: any) {
   return shell(title, `
   <style>
     /* ── Product Page Premium Styles ── */
-    .pd-breadcrumb{display:flex;align-items:center;gap:6px;font-size:13px;color:#94a3b8;margin-bottom:28px;flex-wrap:wrap}
+    .pd-breadcrumb{display:flex;align-items:center;gap:6px;font-size:13px;color:#94a3b8;margin-bottom:28px;flex-wrap:wrap;position:sticky;top:60px;background:#fff;z-index:95;padding:12px 0;margin-left:-1rem;margin-right:-1rem;padding-left:1rem;padding-right:1rem;transform:translateY(0);opacity:1;transition:transform .3s,opacity .3s;will-change:transform}
+    .pd-breadcrumb.hidden-scroll{transform:translateY(-100%);opacity:0;pointer-events:none}
     .pd-breadcrumb a{color:#64748b;text-decoration:none;font-weight:500;transition:color .15s}
     .pd-breadcrumb a:hover{color:#dc2626}
     .pd-breadcrumb .sep{color:#cbd5e1;font-size:10px}
@@ -3040,6 +3041,36 @@ function productPage(p: any) {
     
     // Update button state on load
     updateBuyButton(productId, productName, price, token, image);
+  })();
+
+  // Breadcrumb scroll behavior — hides on scroll up, shows on scroll down
+  (function(){
+    const breadcrumb = document.querySelector('.pd-breadcrumb');
+    if(!breadcrumb) return;
+
+    let lastScroll = 0;
+    let ticking = false;
+
+    window.addEventListener('scroll', () => {
+      if(!ticking) {
+        window.requestAnimationFrame(() => {
+          const currentScroll = window.pageYOffset || document.documentElement.scrollTop;
+          
+          // Hide breadcrumb when scrolling up
+          if(currentScroll < lastScroll && currentScroll > 100) {
+            breadcrumb.classList.add('hidden-scroll');
+          }
+          // Show breadcrumb when scrolling down or at top
+          else if(currentScroll > lastScroll || currentScroll <= 100) {
+            breadcrumb.classList.remove('hidden-scroll');
+          }
+          
+          lastScroll = currentScroll <= 0 ? 0 : currentScroll;
+          ticking = false;
+        });
+        ticking = true;
+      }
+    }, { passive: true });
   })();
 
   // Sticky bar — appears on scroll down, hides on scroll up
