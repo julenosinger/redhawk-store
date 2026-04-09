@@ -3042,32 +3042,33 @@ function productPage(p: any) {
     updateBuyButton(productId, productName, price, token, image);
   })();
 
-  // Smart sticky bar — activates only when page is scrollable and Buy Now is out of view
+  // Sticky bar — appears on scroll down, hides on scroll up
   (function(){
     const bar = document.getElementById('pd-sticky-bar');
     if(!bar) return;
-    const mainBtn = document.getElementById('btn-buy-now');
-    if(!mainBtn) return;
 
-    // Only activate if page is tall enough to require scrolling (content > viewport)
-    const pageNeedsScroll = () => document.documentElement.scrollHeight > window.innerHeight + 80;
+    let lastScroll = 0;
+    let ticking = false;
 
-    let active = false;
-    const obs = new IntersectionObserver(([e]) => {
-      // btn-buy-now is visible → hide bar; out of view → show bar (only if page scrolls)
-      if(!pageNeedsScroll()) { bar.classList.remove('visible'); return; }
-      if(e.isIntersecting) {
-        bar.classList.remove('visible');
-      } else {
-        bar.classList.add('visible');
+    window.addEventListener('scroll', () => {
+      if(!ticking) {
+        window.requestAnimationFrame(() => {
+          const currentScroll = window.pageYOffset || document.documentElement.scrollTop;
+          
+          // Show bar when scrolling down past 200px
+          if(currentScroll > 200 && currentScroll > lastScroll) {
+            bar.classList.add('visible');
+          }
+          // Hide bar when scrolling up or at top
+          else if(currentScroll < lastScroll || currentScroll < 150) {
+            bar.classList.remove('visible');
+          }
+          
+          lastScroll = currentScroll <= 0 ? 0 : currentScroll;
+          ticking = false;
+        });
+        ticking = true;
       }
-    }, { threshold: 0.3 });
-
-    obs.observe(mainBtn);
-
-    // Also re-check on resize in case layout changes
-    window.addEventListener('resize', () => {
-      if(!pageNeedsScroll()) bar.classList.remove('visible');
     }, { passive: true });
   })();
   </script>
@@ -3438,7 +3439,7 @@ function checkoutPage() {
     
     // CRITICAL: Check buyer != seller BEFORE any transaction
     if (w.address.toLowerCase() === sellerAddress.toLowerCase()) {
-      showToast('Você não pode comprar seu próprio produto', 'error');
+      showToast('You cannot purchase your own product', 'error');
       console.error('[confirmOrder] Blocked: buyer === seller');
       resetBtn();
       return;
@@ -3502,7 +3503,7 @@ function checkoutPage() {
       if (balance < amountWei) {
         const needed = ethers.formatUnits(amountWei, 6);
         const have = ethers.formatUnits(balance, 6);
-        showToast('Saldo insuficiente: você tem ' + have + ' ' + token + ', precisa de ' + needed + ' ' + token + '. Obtenha tokens em faucet.circle.com', 'error');
+        showToast('Insufficient balance: you have ' + have + ' ' + token + ', need ' + needed + ' ' + token + '. Get tokens at faucet.circle.com', 'error');
         console.error('[confirmOrder] Insufficient balance:', have, '<', needed);
         console.log('[confirmOrder] Get test tokens at: https://faucet.circle.com');
         resetBtn();
@@ -3565,18 +3566,18 @@ function checkoutPage() {
       // Decode revert reason: Arc Testnet often returns no revert data
       let msg;
       if (err.code === 'ACTION_REJECTED' || err.code === 4001) {
-        msg = 'Transação rejeitada pelo usuário';
+        msg = 'Transaction rejected by user';
       } else if (err.message && err.message.includes('missing revert data')) {
         // Likely: buyer == seller, escrow already exists, or invalid inputs
         const buyerAddr = (await signer.getAddress()).toLowerCase();
         if (buyerAddr === sellerAddress.toLowerCase()) {
-          msg = 'Erro: você não pode comprar seu próprio produto';
+          msg = 'Error: you cannot purchase your own product';
         } else {
-          msg = 'createEscrow revertido. Possíveis causas: Saldo insuficiente de ' + token + ', Endereços inválidos, Escrow já existe com esse ID';
+          msg = 'createEscrow reverted. Possible causes: Insufficient ' + token + ' balance, Invalid addresses, Escrow already exists with this ID';
         }
       } else if (err.message && err.message.includes('execution reverted')) {
         // Generic revert - provide helpful guidance
-        msg = 'Transação revertida no contrato. Verifique: Você tem ' + token + ' suficiente? Endereço do seller está correto? Não está comprando seu próprio produto?';
+        msg = 'Transaction reverted in contract. Check: Do you have enough ' + token + '? Is seller address correct? Not buying your own product?';
       } else {
         msg = 'createEscrow falhou: ' + (err.shortMessage || err.reason || err.message || String(err));
       }
@@ -3608,7 +3609,7 @@ function checkoutPage() {
       if (err.code === 'ACTION_REJECTED' || err.code === 4001) {
         msg = 'fundEscrow rejected by user';
       } else if (err.message && err.message.includes('missing revert data')) {
-        msg = 'fundEscrow revertido pela rede Arc. Verifique se o approve de ' + token + ' foi confirmado e se há saldo suficiente.';
+        msg = 'fundEscrow reverted by Arc network. Check if ' + token + ' approve was confirmed and sufficient balance exists.';
       } else {
         msg = 'fundEscrow falhou: ' + (err.shortMessage || err.reason || err.message || String(err));
       }
