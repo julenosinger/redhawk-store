@@ -1,56 +1,23 @@
 /*
-  # ── Security Headers — Shukly Store (Cloudflare Pages) ──────────────────────
-  # Applied to every response (HTML, API, static assets).
-  # Tightened for a Web3 dApp: allows ethers.js CDN, Tailwind CDN,
-  # FontAwesome CDN, Arc RPC, Circle API, and IPFS gateways.
-  # ─────────────────────────────────────────────────────────────────────────────
-
-  # Prevent clickjacking
   X-Frame-Options: DENY
-
-  # Block MIME-type sniffing
   X-Content-Type-Options: nosniff
-
-  # Force HTTPS for 1 year, include subdomains
   Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
-
-  # Disable legacy XSS filter (modern browsers ignore it, but no harm)
   X-XSS-Protection: 0
-
-  # Disable browser features not needed by this dApp
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), accelerometer=(), gyroscope=()
-
-  # Cross-Origin policies — needed for ethers.js SharedArrayBuffer (none required here, but safe defaults)
   Cross-Origin-Opener-Policy: same-origin-allow-popups
   Cross-Origin-Resource-Policy: cross-origin
-
-  # Referrer Policy — don't leak URL details to third parties
   Referrer-Policy: strict-origin-when-cross-origin
-
-  # Content-Security-Policy
-  # Allows:
-  #   - Scripts: self, ethers.js (cdnjs), Tailwind (cdn.tailwindcss.com), FontAwesome (cdn.jsdelivr.net), chart.js, axios, lodash, dayjs
-  #   - Styles:  self, Tailwind, FontAwesome, Google Fonts (if used)
-  #   - Fonts:   self, cdn.jsdelivr.net (FontAwesome webfonts), data:
-  #   - Img:     self, data: (base64 product images), blob:, IPFS gateways, genspark CDN, any https
-  #   - Connect: self, Arc Testnet RPC nodes, Circle API, arcscan explorer API
-  #   - Frame:   none
-  #   - Object:  none
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' data: https://cdn.jsdelivr.net https://fonts.gstatic.com; img-src 'self' data: blob: https: ipfs: https://ipfs.io https://cloudflare-ipfs.com https://gateway.pinata.cloud https://www.genspark.ai; connect-src 'self' https://rpc.testnet.arc.network https://rpc.blockdaemon.testnet.arc.network https://api.circle.com https://testnet.arcscan.app https://faucet.circle.com https://ipfs.io wss:; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' data: https://cdn.jsdelivr.net https://fonts.gstatic.com; img-src 'self' data: blob: https: https://ipfs.io https://cloudflare-ipfs.com https://gateway.pinata.cloud https://www.genspark.ai; connect-src 'self' https://rpc.testnet.arc.network https://rpc.blockdaemon.testnet.arc.network https://api.circle.com https://testnet.arcscan.app https://faucet.circle.com https://ipfs.io wss:; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests
 
 /static/*
-  # Static assets (JS, CSS) — cache 1 year, immutable
   Cache-Control: public, max-age=31536000, immutable
   X-Content-Type-Options: nosniff
 
 /images/*
-  # Product images — cache 7 days
   Cache-Control: public, max-age=604800
   X-Content-Type-Options: nosniff
 
 /api/*
-  # API responses — no caching, strict security
   Cache-Control: no-store, no-cache, must-revalidate
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
-  # CORS is handled by Hono middleware — no duplicate header needed here
