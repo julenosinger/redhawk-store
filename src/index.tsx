@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 
-type Bindings = { DB?: D1Database; PRODUCTS_KV?: KVNamespace }
+type Bindings = { DB?: D1Database; PRODUCTS_KV?: KVNamespace; CIRCLE_API_KEY?: string }
 const app = new Hono<{ Bindings: Bindings }>()
 app.use('*', cors())
 
@@ -208,6 +208,36 @@ app.get('/api/arc-config', (c) => {
   return c.json({ arc: ARC })
 })
 
+// ─── Circle API helper ───────────────────────────────────────────────────────
+const CIRCLE_BASE_URL = 'https://api.circle.com/v1'
+
+async function circleRequest(
+  env: Bindings,
+  method: string,
+  path: string,
+  body?: unknown
+): Promise<{ ok: boolean; status: number; data: any }> {
+  const apiKey = env.CIRCLE_API_KEY
+  if (!apiKey) return { ok: false, status: 500, data: { error: 'CIRCLE_API_KEY not configured' } }
+
+  const headers: Record<string, string> = {
+    'Authorization': `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+  }
+
+  const opts: RequestInit = { method, headers }
+  if (body && method !== 'GET') opts.body = JSON.stringify(body)
+
+  try {
+    const res = await fetch(`${CIRCLE_BASE_URL}${path}`, opts)
+    const data = await res.json()
+    return { ok: res.ok, status: res.status, data }
+  } catch (e: any) {
+    return { ok: false, status: 500, data: { error: e.message } }
+  }
+}
+
 // ─── Arc Commerce — Payment info & network endpoint ──────────────────────────
 // GET  /api/arc-payment/info — returns network info and token addresses
 app.get('/api/arc-payment/info', (c) => {
@@ -280,6 +310,88 @@ app.post('/api/arc-payment/validate', async (c) => {
   } catch (e: any) {
     return c.json({ valid: false, errors: [e.message] }, 500)
   }
+})
+
+// ─── Circle API proxy routes ─────────────────────────────────────────────────
+// All routes are server-side only — CIRCLE_API_KEY never exposed to frontend
+
+// GET /api/circle/ping — verify API key is valid
+app.get('/api/circle/ping', async (c) => {
+  const r = await circleRequest(c.env, 'GET', '/ping')
+  if (!r.ok) return c.json({ ok: false, error: r.data?.message || 'Circle API error', status: r.status }, r.status as any)
+  return c.json({ ok: true, message: 'Circle API reachable', data: r.data })
+})
+
+// GET /api/circle/config — return Circle network config for Arc Testnet (no key exposed)
+app.get('/api/circle/config', (c) => {
+  const hasKey = !!c.env.CIRCLE_API_KEY
+  return c.json({
+    configured: hasKey,
+    blockchain: 'ARC-TESTNET',
+    usdc_token_id: 'USDC-ARC-TESTNET',
+    network: 'Arc Testnet',
+    chain_id: ARC.chainId,
+    usdc_address: ARC.contracts.USDC,
+    eurc_address: ARC.contracts.EURC,
+    explorer: ARC.explorer,
+    faucet: ARC.faucet,
+    // Key is never returned — only presence confirmed
+    key_status: hasKey ? 'configured' : 'missing',
+  })
+})
+
+// GET /api/circle/wallets — list Circle developer-controlled wallets
+app.get('/api/circle/wallets', async (c) => {
+  const r = await circleRequest(c.env, 'GET', '/developer/wallets')
+  if (!r.ok) return c.json({ ok: false, error: r.data?.message || 'Circle API error', status: r.status }, r.status as any)
+  return c.json({ ok: true, wallets: r.data?.data || [], count: r.data?.data?.length || 0 })
+})
+
+// GET /api/circle/wallet/:id/balance — get balance of a specific wallet
+app.get('/api/circle/wallet/:id/balance', async (c) => {
+  const walletId = c.req.param('id')
+  const r = await circleRequest(c.env, 'GET', `/developer/wallets/${walletId}/balances`)
+  if (!r.ok) return c.json({ ok: false, error: r.data?.message || 'Circle API error' }, r.status as any)
+  return c.json({ ok: true, balances: r.data?.data?.tokenBalances || [], walletId })
+})
+
+// POST /api/circle/transfer — initiate a USDC transfer via Circle API
+app.post('/api/circle/transfer', async (c) => {
+  try {
+    const body = await c.req.json() as any
+    const { sourceWalletId, destinationAddress, amount, idempotencyKey } = body
+
+    if (!sourceWalletId || !destinationAddress || !amount)
+      return c.json({ ok: false, error: 'Missing required fields: sourceWalletId, destinationAddress, amount' }, 400)
+
+    const addrRe = /^0x[0-9a-fA-F]{40}$/
+    if (!addrRe.test(destinationAddress))
+      return c.json({ ok: false, error: 'Invalid destination address' }, 400)
+
+    if (isNaN(Number(amount)) || Number(amount) <= 0)
+      return c.json({ ok: false, error: 'Amount must be a positive number' }, 400)
+
+    const payload = {
+      idempotencyKey: idempotencyKey || crypto.randomUUID(),
+      source: { type: 'wallet', id: sourceWalletId },
+      destination: { type: 'blockchain', address: destinationAddress, chain: 'ARC' },
+      amount: { amount: Number(amount).toFixed(6), currency: 'USD' },
+    }
+
+    const r = await circleRequest(c.env, 'POST', '/transfers', payload)
+    if (!r.ok) return c.json({ ok: false, error: r.data?.message || 'Transfer failed', details: r.data }, r.status as any)
+    return c.json({ ok: true, transfer: r.data?.data, message: 'Transfer initiated' })
+  } catch (e: any) {
+    return c.json({ ok: false, error: e.message }, 500)
+  }
+})
+
+// GET /api/circle/transfer/:id — get transfer status
+app.get('/api/circle/transfer/:id', async (c) => {
+  const transferId = c.req.param('id')
+  const r = await circleRequest(c.env, 'GET', `/transfers/${transferId}`)
+  if (!r.ok) return c.json({ ok: false, error: r.data?.message || 'Circle API error' }, r.status as any)
+  return c.json({ ok: true, transfer: r.data?.data })
 })
 
 // ─── Products CRUD (off-chain D1 database) ──────────────────────────────────
