@@ -4,3 +4,6 @@ dist/
 .env
 .dev.vars
 *.log
+.vercel
+api/_app.cjs
+api/_entry.tsx

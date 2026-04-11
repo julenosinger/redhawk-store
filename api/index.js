@@ -1,36 +1,2169 @@
-import { Hono } from 'hono'
-import { cors } from 'hono/cors'
 
-// Platform-agnostic Bindings — works on both Cloudflare Workers and Vercel/Node.js
-// On Cloudflare: DB/PRODUCTS_KV are native bindings injected by the runtime
-// On Vercel: DB/PRODUCTS_KV are undefined → app falls back to in-memory store
-type Bindings = {
-  DB?: any              // D1Database on Cloudflare, undefined on Vercel
-  PRODUCTS_KV?: any    // KVNamespace on Cloudflare, undefined on Vercel
-  CIRCLE_API_KEY?: string
+// Node.js shims for Cloudflare Workers globals
+if (typeof globalThis.caches === 'undefined') {
+  globalThis.caches = { default: { match: () => undefined, put: () => undefined } }
 }
-const app = new Hono<{ Bindings: Bindings }>()
-app.use('*', cors())
 
-// ─── Security Headers Middleware ─────────────────────────────────────────────
-// Applied at Worker level — works correctly on Cloudflare Pages with _worker.js
-app.use('*', async (c, next) => {
-  await next()
 
-  const url = new URL(c.req.url)
-  const path = url.pathname
+// api/_entry.tsx
+import { handle } from "@hono/node-server/vercel";
 
-  // ── Base security headers (all routes) ──
-  c.res.headers.set('X-Frame-Options', 'DENY')
-  c.res.headers.set('X-Content-Type-Options', 'nosniff')
-  c.res.headers.set('X-XSS-Protection', '0')
-  c.res.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload')
-  c.res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
-  c.res.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), accelerometer=(), gyroscope=()')
-  c.res.headers.set('Cross-Origin-Opener-Policy', 'same-origin-allow-popups')
-  c.res.headers.set('Cross-Origin-Resource-Policy', 'cross-origin')
+// node_modules/hono/dist/compose.js
+var compose = (middleware, onError, onNotFound) => {
+  return (context, next) => {
+    let index = -1;
+    return dispatch(0);
+    async function dispatch(i) {
+      if (i <= index) {
+        throw new Error("next() called multiple times");
+      }
+      index = i;
+      let res;
+      let isError = false;
+      let handler2;
+      if (middleware[i]) {
+        handler2 = middleware[i][0][0];
+        context.req.routeIndex = i;
+      } else {
+        handler2 = i === middleware.length && next || void 0;
+      }
+      if (handler2) {
+        try {
+          res = await handler2(context, () => dispatch(i + 1));
+        } catch (err) {
+          if (err instanceof Error && onError) {
+            context.error = err;
+            res = await onError(err, context);
+            isError = true;
+          } else {
+            throw err;
+          }
+        }
+      } else {
+        if (context.finalized === false && onNotFound) {
+          res = await onNotFound(context);
+        }
+      }
+      if (res && (context.finalized === false || isError)) {
+        context.res = res;
+      }
+      return context;
+    }
+  };
+};
 
-  // ── Content-Security-Policy ──
+// node_modules/hono/dist/request/constants.js
+var GET_MATCH_RESULT = /* @__PURE__ */ Symbol();
+
+// node_modules/hono/dist/utils/body.js
+var parseBody = async (request, options = /* @__PURE__ */ Object.create(null)) => {
+  const { all = false, dot = false } = options;
+  const headers = request instanceof HonoRequest ? request.raw.headers : request.headers;
+  const contentType = headers.get("Content-Type");
+  if (contentType?.startsWith("multipart/form-data") || contentType?.startsWith("application/x-www-form-urlencoded")) {
+    return parseFormData(request, { all, dot });
+  }
+  return {};
+};
+async function parseFormData(request, options) {
+  const formData = await request.formData();
+  if (formData) {
+    return convertFormDataToBodyData(formData, options);
+  }
+  return {};
+}
+function convertFormDataToBodyData(formData, options) {
+  const form = /* @__PURE__ */ Object.create(null);
+  formData.forEach((value, key) => {
+    const shouldParseAllValues = options.all || key.endsWith("[]");
+    if (!shouldParseAllValues) {
+      form[key] = value;
+    } else {
+      handleParsingAllValues(form, key, value);
+    }
+  });
+  if (options.dot) {
+    Object.entries(form).forEach(([key, value]) => {
+      const shouldParseDotValues = key.includes(".");
+      if (shouldParseDotValues) {
+        handleParsingNestedValues(form, key, value);
+        delete form[key];
+      }
+    });
+  }
+  return form;
+}
+var handleParsingAllValues = (form, key, value) => {
+  if (form[key] !== void 0) {
+    if (Array.isArray(form[key])) {
+      ;
+      form[key].push(value);
+    } else {
+      form[key] = [form[key], value];
+    }
+  } else {
+    if (!key.endsWith("[]")) {
+      form[key] = value;
+    } else {
+      form[key] = [value];
+    }
+  }
+};
+var handleParsingNestedValues = (form, key, value) => {
+  if (/(?:^|\.)__proto__\./.test(key)) {
+    return;
+  }
+  let nestedForm = form;
+  const keys = key.split(".");
+  keys.forEach((key2, index) => {
+    if (index === keys.length - 1) {
+      nestedForm[key2] = value;
+    } else {
+      if (!nestedForm[key2] || typeof nestedForm[key2] !== "object" || Array.isArray(nestedForm[key2]) || nestedForm[key2] instanceof File) {
+        nestedForm[key2] = /* @__PURE__ */ Object.create(null);
+      }
+      nestedForm = nestedForm[key2];
+    }
+  });
+};
+
+// node_modules/hono/dist/utils/url.js
+var splitPath = (path) => {
+  const paths = path.split("/");
+  if (paths[0] === "") {
+    paths.shift();
+  }
+  return paths;
+};
+var splitRoutingPath = (routePath) => {
+  const { groups, path } = extractGroupsFromPath(routePath);
+  const paths = splitPath(path);
+  return replaceGroupMarks(paths, groups);
+};
+var extractGroupsFromPath = (path) => {
+  const groups = [];
+  path = path.replace(/\{[^}]+\}/g, (match2, index) => {
+    const mark = `@${index}`;
+    groups.push([mark, match2]);
+    return mark;
+  });
+  return { groups, path };
+};
+var replaceGroupMarks = (paths, groups) => {
+  for (let i = groups.length - 1; i >= 0; i--) {
+    const [mark] = groups[i];
+    for (let j = paths.length - 1; j >= 0; j--) {
+      if (paths[j].includes(mark)) {
+        paths[j] = paths[j].replace(mark, groups[i][1]);
+        break;
+      }
+    }
+  }
+  return paths;
+};
+var patternCache = {};
+var getPattern = (label, next) => {
+  if (label === "*") {
+    return "*";
+  }
+  const match2 = label.match(/^\:([^\{\}]+)(?:\{(.+)\})?$/);
+  if (match2) {
+    const cacheKey = `${label}#${next}`;
+    if (!patternCache[cacheKey]) {
+      if (match2[2]) {
+        patternCache[cacheKey] = next && next[0] !== ":" && next[0] !== "*" ? [cacheKey, match2[1], new RegExp(`^${match2[2]}(?=/${next})`)] : [label, match2[1], new RegExp(`^${match2[2]}$`)];
+      } else {
+        patternCache[cacheKey] = [label, match2[1], true];
+      }
+    }
+    return patternCache[cacheKey];
+  }
+  return null;
+};
+var tryDecode = (str, decoder) => {
+  try {
+    return decoder(str);
+  } catch {
+    return str.replace(/(?:%[0-9A-Fa-f]{2})+/g, (match2) => {
+      try {
+        return decoder(match2);
+      } catch {
+        return match2;
+      }
+    });
+  }
+};
+var tryDecodeURI = (str) => tryDecode(str, decodeURI);
+var getPath = (request) => {
+  const url = request.url;
+  const start = url.indexOf("/", url.indexOf(":") + 4);
+  let i = start;
+  for (; i < url.length; i++) {
+    const charCode = url.charCodeAt(i);
+    if (charCode === 37) {
+      const queryIndex = url.indexOf("?", i);
+      const hashIndex = url.indexOf("#", i);
+      const end = queryIndex === -1 ? hashIndex === -1 ? void 0 : hashIndex : hashIndex === -1 ? queryIndex : Math.min(queryIndex, hashIndex);
+      const path = url.slice(start, end);
+      return tryDecodeURI(path.includes("%25") ? path.replace(/%25/g, "%2525") : path);
+    } else if (charCode === 63 || charCode === 35) {
+      break;
+    }
+  }
+  return url.slice(start, i);
+};
+var getPathNoStrict = (request) => {
+  const result = getPath(request);
+  return result.length > 1 && result.at(-1) === "/" ? result.slice(0, -1) : result;
+};
+var mergePath = (base, sub, ...rest) => {
+  if (rest.length) {
+    sub = mergePath(sub, ...rest);
+  }
+  return `${base?.[0] === "/" ? "" : "/"}${base}${sub === "/" ? "" : `${base?.at(-1) === "/" ? "" : "/"}${sub?.[0] === "/" ? sub.slice(1) : sub}`}`;
+};
+var checkOptionalParameter = (path) => {
+  if (path.charCodeAt(path.length - 1) !== 63 || !path.includes(":")) {
+    return null;
+  }
+  const segments = path.split("/");
+  const results = [];
+  let basePath = "";
+  segments.forEach((segment) => {
+    if (segment !== "" && !/\:/.test(segment)) {
+      basePath += "/" + segment;
+    } else if (/\:/.test(segment)) {
+      if (/\?/.test(segment)) {
+        if (results.length === 0 && basePath === "") {
+          results.push("/");
+        } else {
+          results.push(basePath);
+        }
+        const optionalSegment = segment.replace("?", "");
+        basePath += "/" + optionalSegment;
+        results.push(basePath);
+      } else {
+        basePath += "/" + segment;
+      }
+    }
+  });
+  return results.filter((v, i, a) => a.indexOf(v) === i);
+};
+var _decodeURI = (value) => {
+  if (!/[%+]/.test(value)) {
+    return value;
+  }
+  if (value.indexOf("+") !== -1) {
+    value = value.replace(/\+/g, " ");
+  }
+  return value.indexOf("%") !== -1 ? tryDecode(value, decodeURIComponent_) : value;
+};
+var _getQueryParam = (url, key, multiple) => {
+  let encoded;
+  if (!multiple && key && !/[%+]/.test(key)) {
+    let keyIndex2 = url.indexOf("?", 8);
+    if (keyIndex2 === -1) {
+      return void 0;
+    }
+    if (!url.startsWith(key, keyIndex2 + 1)) {
+      keyIndex2 = url.indexOf(`&${key}`, keyIndex2 + 1);
+    }
+    while (keyIndex2 !== -1) {
+      const trailingKeyCode = url.charCodeAt(keyIndex2 + key.length + 1);
+      if (trailingKeyCode === 61) {
+        const valueIndex = keyIndex2 + key.length + 2;
+        const endIndex = url.indexOf("&", valueIndex);
+        return _decodeURI(url.slice(valueIndex, endIndex === -1 ? void 0 : endIndex));
+      } else if (trailingKeyCode == 38 || isNaN(trailingKeyCode)) {
+        return "";
+      }
+      keyIndex2 = url.indexOf(`&${key}`, keyIndex2 + 1);
+    }
+    encoded = /[%+]/.test(url);
+    if (!encoded) {
+      return void 0;
+    }
+  }
+  const results = {};
+  encoded ??= /[%+]/.test(url);
+  let keyIndex = url.indexOf("?", 8);
+  while (keyIndex !== -1) {
+    const nextKeyIndex = url.indexOf("&", keyIndex + 1);
+    let valueIndex = url.indexOf("=", keyIndex);
+    if (valueIndex > nextKeyIndex && nextKeyIndex !== -1) {
+      valueIndex = -1;
+    }
+    let name = url.slice(
+      keyIndex + 1,
+      valueIndex === -1 ? nextKeyIndex === -1 ? void 0 : nextKeyIndex : valueIndex
+    );
+    if (encoded) {
+      name = _decodeURI(name);
+    }
+    keyIndex = nextKeyIndex;
+    if (name === "") {
+      continue;
+    }
+    let value;
+    if (valueIndex === -1) {
+      value = "";
+    } else {
+      value = url.slice(valueIndex + 1, nextKeyIndex === -1 ? void 0 : nextKeyIndex);
+      if (encoded) {
+        value = _decodeURI(value);
+      }
+    }
+    if (multiple) {
+      if (!(results[name] && Array.isArray(results[name]))) {
+        results[name] = [];
+      }
+      ;
+      results[name].push(value);
+    } else {
+      results[name] ??= value;
+    }
+  }
+  return key ? results[key] : results;
+};
+var getQueryParam = _getQueryParam;
+var getQueryParams = (url, key) => {
+  return _getQueryParam(url, key, true);
+};
+var decodeURIComponent_ = decodeURIComponent;
+
+// node_modules/hono/dist/request.js
+var tryDecodeURIComponent = (str) => tryDecode(str, decodeURIComponent_);
+var HonoRequest = class {
+  /**
+   * `.raw` can get the raw Request object.
+   *
+   * @see {@link https://hono.dev/docs/api/request#raw}
+   *
+   * @example
+   * ```ts
+   * // For Cloudflare Workers
+   * app.post('/', async (c) => {
+   *   const metadata = c.req.raw.cf?.hostMetadata?
+   *   ...
+   * })
+   * ```
+   */
+  raw;
+  #validatedData;
+  // Short name of validatedData
+  #matchResult;
+  routeIndex = 0;
+  /**
+   * `.path` can get the pathname of the request.
+   *
+   * @see {@link https://hono.dev/docs/api/request#path}
+   *
+   * @example
+   * ```ts
+   * app.get('/about/me', (c) => {
+   *   const pathname = c.req.path // `/about/me`
+   * })
+   * ```
+   */
+  path;
+  bodyCache = {};
+  constructor(request, path = "/", matchResult = [[]]) {
+    this.raw = request;
+    this.path = path;
+    this.#matchResult = matchResult;
+    this.#validatedData = {};
+  }
+  param(key) {
+    return key ? this.#getDecodedParam(key) : this.#getAllDecodedParams();
+  }
+  #getDecodedParam(key) {
+    const paramKey = this.#matchResult[0][this.routeIndex][1][key];
+    const param = this.#getParamValue(paramKey);
+    return param && /\%/.test(param) ? tryDecodeURIComponent(param) : param;
+  }
+  #getAllDecodedParams() {
+    const decoded = {};
+    const keys = Object.keys(this.#matchResult[0][this.routeIndex][1]);
+    for (const key of keys) {
+      const value = this.#getParamValue(this.#matchResult[0][this.routeIndex][1][key]);
+      if (value !== void 0) {
+        decoded[key] = /\%/.test(value) ? tryDecodeURIComponent(value) : value;
+      }
+    }
+    return decoded;
+  }
+  #getParamValue(paramKey) {
+    return this.#matchResult[1] ? this.#matchResult[1][paramKey] : paramKey;
+  }
+  query(key) {
+    return getQueryParam(this.url, key);
+  }
+  queries(key) {
+    return getQueryParams(this.url, key);
+  }
+  header(name) {
+    if (name) {
+      return this.raw.headers.get(name) ?? void 0;
+    }
+    const headerData = {};
+    this.raw.headers.forEach((value, key) => {
+      headerData[key] = value;
+    });
+    return headerData;
+  }
+  async parseBody(options) {
+    return parseBody(this, options);
+  }
+  #cachedBody = (key) => {
+    const { bodyCache, raw: raw2 } = this;
+    const cachedBody = bodyCache[key];
+    if (cachedBody) {
+      return cachedBody;
+    }
+    const anyCachedKey = Object.keys(bodyCache)[0];
+    if (anyCachedKey) {
+      return bodyCache[anyCachedKey].then((body) => {
+        if (anyCachedKey === "json") {
+          body = JSON.stringify(body);
+        }
+        return new Response(body)[key]();
+      });
+    }
+    return bodyCache[key] = raw2[key]();
+  };
+  /**
+   * `.json()` can parse Request body of type `application/json`
+   *
+   * @see {@link https://hono.dev/docs/api/request#json}
+   *
+   * @example
+   * ```ts
+   * app.post('/entry', async (c) => {
+   *   const body = await c.req.json()
+   * })
+   * ```
+   */
+  json() {
+    return this.#cachedBody("text").then((text) => JSON.parse(text));
+  }
+  /**
+   * `.text()` can parse Request body of type `text/plain`
+   *
+   * @see {@link https://hono.dev/docs/api/request#text}
+   *
+   * @example
+   * ```ts
+   * app.post('/entry', async (c) => {
+   *   const body = await c.req.text()
+   * })
+   * ```
+   */
+  text() {
+    return this.#cachedBody("text");
+  }
+  /**
+   * `.arrayBuffer()` parse Request body as an `ArrayBuffer`
+   *
+   * @see {@link https://hono.dev/docs/api/request#arraybuffer}
+   *
+   * @example
+   * ```ts
+   * app.post('/entry', async (c) => {
+   *   const body = await c.req.arrayBuffer()
+   * })
+   * ```
+   */
+  arrayBuffer() {
+    return this.#cachedBody("arrayBuffer");
+  }
+  /**
+   * Parses the request body as a `Blob`.
+   * @example
+   * ```ts
+   * app.post('/entry', async (c) => {
+   *   const body = await c.req.blob();
+   * });
+   * ```
+   * @see https://hono.dev/docs/api/request#blob
+   */
+  blob() {
+    return this.#cachedBody("blob");
+  }
+  /**
+   * Parses the request body as `FormData`.
+   * @example
+   * ```ts
+   * app.post('/entry', async (c) => {
+   *   const body = await c.req.formData();
+   * });
+   * ```
+   * @see https://hono.dev/docs/api/request#formdata
+   */
+  formData() {
+    return this.#cachedBody("formData");
+  }
+  /**
+   * Adds validated data to the request.
+   *
+   * @param target - The target of the validation.
+   * @param data - The validated data to add.
+   */
+  addValidatedData(target, data) {
+    this.#validatedData[target] = data;
+  }
+  valid(target) {
+    return this.#validatedData[target];
+  }
+  /**
+   * `.url()` can get the request url strings.
+   *
+   * @see {@link https://hono.dev/docs/api/request#url}
+   *
+   * @example
+   * ```ts
+   * app.get('/about/me', (c) => {
+   *   const url = c.req.url // `http://localhost:8787/about/me`
+   *   ...
+   * })
+   * ```
+   */
+  get url() {
+    return this.raw.url;
+  }
+  /**
+   * `.method()` can get the method name of the request.
+   *
+   * @see {@link https://hono.dev/docs/api/request#method}
+   *
+   * @example
+   * ```ts
+   * app.get('/about/me', (c) => {
+   *   const method = c.req.method // `GET`
+   * })
+   * ```
+   */
+  get method() {
+    return this.raw.method;
+  }
+  get [GET_MATCH_RESULT]() {
+    return this.#matchResult;
+  }
+  /**
+   * `.matchedRoutes()` can return a matched route in the handler
+   *
+   * @deprecated
+   *
+   * Use matchedRoutes helper defined in "hono/route" instead.
+   *
+   * @see {@link https://hono.dev/docs/api/request#matchedroutes}
+   *
+   * @example
+   * ```ts
+   * app.use('*', async function logger(c, next) {
+   *   await next()
+   *   c.req.matchedRoutes.forEach(({ handler, method, path }, i) => {
+   *     const name = handler.name || (handler.length < 2 ? '[handler]' : '[middleware]')
+   *     console.log(
+   *       method,
+   *       ' ',
+   *       path,
+   *       ' '.repeat(Math.max(10 - path.length, 0)),
+   *       name,
+   *       i === c.req.routeIndex ? '<- respond from here' : ''
+   *     )
+   *   })
+   * })
+   * ```
+   */
+  get matchedRoutes() {
+    return this.#matchResult[0].map(([[, route]]) => route);
+  }
+  /**
+   * `routePath()` can retrieve the path registered within the handler
+   *
+   * @deprecated
+   *
+   * Use routePath helper defined in "hono/route" instead.
+   *
+   * @see {@link https://hono.dev/docs/api/request#routepath}
+   *
+   * @example
+   * ```ts
+   * app.get('/posts/:id', (c) => {
+   *   return c.json({ path: c.req.routePath })
+   * })
+   * ```
+   */
+  get routePath() {
+    return this.#matchResult[0].map(([[, route]]) => route)[this.routeIndex].path;
+  }
+};
+
+// node_modules/hono/dist/utils/html.js
+var HtmlEscapedCallbackPhase = {
+  Stringify: 1,
+  BeforeStream: 2,
+  Stream: 3
+};
+var raw = (value, callbacks) => {
+  const escapedString = new String(value);
+  escapedString.isEscaped = true;
+  escapedString.callbacks = callbacks;
+  return escapedString;
+};
+var resolveCallback = async (str, phase, preserveCallbacks, context, buffer) => {
+  if (typeof str === "object" && !(str instanceof String)) {
+    if (!(str instanceof Promise)) {
+      str = str.toString();
+    }
+    if (str instanceof Promise) {
+      str = await str;
+    }
+  }
+  const callbacks = str.callbacks;
+  if (!callbacks?.length) {
+    return Promise.resolve(str);
+  }
+  if (buffer) {
+    buffer[0] += str;
+  } else {
+    buffer = [str];
+  }
+  const resStr = Promise.all(callbacks.map((c) => c({ phase, buffer, context }))).then(
+    (res) => Promise.all(
+      res.filter(Boolean).map((str2) => resolveCallback(str2, phase, false, context, buffer))
+    ).then(() => buffer[0])
+  );
+  if (preserveCallbacks) {
+    return raw(await resStr, callbacks);
+  } else {
+    return resStr;
+  }
+};
+
+// node_modules/hono/dist/context.js
+var TEXT_PLAIN = "text/plain; charset=UTF-8";
+var setDefaultContentType = (contentType, headers) => {
+  return {
+    "Content-Type": contentType,
+    ...headers
+  };
+};
+var createResponseInstance = (body, init) => new Response(body, init);
+var Context = class {
+  #rawRequest;
+  #req;
+  /**
+   * `.env` can get bindings (environment variables, secrets, KV namespaces, D1 database, R2 bucket etc.) in Cloudflare Workers.
+   *
+   * @see {@link https://hono.dev/docs/api/context#env}
+   *
+   * @example
+   * ```ts
+   * // Environment object for Cloudflare Workers
+   * app.get('*', async c => {
+   *   const counter = c.env.COUNTER
+   * })
+   * ```
+   */
+  env = {};
+  #var;
+  finalized = false;
+  /**
+   * `.error` can get the error object from the middleware if the Handler throws an error.
+   *
+   * @see {@link https://hono.dev/docs/api/context#error}
+   *
+   * @example
+   * ```ts
+   * app.use('*', async (c, next) => {
+   *   await next()
+   *   if (c.error) {
+   *     // do something...
+   *   }
+   * })
+   * ```
+   */
+  error;
+  #status;
+  #executionCtx;
+  #res;
+  #layout;
+  #renderer;
+  #notFoundHandler;
+  #preparedHeaders;
+  #matchResult;
+  #path;
+  /**
+   * Creates an instance of the Context class.
+   *
+   * @param req - The Request object.
+   * @param options - Optional configuration options for the context.
+   */
+  constructor(req, options) {
+    this.#rawRequest = req;
+    if (options) {
+      this.#executionCtx = options.executionCtx;
+      this.env = options.env;
+      this.#notFoundHandler = options.notFoundHandler;
+      this.#path = options.path;
+      this.#matchResult = options.matchResult;
+    }
+  }
+  /**
+   * `.req` is the instance of {@link HonoRequest}.
+   */
+  get req() {
+    this.#req ??= new HonoRequest(this.#rawRequest, this.#path, this.#matchResult);
+    return this.#req;
+  }
+  /**
+   * @see {@link https://hono.dev/docs/api/context#event}
+   * The FetchEvent associated with the current request.
+   *
+   * @throws Will throw an error if the context does not have a FetchEvent.
+   */
+  get event() {
+    if (this.#executionCtx && "respondWith" in this.#executionCtx) {
+      return this.#executionCtx;
+    } else {
+      throw Error("This context has no FetchEvent");
+    }
+  }
+  /**
+   * @see {@link https://hono.dev/docs/api/context#executionctx}
+   * The ExecutionContext associated with the current request.
+   *
+   * @throws Will throw an error if the context does not have an ExecutionContext.
+   */
+  get executionCtx() {
+    if (this.#executionCtx) {
+      return this.#executionCtx;
+    } else {
+      throw Error("This context has no ExecutionContext");
+    }
+  }
+  /**
+   * @see {@link https://hono.dev/docs/api/context#res}
+   * The Response object for the current request.
+   */
+  get res() {
+    return this.#res ||= createResponseInstance(null, {
+      headers: this.#preparedHeaders ??= new Headers()
+    });
+  }
+  /**
+   * Sets the Response object for the current request.
+   *
+   * @param _res - The Response object to set.
+   */
+  set res(_res) {
+    if (this.#res && _res) {
+      _res = createResponseInstance(_res.body, _res);
+      for (const [k, v] of this.#res.headers.entries()) {
+        if (k === "content-type") {
+          continue;
+        }
+        if (k === "set-cookie") {
+          const cookies = this.#res.headers.getSetCookie();
+          _res.headers.delete("set-cookie");
+          for (const cookie of cookies) {
+            _res.headers.append("set-cookie", cookie);
+          }
+        } else {
+          _res.headers.set(k, v);
+        }
+      }
+    }
+    this.#res = _res;
+    this.finalized = true;
+  }
+  /**
+   * `.render()` can create a response within a layout.
+   *
+   * @see {@link https://hono.dev/docs/api/context#render-setrenderer}
+   *
+   * @example
+   * ```ts
+   * app.get('/', (c) => {
+   *   return c.render('Hello!')
+   * })
+   * ```
+   */
+  render = (...args) => {
+    this.#renderer ??= (content) => this.html(content);
+    return this.#renderer(...args);
+  };
+  /**
+   * Sets the layout for the response.
+   *
+   * @param layout - The layout to set.
+   * @returns The layout function.
+   */
+  setLayout = (layout) => this.#layout = layout;
+  /**
+   * Gets the current layout for the response.
+   *
+   * @returns The current layout function.
+   */
+  getLayout = () => this.#layout;
+  /**
+   * `.setRenderer()` can set the layout in the custom middleware.
+   *
+   * @see {@link https://hono.dev/docs/api/context#render-setrenderer}
+   *
+   * @example
+   * ```tsx
+   * app.use('*', async (c, next) => {
+   *   c.setRenderer((content) => {
+   *     return c.html(
+   *       <html>
+   *         <body>
+   *           <p>{content}</p>
+   *         </body>
+   *       </html>
+   *     )
+   *   })
+   *   await next()
+   * })
+   * ```
+   */
+  setRenderer = (renderer) => {
+    this.#renderer = renderer;
+  };
+  /**
+   * `.header()` can set headers.
+   *
+   * @see {@link https://hono.dev/docs/api/context#header}
+   *
+   * @example
+   * ```ts
+   * app.get('/welcome', (c) => {
+   *   // Set headers
+   *   c.header('X-Message', 'Hello!')
+   *   c.header('Content-Type', 'text/plain')
+   *
+   *   return c.body('Thank you for coming')
+   * })
+   * ```
+   */
+  header = (name, value, options) => {
+    if (this.finalized) {
+      this.#res = createResponseInstance(this.#res.body, this.#res);
+    }
+    const headers = this.#res ? this.#res.headers : this.#preparedHeaders ??= new Headers();
+    if (value === void 0) {
+      headers.delete(name);
+    } else if (options?.append) {
+      headers.append(name, value);
+    } else {
+      headers.set(name, value);
+    }
+  };
+  status = (status) => {
+    this.#status = status;
+  };
+  /**
+   * `.set()` can set the value specified by the key.
+   *
+   * @see {@link https://hono.dev/docs/api/context#set-get}
+   *
+   * @example
+   * ```ts
+   * app.use('*', async (c, next) => {
+   *   c.set('message', 'Hono is hot!!')
+   *   await next()
+   * })
+   * ```
+   */
+  set = (key, value) => {
+    this.#var ??= /* @__PURE__ */ new Map();
+    this.#var.set(key, value);
+  };
+  /**
+   * `.get()` can use the value specified by the key.
+   *
+   * @see {@link https://hono.dev/docs/api/context#set-get}
+   *
+   * @example
+   * ```ts
+   * app.get('/', (c) => {
+   *   const message = c.get('message')
+   *   return c.text(`The message is "${message}"`)
+   * })
+   * ```
+   */
+  get = (key) => {
+    return this.#var ? this.#var.get(key) : void 0;
+  };
+  /**
+   * `.var` can access the value of a variable.
+   *
+   * @see {@link https://hono.dev/docs/api/context#var}
+   *
+   * @example
+   * ```ts
+   * const result = c.var.client.oneMethod()
+   * ```
+   */
+  // c.var.propName is a read-only
+  get var() {
+    if (!this.#var) {
+      return {};
+    }
+    return Object.fromEntries(this.#var);
+  }
+  #newResponse(data, arg, headers) {
+    const responseHeaders = this.#res ? new Headers(this.#res.headers) : this.#preparedHeaders ?? new Headers();
+    if (typeof arg === "object" && "headers" in arg) {
+      const argHeaders = arg.headers instanceof Headers ? arg.headers : new Headers(arg.headers);
+      for (const [key, value] of argHeaders) {
+        if (key.toLowerCase() === "set-cookie") {
+          responseHeaders.append(key, value);
+        } else {
+          responseHeaders.set(key, value);
+        }
+      }
+    }
+    if (headers) {
+      for (const [k, v] of Object.entries(headers)) {
+        if (typeof v === "string") {
+          responseHeaders.set(k, v);
+        } else {
+          responseHeaders.delete(k);
+          for (const v2 of v) {
+            responseHeaders.append(k, v2);
+          }
+        }
+      }
+    }
+    const status = typeof arg === "number" ? arg : arg?.status ?? this.#status;
+    return createResponseInstance(data, { status, headers: responseHeaders });
+  }
+  newResponse = (...args) => this.#newResponse(...args);
+  /**
+   * `.body()` can return the HTTP response.
+   * You can set headers with `.header()` and set HTTP status code with `.status`.
+   * This can also be set in `.text()`, `.json()` and so on.
+   *
+   * @see {@link https://hono.dev/docs/api/context#body}
+   *
+   * @example
+   * ```ts
+   * app.get('/welcome', (c) => {
+   *   // Set headers
+   *   c.header('X-Message', 'Hello!')
+   *   c.header('Content-Type', 'text/plain')
+   *   // Set HTTP status code
+   *   c.status(201)
+   *
+   *   // Return the response body
+   *   return c.body('Thank you for coming')
+   * })
+   * ```
+   */
+  body = (data, arg, headers) => this.#newResponse(data, arg, headers);
+  /**
+   * `.text()` can render text as `Content-Type:text/plain`.
+   *
+   * @see {@link https://hono.dev/docs/api/context#text}
+   *
+   * @example
+   * ```ts
+   * app.get('/say', (c) => {
+   *   return c.text('Hello!')
+   * })
+   * ```
+   */
+  text = (text, arg, headers) => {
+    return !this.#preparedHeaders && !this.#status && !arg && !headers && !this.finalized ? new Response(text) : this.#newResponse(
+      text,
+      arg,
+      setDefaultContentType(TEXT_PLAIN, headers)
+    );
+  };
+  /**
+   * `.json()` can render JSON as `Content-Type:application/json`.
+   *
+   * @see {@link https://hono.dev/docs/api/context#json}
+   *
+   * @example
+   * ```ts
+   * app.get('/api', (c) => {
+   *   return c.json({ message: 'Hello!' })
+   * })
+   * ```
+   */
+  json = (object, arg, headers) => {
+    return this.#newResponse(
+      JSON.stringify(object),
+      arg,
+      setDefaultContentType("application/json", headers)
+    );
+  };
+  html = (html, arg, headers) => {
+    const res = (html2) => this.#newResponse(html2, arg, setDefaultContentType("text/html; charset=UTF-8", headers));
+    return typeof html === "object" ? resolveCallback(html, HtmlEscapedCallbackPhase.Stringify, false, {}).then(res) : res(html);
+  };
+  /**
+   * `.redirect()` can Redirect, default status code is 302.
+   *
+   * @see {@link https://hono.dev/docs/api/context#redirect}
+   *
+   * @example
+   * ```ts
+   * app.get('/redirect', (c) => {
+   *   return c.redirect('/')
+   * })
+   * app.get('/redirect-permanently', (c) => {
+   *   return c.redirect('/', 301)
+   * })
+   * ```
+   */
+  redirect = (location, status) => {
+    const locationString = String(location);
+    this.header(
+      "Location",
+      // Multibyes should be encoded
+      // eslint-disable-next-line no-control-regex
+      !/[^\x00-\xFF]/.test(locationString) ? locationString : encodeURI(locationString)
+    );
+    return this.newResponse(null, status ?? 302);
+  };
+  /**
+   * `.notFound()` can return the Not Found Response.
+   *
+   * @see {@link https://hono.dev/docs/api/context#notfound}
+   *
+   * @example
+   * ```ts
+   * app.get('/notfound', (c) => {
+   *   return c.notFound()
+   * })
+   * ```
+   */
+  notFound = () => {
+    this.#notFoundHandler ??= () => createResponseInstance();
+    return this.#notFoundHandler(this);
+  };
+};
+
+// node_modules/hono/dist/router.js
+var METHOD_NAME_ALL = "ALL";
+var METHOD_NAME_ALL_LOWERCASE = "all";
+var METHODS = ["get", "post", "put", "delete", "options", "patch"];
+var MESSAGE_MATCHER_IS_ALREADY_BUILT = "Can not add a route since the matcher is already built.";
+var UnsupportedPathError = class extends Error {
+};
+
+// node_modules/hono/dist/utils/constants.js
+var COMPOSED_HANDLER = "__COMPOSED_HANDLER";
+
+// node_modules/hono/dist/hono-base.js
+var notFoundHandler = (c) => {
+  return c.text("404 Not Found", 404);
+};
+var errorHandler = (err, c) => {
+  if ("getResponse" in err) {
+    const res = err.getResponse();
+    return c.newResponse(res.body, res);
+  }
+  console.error(err);
+  return c.text("Internal Server Error", 500);
+};
+var Hono = class _Hono {
+  get;
+  post;
+  put;
+  delete;
+  options;
+  patch;
+  all;
+  on;
+  use;
+  /*
+    This class is like an abstract class and does not have a router.
+    To use it, inherit the class and implement router in the constructor.
+  */
+  router;
+  getPath;
+  // Cannot use `#` because it requires visibility at JavaScript runtime.
+  _basePath = "/";
+  #path = "/";
+  routes = [];
+  constructor(options = {}) {
+    const allMethods = [...METHODS, METHOD_NAME_ALL_LOWERCASE];
+    allMethods.forEach((method) => {
+      this[method] = (args1, ...args) => {
+        if (typeof args1 === "string") {
+          this.#path = args1;
+        } else {
+          this.#addRoute(method, this.#path, args1);
+        }
+        args.forEach((handler2) => {
+          this.#addRoute(method, this.#path, handler2);
+        });
+        return this;
+      };
+    });
+    this.on = (method, path, ...handlers) => {
+      for (const p of [path].flat()) {
+        this.#path = p;
+        for (const m of [method].flat()) {
+          handlers.map((handler2) => {
+            this.#addRoute(m.toUpperCase(), this.#path, handler2);
+          });
+        }
+      }
+      return this;
+    };
+    this.use = (arg1, ...handlers) => {
+      if (typeof arg1 === "string") {
+        this.#path = arg1;
+      } else {
+        this.#path = "*";
+        handlers.unshift(arg1);
+      }
+      handlers.forEach((handler2) => {
+        this.#addRoute(METHOD_NAME_ALL, this.#path, handler2);
+      });
+      return this;
+    };
+    const { strict, ...optionsWithoutStrict } = options;
+    Object.assign(this, optionsWithoutStrict);
+    this.getPath = strict ?? true ? options.getPath ?? getPath : getPathNoStrict;
+  }
+  #clone() {
+    const clone = new _Hono({
+      router: this.router,
+      getPath: this.getPath
+    });
+    clone.errorHandler = this.errorHandler;
+    clone.#notFoundHandler = this.#notFoundHandler;
+    clone.routes = this.routes;
+    return clone;
+  }
+  #notFoundHandler = notFoundHandler;
+  // Cannot use `#` because it requires visibility at JavaScript runtime.
+  errorHandler = errorHandler;
+  /**
+   * `.route()` allows grouping other Hono instance in routes.
+   *
+   * @see {@link https://hono.dev/docs/api/routing#grouping}
+   *
+   * @param {string} path - base Path
+   * @param {Hono} app - other Hono instance
+   * @returns {Hono} routed Hono instance
+   *
+   * @example
+   * ```ts
+   * const app = new Hono()
+   * const app2 = new Hono()
+   *
+   * app2.get("/user", (c) => c.text("user"))
+   * app.route("/api", app2) // GET /api/user
+   * ```
+   */
+  route(path, app2) {
+    const subApp = this.basePath(path);
+    app2.routes.map((r) => {
+      let handler2;
+      if (app2.errorHandler === errorHandler) {
+        handler2 = r.handler;
+      } else {
+        handler2 = async (c, next) => (await compose([], app2.errorHandler)(c, () => r.handler(c, next))).res;
+        handler2[COMPOSED_HANDLER] = r.handler;
+      }
+      subApp.#addRoute(r.method, r.path, handler2);
+    });
+    return this;
+  }
+  /**
+   * `.basePath()` allows base paths to be specified.
+   *
+   * @see {@link https://hono.dev/docs/api/routing#base-path}
+   *
+   * @param {string} path - base Path
+   * @returns {Hono} changed Hono instance
+   *
+   * @example
+   * ```ts
+   * const api = new Hono().basePath('/api')
+   * ```
+   */
+  basePath(path) {
+    const subApp = this.#clone();
+    subApp._basePath = mergePath(this._basePath, path);
+    return subApp;
+  }
+  /**
+   * `.onError()` handles an error and returns a customized Response.
+   *
+   * @see {@link https://hono.dev/docs/api/hono#error-handling}
+   *
+   * @param {ErrorHandler} handler - request Handler for error
+   * @returns {Hono} changed Hono instance
+   *
+   * @example
+   * ```ts
+   * app.onError((err, c) => {
+   *   console.error(`${err}`)
+   *   return c.text('Custom Error Message', 500)
+   * })
+   * ```
+   */
+  onError = (handler2) => {
+    this.errorHandler = handler2;
+    return this;
+  };
+  /**
+   * `.notFound()` allows you to customize a Not Found Response.
+   *
+   * @see {@link https://hono.dev/docs/api/hono#not-found}
+   *
+   * @param {NotFoundHandler} handler - request handler for not-found
+   * @returns {Hono} changed Hono instance
+   *
+   * @example
+   * ```ts
+   * app.notFound((c) => {
+   *   return c.text('Custom 404 Message', 404)
+   * })
+   * ```
+   */
+  notFound = (handler2) => {
+    this.#notFoundHandler = handler2;
+    return this;
+  };
+  /**
+   * `.mount()` allows you to mount applications built with other frameworks into your Hono application.
+   *
+   * @see {@link https://hono.dev/docs/api/hono#mount}
+   *
+   * @param {string} path - base Path
+   * @param {Function} applicationHandler - other Request Handler
+   * @param {MountOptions} [options] - options of `.mount()`
+   * @returns {Hono} mounted Hono instance
+   *
+   * @example
+   * ```ts
+   * import { Router as IttyRouter } from 'itty-router'
+   * import { Hono } from 'hono'
+   * // Create itty-router application
+   * const ittyRouter = IttyRouter()
+   * // GET /itty-router/hello
+   * ittyRouter.get('/hello', () => new Response('Hello from itty-router'))
+   *
+   * const app = new Hono()
+   * app.mount('/itty-router', ittyRouter.handle)
+   * ```
+   *
+   * @example
+   * ```ts
+   * const app = new Hono()
+   * // Send the request to another application without modification.
+   * app.mount('/app', anotherApp, {
+   *   replaceRequest: (req) => req,
+   * })
+   * ```
+   */
+  mount(path, applicationHandler, options) {
+    let replaceRequest;
+    let optionHandler;
+    if (options) {
+      if (typeof options === "function") {
+        optionHandler = options;
+      } else {
+        optionHandler = options.optionHandler;
+        if (options.replaceRequest === false) {
+          replaceRequest = (request) => request;
+        } else {
+          replaceRequest = options.replaceRequest;
+        }
+      }
+    }
+    const getOptions = optionHandler ? (c) => {
+      const options2 = optionHandler(c);
+      return Array.isArray(options2) ? options2 : [options2];
+    } : (c) => {
+      let executionContext = void 0;
+      try {
+        executionContext = c.executionCtx;
+      } catch {
+      }
+      return [c.env, executionContext];
+    };
+    replaceRequest ||= (() => {
+      const mergedPath = mergePath(this._basePath, path);
+      const pathPrefixLength = mergedPath === "/" ? 0 : mergedPath.length;
+      return (request) => {
+        const url = new URL(request.url);
+        url.pathname = url.pathname.slice(pathPrefixLength) || "/";
+        return new Request(url, request);
+      };
+    })();
+    const handler2 = async (c, next) => {
+      const res = await applicationHandler(replaceRequest(c.req.raw), ...getOptions(c));
+      if (res) {
+        return res;
+      }
+      await next();
+    };
+    this.#addRoute(METHOD_NAME_ALL, mergePath(path, "*"), handler2);
+    return this;
+  }
+  #addRoute(method, path, handler2) {
+    method = method.toUpperCase();
+    path = mergePath(this._basePath, path);
+    const r = { basePath: this._basePath, path, method, handler: handler2 };
+    this.router.add(method, path, [handler2, r]);
+    this.routes.push(r);
+  }
+  #handleError(err, c) {
+    if (err instanceof Error) {
+      return this.errorHandler(err, c);
+    }
+    throw err;
+  }
+  #dispatch(request, executionCtx, env, method) {
+    if (method === "HEAD") {
+      return (async () => new Response(null, await this.#dispatch(request, executionCtx, env, "GET")))();
+    }
+    const path = this.getPath(request, { env });
+    const matchResult = this.router.match(method, path);
+    const c = new Context(request, {
+      path,
+      matchResult,
+      env,
+      executionCtx,
+      notFoundHandler: this.#notFoundHandler
+    });
+    if (matchResult[0].length === 1) {
+      let res;
+      try {
+        res = matchResult[0][0][0][0](c, async () => {
+          c.res = await this.#notFoundHandler(c);
+        });
+      } catch (err) {
+        return this.#handleError(err, c);
+      }
+      return res instanceof Promise ? res.then(
+        (resolved) => resolved || (c.finalized ? c.res : this.#notFoundHandler(c))
+      ).catch((err) => this.#handleError(err, c)) : res ?? this.#notFoundHandler(c);
+    }
+    const composed = compose(matchResult[0], this.errorHandler, this.#notFoundHandler);
+    return (async () => {
+      try {
+        const context = await composed(c);
+        if (!context.finalized) {
+          throw new Error(
+            "Context is not finalized. Did you forget to return a Response object or `await next()`?"
+          );
+        }
+        return context.res;
+      } catch (err) {
+        return this.#handleError(err, c);
+      }
+    })();
+  }
+  /**
+   * `.fetch()` will be entry point of your app.
+   *
+   * @see {@link https://hono.dev/docs/api/hono#fetch}
+   *
+   * @param {Request} request - request Object of request
+   * @param {Env} Env - env Object
+   * @param {ExecutionContext} - context of execution
+   * @returns {Response | Promise<Response>} response of request
+   *
+   */
+  fetch = (request, ...rest) => {
+    return this.#dispatch(request, rest[1], rest[0], request.method);
+  };
+  /**
+   * `.request()` is a useful method for testing.
+   * You can pass a URL or pathname to send a GET request.
+   * app will return a Response object.
+   * ```ts
+   * test('GET /hello is ok', async () => {
+   *   const res = await app.request('/hello')
+   *   expect(res.status).toBe(200)
+   * })
+   * ```
+   * @see https://hono.dev/docs/api/hono#request
+   */
+  request = (input, requestInit, Env, executionCtx) => {
+    if (input instanceof Request) {
+      return this.fetch(requestInit ? new Request(input, requestInit) : input, Env, executionCtx);
+    }
+    input = input.toString();
+    return this.fetch(
+      new Request(
+        /^https?:\/\//.test(input) ? input : `http://localhost${mergePath("/", input)}`,
+        requestInit
+      ),
+      Env,
+      executionCtx
+    );
+  };
+  /**
+   * `.fire()` automatically adds a global fetch event listener.
+   * This can be useful for environments that adhere to the Service Worker API, such as non-ES module Cloudflare Workers.
+   * @deprecated
+   * Use `fire` from `hono/service-worker` instead.
+   * ```ts
+   * import { Hono } from 'hono'
+   * import { fire } from 'hono/service-worker'
+   *
+   * const app = new Hono()
+   * // ...
+   * fire(app)
+   * ```
+   * @see https://hono.dev/docs/api/hono#fire
+   * @see https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API
+   * @see https://developers.cloudflare.com/workers/reference/migrate-to-module-workers/
+   */
+  fire = () => {
+    addEventListener("fetch", (event) => {
+      event.respondWith(this.#dispatch(event.request, event, void 0, event.request.method));
+    });
+  };
+};
+
+// node_modules/hono/dist/router/reg-exp-router/matcher.js
+var emptyParam = [];
+function match(method, path) {
+  const matchers = this.buildAllMatchers();
+  const match2 = ((method2, path2) => {
+    const matcher = matchers[method2] || matchers[METHOD_NAME_ALL];
+    const staticMatch = matcher[2][path2];
+    if (staticMatch) {
+      return staticMatch;
+    }
+    const match3 = path2.match(matcher[0]);
+    if (!match3) {
+      return [[], emptyParam];
+    }
+    const index = match3.indexOf("", 1);
+    return [matcher[1][index], match3];
+  });
+  this.match = match2;
+  return match2(method, path);
+}
+
+// node_modules/hono/dist/router/reg-exp-router/node.js
+var LABEL_REG_EXP_STR = "[^/]+";
+var ONLY_WILDCARD_REG_EXP_STR = ".*";
+var TAIL_WILDCARD_REG_EXP_STR = "(?:|/.*)";
+var PATH_ERROR = /* @__PURE__ */ Symbol();
+var regExpMetaChars = new Set(".\\+*[^]$()");
+function compareKey(a, b) {
+  if (a.length === 1) {
+    return b.length === 1 ? a < b ? -1 : 1 : -1;
+  }
+  if (b.length === 1) {
+    return 1;
+  }
+  if (a === ONLY_WILDCARD_REG_EXP_STR || a === TAIL_WILDCARD_REG_EXP_STR) {
+    return 1;
+  } else if (b === ONLY_WILDCARD_REG_EXP_STR || b === TAIL_WILDCARD_REG_EXP_STR) {
+    return -1;
+  }
+  if (a === LABEL_REG_EXP_STR) {
+    return 1;
+  } else if (b === LABEL_REG_EXP_STR) {
+    return -1;
+  }
+  return a.length === b.length ? a < b ? -1 : 1 : b.length - a.length;
+}
+var Node = class _Node {
+  #index;
+  #varIndex;
+  #children = /* @__PURE__ */ Object.create(null);
+  insert(tokens, index, paramMap, context, pathErrorCheckOnly) {
+    if (tokens.length === 0) {
+      if (this.#index !== void 0) {
+        throw PATH_ERROR;
+      }
+      if (pathErrorCheckOnly) {
+        return;
+      }
+      this.#index = index;
+      return;
+    }
+    const [token, ...restTokens] = tokens;
+    const pattern = token === "*" ? restTokens.length === 0 ? ["", "", ONLY_WILDCARD_REG_EXP_STR] : ["", "", LABEL_REG_EXP_STR] : token === "/*" ? ["", "", TAIL_WILDCARD_REG_EXP_STR] : token.match(/^\:([^\{\}]+)(?:\{(.+)\})?$/);
+    let node;
+    if (pattern) {
+      const name = pattern[1];
+      let regexpStr = pattern[2] || LABEL_REG_EXP_STR;
+      if (name && pattern[2]) {
+        if (regexpStr === ".*") {
+          throw PATH_ERROR;
+        }
+        regexpStr = regexpStr.replace(/^\((?!\?:)(?=[^)]+\)$)/, "(?:");
+        if (/\((?!\?:)/.test(regexpStr)) {
+          throw PATH_ERROR;
+        }
+      }
+      node = this.#children[regexpStr];
+      if (!node) {
+        if (Object.keys(this.#children).some(
+          (k) => k !== ONLY_WILDCARD_REG_EXP_STR && k !== TAIL_WILDCARD_REG_EXP_STR
+        )) {
+          throw PATH_ERROR;
+        }
+        if (pathErrorCheckOnly) {
+          return;
+        }
+        node = this.#children[regexpStr] = new _Node();
+        if (name !== "") {
+          node.#varIndex = context.varIndex++;
+        }
+      }
+      if (!pathErrorCheckOnly && name !== "") {
+        paramMap.push([name, node.#varIndex]);
+      }
+    } else {
+      node = this.#children[token];
+      if (!node) {
+        if (Object.keys(this.#children).some(
+          (k) => k.length > 1 && k !== ONLY_WILDCARD_REG_EXP_STR && k !== TAIL_WILDCARD_REG_EXP_STR
+        )) {
+          throw PATH_ERROR;
+        }
+        if (pathErrorCheckOnly) {
+          return;
+        }
+        node = this.#children[token] = new _Node();
+      }
+    }
+    node.insert(restTokens, index, paramMap, context, pathErrorCheckOnly);
+  }
+  buildRegExpStr() {
+    const childKeys = Object.keys(this.#children).sort(compareKey);
+    const strList = childKeys.map((k) => {
+      const c = this.#children[k];
+      return (typeof c.#varIndex === "number" ? `(${k})@${c.#varIndex}` : regExpMetaChars.has(k) ? `\\${k}` : k) + c.buildRegExpStr();
+    });
+    if (typeof this.#index === "number") {
+      strList.unshift(`#${this.#index}`);
+    }
+    if (strList.length === 0) {
+      return "";
+    }
+    if (strList.length === 1) {
+      return strList[0];
+    }
+    return "(?:" + strList.join("|") + ")";
+  }
+};
+
+// node_modules/hono/dist/router/reg-exp-router/trie.js
+var Trie = class {
+  #context = { varIndex: 0 };
+  #root = new Node();
+  insert(path, index, pathErrorCheckOnly) {
+    const paramAssoc = [];
+    const groups = [];
+    for (let i = 0; ; ) {
+      let replaced = false;
+      path = path.replace(/\{[^}]+\}/g, (m) => {
+        const mark = `@\\${i}`;
+        groups[i] = [mark, m];
+        i++;
+        replaced = true;
+        return mark;
+      });
+      if (!replaced) {
+        break;
+      }
+    }
+    const tokens = path.match(/(?::[^\/]+)|(?:\/\*$)|./g) || [];
+    for (let i = groups.length - 1; i >= 0; i--) {
+      const [mark] = groups[i];
+      for (let j = tokens.length - 1; j >= 0; j--) {
+        if (tokens[j].indexOf(mark) !== -1) {
+          tokens[j] = tokens[j].replace(mark, groups[i][1]);
+          break;
+        }
+      }
+    }
+    this.#root.insert(tokens, index, paramAssoc, this.#context, pathErrorCheckOnly);
+    return paramAssoc;
+  }
+  buildRegExp() {
+    let regexp = this.#root.buildRegExpStr();
+    if (regexp === "") {
+      return [/^$/, [], []];
+    }
+    let captureIndex = 0;
+    const indexReplacementMap = [];
+    const paramReplacementMap = [];
+    regexp = regexp.replace(/#(\d+)|@(\d+)|\.\*\$/g, (_, handlerIndex, paramIndex) => {
+      if (handlerIndex !== void 0) {
+        indexReplacementMap[++captureIndex] = Number(handlerIndex);
+        return "$()";
+      }
+      if (paramIndex !== void 0) {
+        paramReplacementMap[Number(paramIndex)] = ++captureIndex;
+        return "";
+      }
+      return "";
+    });
+    return [new RegExp(`^${regexp}`), indexReplacementMap, paramReplacementMap];
+  }
+};
+
+// node_modules/hono/dist/router/reg-exp-router/router.js
+var nullMatcher = [/^$/, [], /* @__PURE__ */ Object.create(null)];
+var wildcardRegExpCache = /* @__PURE__ */ Object.create(null);
+function buildWildcardRegExp(path) {
+  return wildcardRegExpCache[path] ??= new RegExp(
+    path === "*" ? "" : `^${path.replace(
+      /\/\*$|([.\\+*[^\]$()])/g,
+      (_, metaChar) => metaChar ? `\\${metaChar}` : "(?:|/.*)"
+    )}$`
+  );
+}
+function clearWildcardRegExpCache() {
+  wildcardRegExpCache = /* @__PURE__ */ Object.create(null);
+}
+function buildMatcherFromPreprocessedRoutes(routes) {
+  const trie = new Trie();
+  const handlerData = [];
+  if (routes.length === 0) {
+    return nullMatcher;
+  }
+  const routesWithStaticPathFlag = routes.map(
+    (route) => [!/\*|\/:/.test(route[0]), ...route]
+  ).sort(
+    ([isStaticA, pathA], [isStaticB, pathB]) => isStaticA ? 1 : isStaticB ? -1 : pathA.length - pathB.length
+  );
+  const staticMap = /* @__PURE__ */ Object.create(null);
+  for (let i = 0, j = -1, len = routesWithStaticPathFlag.length; i < len; i++) {
+    const [pathErrorCheckOnly, path, handlers] = routesWithStaticPathFlag[i];
+    if (pathErrorCheckOnly) {
+      staticMap[path] = [handlers.map(([h]) => [h, /* @__PURE__ */ Object.create(null)]), emptyParam];
+    } else {
+      j++;
+    }
+    let paramAssoc;
+    try {
+      paramAssoc = trie.insert(path, j, pathErrorCheckOnly);
+    } catch (e) {
+      throw e === PATH_ERROR ? new UnsupportedPathError(path) : e;
+    }
+    if (pathErrorCheckOnly) {
+      continue;
+    }
+    handlerData[j] = handlers.map(([h, paramCount]) => {
+      const paramIndexMap = /* @__PURE__ */ Object.create(null);
+      paramCount -= 1;
+      for (; paramCount >= 0; paramCount--) {
+        const [key, value] = paramAssoc[paramCount];
+        paramIndexMap[key] = value;
+      }
+      return [h, paramIndexMap];
+    });
+  }
+  const [regexp, indexReplacementMap, paramReplacementMap] = trie.buildRegExp();
+  for (let i = 0, len = handlerData.length; i < len; i++) {
+    for (let j = 0, len2 = handlerData[i].length; j < len2; j++) {
+      const map = handlerData[i][j]?.[1];
+      if (!map) {
+        continue;
+      }
+      const keys = Object.keys(map);
+      for (let k = 0, len3 = keys.length; k < len3; k++) {
+        map[keys[k]] = paramReplacementMap[map[keys[k]]];
+      }
+    }
+  }
+  const handlerMap = [];
+  for (const i in indexReplacementMap) {
+    handlerMap[i] = handlerData[indexReplacementMap[i]];
+  }
+  return [regexp, handlerMap, staticMap];
+}
+function findMiddleware(middleware, path) {
+  if (!middleware) {
+    return void 0;
+  }
+  for (const k of Object.keys(middleware).sort((a, b) => b.length - a.length)) {
+    if (buildWildcardRegExp(k).test(path)) {
+      return [...middleware[k]];
+    }
+  }
+  return void 0;
+}
+var RegExpRouter = class {
+  name = "RegExpRouter";
+  #middleware;
+  #routes;
+  constructor() {
+    this.#middleware = { [METHOD_NAME_ALL]: /* @__PURE__ */ Object.create(null) };
+    this.#routes = { [METHOD_NAME_ALL]: /* @__PURE__ */ Object.create(null) };
+  }
+  add(method, path, handler2) {
+    const middleware = this.#middleware;
+    const routes = this.#routes;
+    if (!middleware || !routes) {
+      throw new Error(MESSAGE_MATCHER_IS_ALREADY_BUILT);
+    }
+    if (!middleware[method]) {
+      ;
+      [middleware, routes].forEach((handlerMap) => {
+        handlerMap[method] = /* @__PURE__ */ Object.create(null);
+        Object.keys(handlerMap[METHOD_NAME_ALL]).forEach((p) => {
+          handlerMap[method][p] = [...handlerMap[METHOD_NAME_ALL][p]];
+        });
+      });
+    }
+    if (path === "/*") {
+      path = "*";
+    }
+    const paramCount = (path.match(/\/:/g) || []).length;
+    if (/\*$/.test(path)) {
+      const re = buildWildcardRegExp(path);
+      if (method === METHOD_NAME_ALL) {
+        Object.keys(middleware).forEach((m) => {
+          middleware[m][path] ||= findMiddleware(middleware[m], path) || findMiddleware(middleware[METHOD_NAME_ALL], path) || [];
+        });
+      } else {
+        middleware[method][path] ||= findMiddleware(middleware[method], path) || findMiddleware(middleware[METHOD_NAME_ALL], path) || [];
+      }
+      Object.keys(middleware).forEach((m) => {
+        if (method === METHOD_NAME_ALL || method === m) {
+          Object.keys(middleware[m]).forEach((p) => {
+            re.test(p) && middleware[m][p].push([handler2, paramCount]);
+          });
+        }
+      });
+      Object.keys(routes).forEach((m) => {
+        if (method === METHOD_NAME_ALL || method === m) {
+          Object.keys(routes[m]).forEach(
+            (p) => re.test(p) && routes[m][p].push([handler2, paramCount])
+          );
+        }
+      });
+      return;
+    }
+    const paths = checkOptionalParameter(path) || [path];
+    for (let i = 0, len = paths.length; i < len; i++) {
+      const path2 = paths[i];
+      Object.keys(routes).forEach((m) => {
+        if (method === METHOD_NAME_ALL || method === m) {
+          routes[m][path2] ||= [
+            ...findMiddleware(middleware[m], path2) || findMiddleware(middleware[METHOD_NAME_ALL], path2) || []
+          ];
+          routes[m][path2].push([handler2, paramCount - len + i + 1]);
+        }
+      });
+    }
+  }
+  match = match;
+  buildAllMatchers() {
+    const matchers = /* @__PURE__ */ Object.create(null);
+    Object.keys(this.#routes).concat(Object.keys(this.#middleware)).forEach((method) => {
+      matchers[method] ||= this.#buildMatcher(method);
+    });
+    this.#middleware = this.#routes = void 0;
+    clearWildcardRegExpCache();
+    return matchers;
+  }
+  #buildMatcher(method) {
+    const routes = [];
+    let hasOwnRoute = method === METHOD_NAME_ALL;
+    [this.#middleware, this.#routes].forEach((r) => {
+      const ownRoute = r[method] ? Object.keys(r[method]).map((path) => [path, r[method][path]]) : [];
+      if (ownRoute.length !== 0) {
+        hasOwnRoute ||= true;
+        routes.push(...ownRoute);
+      } else if (method !== METHOD_NAME_ALL) {
+        routes.push(
+          ...Object.keys(r[METHOD_NAME_ALL]).map((path) => [path, r[METHOD_NAME_ALL][path]])
+        );
+      }
+    });
+    if (!hasOwnRoute) {
+      return null;
+    } else {
+      return buildMatcherFromPreprocessedRoutes(routes);
+    }
+  }
+};
+
+// node_modules/hono/dist/router/smart-router/router.js
+var SmartRouter = class {
+  name = "SmartRouter";
+  #routers = [];
+  #routes = [];
+  constructor(init) {
+    this.#routers = init.routers;
+  }
+  add(method, path, handler2) {
+    if (!this.#routes) {
+      throw new Error(MESSAGE_MATCHER_IS_ALREADY_BUILT);
+    }
+    this.#routes.push([method, path, handler2]);
+  }
+  match(method, path) {
+    if (!this.#routes) {
+      throw new Error("Fatal error");
+    }
+    const routers = this.#routers;
+    const routes = this.#routes;
+    const len = routers.length;
+    let i = 0;
+    let res;
+    for (; i < len; i++) {
+      const router = routers[i];
+      try {
+        for (let i2 = 0, len2 = routes.length; i2 < len2; i2++) {
+          router.add(...routes[i2]);
+        }
+        res = router.match(method, path);
+      } catch (e) {
+        if (e instanceof UnsupportedPathError) {
+          continue;
+        }
+        throw e;
+      }
+      this.match = router.match.bind(router);
+      this.#routers = [router];
+      this.#routes = void 0;
+      break;
+    }
+    if (i === len) {
+      throw new Error("Fatal error");
+    }
+    this.name = `SmartRouter + ${this.activeRouter.name}`;
+    return res;
+  }
+  get activeRouter() {
+    if (this.#routes || this.#routers.length !== 1) {
+      throw new Error("No active router has been determined yet.");
+    }
+    return this.#routers[0];
+  }
+};
+
+// node_modules/hono/dist/router/trie-router/node.js
+var emptyParams = /* @__PURE__ */ Object.create(null);
+var hasChildren = (children) => {
+  for (const _ in children) {
+    return true;
+  }
+  return false;
+};
+var Node2 = class _Node2 {
+  #methods;
+  #children;
+  #patterns;
+  #order = 0;
+  #params = emptyParams;
+  constructor(method, handler2, children) {
+    this.#children = children || /* @__PURE__ */ Object.create(null);
+    this.#methods = [];
+    if (method && handler2) {
+      const m = /* @__PURE__ */ Object.create(null);
+      m[method] = { handler: handler2, possibleKeys: [], score: 0 };
+      this.#methods = [m];
+    }
+    this.#patterns = [];
+  }
+  insert(method, path, handler2) {
+    this.#order = ++this.#order;
+    let curNode = this;
+    const parts = splitRoutingPath(path);
+    const possibleKeys = [];
+    for (let i = 0, len = parts.length; i < len; i++) {
+      const p = parts[i];
+      const nextP = parts[i + 1];
+      const pattern = getPattern(p, nextP);
+      const key = Array.isArray(pattern) ? pattern[0] : p;
+      if (key in curNode.#children) {
+        curNode = curNode.#children[key];
+        if (pattern) {
+          possibleKeys.push(pattern[1]);
+        }
+        continue;
+      }
+      curNode.#children[key] = new _Node2();
+      if (pattern) {
+        curNode.#patterns.push(pattern);
+        possibleKeys.push(pattern[1]);
+      }
+      curNode = curNode.#children[key];
+    }
+    curNode.#methods.push({
+      [method]: {
+        handler: handler2,
+        possibleKeys: possibleKeys.filter((v, i, a) => a.indexOf(v) === i),
+        score: this.#order
+      }
+    });
+    return curNode;
+  }
+  #pushHandlerSets(handlerSets, node, method, nodeParams, params) {
+    for (let i = 0, len = node.#methods.length; i < len; i++) {
+      const m = node.#methods[i];
+      const handlerSet = m[method] || m[METHOD_NAME_ALL];
+      const processedSet = {};
+      if (handlerSet !== void 0) {
+        handlerSet.params = /* @__PURE__ */ Object.create(null);
+        handlerSets.push(handlerSet);
+        if (nodeParams !== emptyParams || params && params !== emptyParams) {
+          for (let i2 = 0, len2 = handlerSet.possibleKeys.length; i2 < len2; i2++) {
+            const key = handlerSet.possibleKeys[i2];
+            const processed = processedSet[handlerSet.score];
+            handlerSet.params[key] = params?.[key] && !processed ? params[key] : nodeParams[key] ?? params?.[key];
+            processedSet[handlerSet.score] = true;
+          }
+        }
+      }
+    }
+  }
+  search(method, path) {
+    const handlerSets = [];
+    this.#params = emptyParams;
+    const curNode = this;
+    let curNodes = [curNode];
+    const parts = splitPath(path);
+    const curNodesQueue = [];
+    const len = parts.length;
+    let partOffsets = null;
+    for (let i = 0; i < len; i++) {
+      const part = parts[i];
+      const isLast = i === len - 1;
+      const tempNodes = [];
+      for (let j = 0, len2 = curNodes.length; j < len2; j++) {
+        const node = curNodes[j];
+        const nextNode = node.#children[part];
+        if (nextNode) {
+          nextNode.#params = node.#params;
+          if (isLast) {
+            if (nextNode.#children["*"]) {
+              this.#pushHandlerSets(handlerSets, nextNode.#children["*"], method, node.#params);
+            }
+            this.#pushHandlerSets(handlerSets, nextNode, method, node.#params);
+          } else {
+            tempNodes.push(nextNode);
+          }
+        }
+        for (let k = 0, len3 = node.#patterns.length; k < len3; k++) {
+          const pattern = node.#patterns[k];
+          const params = node.#params === emptyParams ? {} : { ...node.#params };
+          if (pattern === "*") {
+            const astNode = node.#children["*"];
+            if (astNode) {
+              this.#pushHandlerSets(handlerSets, astNode, method, node.#params);
+              astNode.#params = params;
+              tempNodes.push(astNode);
+            }
+            continue;
+          }
+          const [key, name, matcher] = pattern;
+          if (!part && !(matcher instanceof RegExp)) {
+            continue;
+          }
+          const child = node.#children[key];
+          if (matcher instanceof RegExp) {
+            if (partOffsets === null) {
+              partOffsets = new Array(len);
+              let offset = path[0] === "/" ? 1 : 0;
+              for (let p = 0; p < len; p++) {
+                partOffsets[p] = offset;
+                offset += parts[p].length + 1;
+              }
+            }
+            const restPathString = path.substring(partOffsets[i]);
+            const m = matcher.exec(restPathString);
+            if (m) {
+              params[name] = m[0];
+              this.#pushHandlerSets(handlerSets, child, method, node.#params, params);
+              if (hasChildren(child.#children)) {
+                child.#params = params;
+                const componentCount = m[0].match(/\//)?.length ?? 0;
+                const targetCurNodes = curNodesQueue[componentCount] ||= [];
+                targetCurNodes.push(child);
+              }
+              continue;
+            }
+          }
+          if (matcher === true || matcher.test(part)) {
+            params[name] = part;
+            if (isLast) {
+              this.#pushHandlerSets(handlerSets, child, method, params, node.#params);
+              if (child.#children["*"]) {
+                this.#pushHandlerSets(
+                  handlerSets,
+                  child.#children["*"],
+                  method,
+                  params,
+                  node.#params
+                );
+              }
+            } else {
+              child.#params = params;
+              tempNodes.push(child);
+            }
+          }
+        }
+      }
+      const shifted = curNodesQueue.shift();
+      curNodes = shifted ? tempNodes.concat(shifted) : tempNodes;
+    }
+    if (handlerSets.length > 1) {
+      handlerSets.sort((a, b) => {
+        return a.score - b.score;
+      });
+    }
+    return [handlerSets.map(({ handler: handler2, params }) => [handler2, params])];
+  }
+};
+
+// node_modules/hono/dist/router/trie-router/router.js
+var TrieRouter = class {
+  name = "TrieRouter";
+  #node;
+  constructor() {
+    this.#node = new Node2();
+  }
+  add(method, path, handler2) {
+    const results = checkOptionalParameter(path);
+    if (results) {
+      for (let i = 0, len = results.length; i < len; i++) {
+        this.#node.insert(method, results[i], handler2);
+      }
+      return;
+    }
+    this.#node.insert(method, path, handler2);
+  }
+  match(method, path) {
+    return this.#node.search(method, path);
+  }
+};
+
+// node_modules/hono/dist/hono.js
+var Hono2 = class extends Hono {
+  /**
+   * Creates an instance of the Hono class.
+   *
+   * @param options - Optional configuration options for the Hono instance.
+   */
+  constructor(options = {}) {
+    super(options);
+    this.router = options.router ?? new SmartRouter({
+      routers: [new RegExpRouter(), new TrieRouter()]
+    });
+  }
+};
+
+// node_modules/hono/dist/middleware/cors/index.js
+var cors = (options) => {
+  const defaults = {
+    origin: "*",
+    allowMethods: ["GET", "HEAD", "PUT", "POST", "DELETE", "PATCH"],
+    allowHeaders: [],
+    exposeHeaders: []
+  };
+  const opts = {
+    ...defaults,
+    ...options
+  };
+  const findAllowOrigin = ((optsOrigin) => {
+    if (typeof optsOrigin === "string") {
+      if (optsOrigin === "*") {
+        if (opts.credentials) {
+          return (origin) => origin || null;
+        }
+        return () => optsOrigin;
+      } else {
+        return (origin) => optsOrigin === origin ? origin : null;
+      }
+    } else if (typeof optsOrigin === "function") {
+      return optsOrigin;
+    } else {
+      return (origin) => optsOrigin.includes(origin) ? origin : null;
+    }
+  })(opts.origin);
+  const findAllowMethods = ((optsAllowMethods) => {
+    if (typeof optsAllowMethods === "function") {
+      return optsAllowMethods;
+    } else if (Array.isArray(optsAllowMethods)) {
+      return () => optsAllowMethods;
+    } else {
+      return () => [];
+    }
+  })(opts.allowMethods);
+  return async function cors2(c, next) {
+    function set(key, value) {
+      c.res.headers.set(key, value);
+    }
+    const allowOrigin = await findAllowOrigin(c.req.header("origin") || "", c);
+    if (allowOrigin) {
+      set("Access-Control-Allow-Origin", allowOrigin);
+    }
+    if (opts.credentials) {
+      set("Access-Control-Allow-Credentials", "true");
+    }
+    if (opts.exposeHeaders?.length) {
+      set("Access-Control-Expose-Headers", opts.exposeHeaders.join(","));
+    }
+    if (c.req.method === "OPTIONS") {
+      if (opts.origin !== "*" || opts.credentials) {
+        set("Vary", "Origin");
+      }
+      if (opts.maxAge != null) {
+        set("Access-Control-Max-Age", opts.maxAge.toString());
+      }
+      const allowMethods = await findAllowMethods(c.req.header("origin") || "", c);
+      if (allowMethods.length) {
+        set("Access-Control-Allow-Methods", allowMethods.join(","));
+      }
+      let headers = opts.allowHeaders;
+      if (!headers?.length) {
+        const requestHeaders = c.req.header("Access-Control-Request-Headers");
+        if (requestHeaders) {
+          headers = requestHeaders.split(/\s*,\s*/);
+        }
+      }
+      if (headers?.length) {
+        set("Access-Control-Allow-Headers", headers.join(","));
+        c.res.headers.append("Vary", "Access-Control-Request-Headers");
+      }
+      c.res.headers.delete("Content-Length");
+      c.res.headers.delete("Content-Type");
+      return new Response(null, {
+        headers: c.res.headers,
+        status: 204,
+        statusText: "No Content"
+      });
+    }
+    await next();
+    if (opts.origin !== "*" || opts.credentials) {
+      c.header("Vary", "Origin", { append: true });
+    }
+  };
+};
+
+// src/index.tsx
+var app = new Hono2();
+app.use("*", cors());
+app.use("*", async (c, next) => {
+  await next();
+  const url = new URL(c.req.url);
+  const path = url.pathname;
+  c.res.headers.set("X-Frame-Options", "DENY");
+  c.res.headers.set("X-Content-Type-Options", "nosniff");
+  c.res.headers.set("X-XSS-Protection", "0");
+  c.res.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
+  c.res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  c.res.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), accelerometer=(), gyroscope=()");
+  c.res.headers.set("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
+  c.res.headers.set("Cross-Origin-Resource-Policy", "cross-origin");
   const csp = [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com",
@@ -43,165 +2176,156 @@ app.use('*', async (c, next) => {
     "base-uri 'self'",
     "form-action 'self'",
     "upgrade-insecure-requests"
-  ].join('; ')
-  c.res.headers.set('Content-Security-Policy', csp)
-
-  // ── Path-specific Cache-Control ──
-  if (path.startsWith('/static/') || path.startsWith('/images/')) {
-    const maxAge = path.startsWith('/images/') ? 604800 : 31536000
-    const immutable = path.startsWith('/static/') ? ', immutable' : ''
-    c.res.headers.set('Cache-Control', `public, max-age=${maxAge}${immutable}`)
-  } else if (path.startsWith('/api/')) {
-    c.res.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate')
+  ].join("; ");
+  c.res.headers.set("Content-Security-Policy", csp);
+  if (path.startsWith("/static/") || path.startsWith("/images/")) {
+    const maxAge = path.startsWith("/images/") ? 604800 : 31536e3;
+    const immutable = path.startsWith("/static/") ? ", immutable" : "";
+    c.res.headers.set("Cache-Control", `public, max-age=${maxAge}${immutable}`);
+  } else if (path.startsWith("/api/")) {
+    c.res.headers.set("Cache-Control", "no-store, no-cache, must-revalidate");
   }
-})
-
-// ─── Product type ────────────────────────────────────────────────────────────
-interface Product {
-  id: string; title: string; description: string; price: number
-  token: string; image: string; category: string; stock: number
-  seller_id: string; status: string; created_at: string; updated_at: string
+});
+var _memProducts = [];
+function nowISO() {
+  return (/* @__PURE__ */ new Date()).toISOString();
 }
-
-// ─── Storage Adapter — D1 when available, KV fallback, memory last resort ────
-// This prevents "Cannot read properties of undefined (reading 'prepare')" when
-// the D1 binding is not configured on the Cloudflare Pages project.
-
-// In-memory fallback (per-isolate, cleared on redeploy — only used when neither D1 nor KV is bound)
-let _memProducts: Product[] = []
-
-function nowISO() { return new Date().toISOString() }
-
-// KV helpers — products stored as JSON array under key 'products_v1'
-async function kvGetAll(kv: KVNamespace): Promise<Product[]> {
+async function kvGetAll(kv) {
   try {
-    const raw = await kv.get('products_v1')
-    return raw ? JSON.parse(raw) : []
-  } catch { return [] }
+    const raw2 = await kv.get("products_v1");
+    return raw2 ? JSON.parse(raw2) : [];
+  } catch {
+    return [];
+  }
 }
-async function kvSaveAll(kv: KVNamespace, products: Product[]): Promise<void> {
-  await kv.put('products_v1', JSON.stringify(products))
+async function kvSaveAll(kv, products) {
+  await kv.put("products_v1", JSON.stringify(products));
 }
-
-// ─── Unified product store ────────────────────────────────────────────────────
-const store = {
+var store = {
   // List products with optional filters
-  async list(env: Bindings, opts: { category?: string; seller?: string; q?: string }): Promise<{ products: Product[]; source: string }> {
+  async list(env, opts) {
     if (env.DB) {
       try {
-        let sql  = `SELECT * FROM products WHERE status = 'active'`
-        const params: string[] = []
-        if (opts.category) { sql += ` AND category = ?`; params.push(opts.category) }
-        if (opts.seller)   { sql += ` AND seller_id = ?`; params.push(opts.seller) }
-        if (opts.q)        { sql += ` AND (title LIKE ? OR description LIKE ?)`; params.push(`%${opts.q}%`, `%${opts.q}%`) }
-        sql += ` ORDER BY created_at DESC`
-        const stmt = env.DB.prepare(sql)
-        const { results } = await (params.length ? stmt.bind(...params) : stmt).all()
-        return { products: results as Product[], source: 'D1' }
-      } catch (e: any) {
-        console.error('D1 list error:', e.message)
+        let sql = `SELECT * FROM products WHERE status = 'active'`;
+        const params = [];
+        if (opts.category) {
+          sql += ` AND category = ?`;
+          params.push(opts.category);
+        }
+        if (opts.seller) {
+          sql += ` AND seller_id = ?`;
+          params.push(opts.seller);
+        }
+        if (opts.q) {
+          sql += ` AND (title LIKE ? OR description LIKE ?)`;
+          params.push(`%${opts.q}%`, `%${opts.q}%`);
+        }
+        sql += ` ORDER BY created_at DESC`;
+        const stmt = env.DB.prepare(sql);
+        const { results } = await (params.length ? stmt.bind(...params) : stmt).all();
+        return { products: results, source: "D1" };
+      } catch (e) {
+        console.error("D1 list error:", e.message);
       }
     }
-    // KV fallback
-    let all: Product[] = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts
-    let filtered = all.filter(p => p.status === 'active')
-    if (opts.category) filtered = filtered.filter(p => p.category === opts.category)
-    if (opts.seller)   filtered = filtered.filter(p => p.seller_id === opts.seller)
+    let all = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts;
+    let filtered = all.filter((p) => p.status === "active");
+    if (opts.category) filtered = filtered.filter((p) => p.category === opts.category);
+    if (opts.seller) filtered = filtered.filter((p) => p.seller_id === opts.seller);
     if (opts.q) {
-      const qLow = opts.q.toLowerCase()
-      filtered = filtered.filter(p =>
-        p.title.toLowerCase().includes(qLow) || p.description.toLowerCase().includes(qLow))
+      const qLow = opts.q.toLowerCase();
+      filtered = filtered.filter((p) => p.title.toLowerCase().includes(qLow) || p.description.toLowerCase().includes(qLow));
     }
-    filtered.sort((a,b) => b.created_at.localeCompare(a.created_at))
-    return { products: filtered, source: env.PRODUCTS_KV ? 'KV' : 'memory' }
+    filtered.sort((a, b) => b.created_at.localeCompare(a.created_at));
+    return { products: filtered, source: env.PRODUCTS_KV ? "KV" : "memory" };
   },
-
   // Get single product by id
-  async get(env: Bindings, id: string): Promise<Product | null> {
+  async get(env, id) {
     if (env.DB) {
       try {
-        const row = await env.DB.prepare(`SELECT * FROM products WHERE id = ? AND status = 'active'`).bind(id).first()
-        return (row as Product) || null
-      } catch (e: any) { console.error('D1 get error:', e.message) }
+        const row = await env.DB.prepare(`SELECT * FROM products WHERE id = ? AND status = 'active'`).bind(id).first();
+        return row || null;
+      } catch (e) {
+        console.error("D1 get error:", e.message);
+      }
     }
-    const all: Product[] = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts
-    return all.find(p => p.id === id && p.status === 'active') || null
+    const all = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts;
+    return all.find((p) => p.id === id && p.status === "active") || null;
   },
-
   // Get product by id (any status) — for seller operations
-  async getAny(env: Bindings, id: string): Promise<Product | null> {
+  async getAny(env, id) {
     if (env.DB) {
       try {
-        const row = await env.DB.prepare(`SELECT * FROM products WHERE id = ?`).bind(id).first()
-        return (row as Product) || null
-      } catch (e: any) { console.error('D1 getAny error:', e.message) }
+        const row = await env.DB.prepare(`SELECT * FROM products WHERE id = ?`).bind(id).first();
+        return row || null;
+      } catch (e) {
+        console.error("D1 getAny error:", e.message);
+      }
     }
-    const all: Product[] = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts
-    return all.find(p => p.id === id) || null
+    const all = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts;
+    return all.find((p) => p.id === id) || null;
   },
-
   // List products for a seller (all statuses except deleted)
-  async listBySeller(env: Bindings, address: string): Promise<Product[]> {
+  async listBySeller(env, address) {
     if (env.DB) {
       try {
         const { results } = await env.DB.prepare(
           `SELECT * FROM products WHERE seller_id = ? AND status != 'deleted' ORDER BY created_at DESC`
-        ).bind(address).all()
-        return results as Product[]
-      } catch (e: any) { console.error('D1 listBySeller error:', e.message) }
+        ).bind(address).all();
+        return results;
+      } catch (e) {
+        console.error("D1 listBySeller error:", e.message);
+      }
     }
-    const all: Product[] = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts
-    return all.filter(p => p.seller_id === address && p.status !== 'deleted')
-              .sort((a,b) => b.created_at.localeCompare(a.created_at))
+    const all = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts;
+    return all.filter((p) => p.seller_id === address && p.status !== "deleted").sort((a, b) => b.created_at.localeCompare(a.created_at));
   },
-
   // Create a product
-  async create(env: Bindings, data: Omit<Product,'id'|'status'|'created_at'|'updated_at'>): Promise<Product> {
-    const id = nanoid()
-    const now = nowISO()
-    const product: Product = { ...data, id, status: 'active', created_at: now, updated_at: now }
-
+  async create(env, data) {
+    const id = nanoid();
+    const now = nowISO();
+    const product = { ...data, id, status: "active", created_at: now, updated_at: now };
     if (env.DB) {
       try {
         await env.DB.prepare(`
           INSERT INTO products (id,title,description,price,token,image,category,stock,seller_id)
           VALUES (?,?,?,?,?,?,?,?,?)
-        `).bind(id, data.title, data.description, data.price, data.token, data.image, data.category, data.stock, data.seller_id).run()
-        const row = await env.DB.prepare(`SELECT * FROM products WHERE id = ?`).bind(id).first()
-        return (row as Product) || product
-      } catch (e: any) { console.error('D1 create error:', e.message) }
+        `).bind(id, data.title, data.description, data.price, data.token, data.image, data.category, data.stock, data.seller_id).run();
+        const row = await env.DB.prepare(`SELECT * FROM products WHERE id = ?`).bind(id).first();
+        return row || product;
+      } catch (e) {
+        console.error("D1 create error:", e.message);
+      }
     }
-    // KV / memory
-    const all: Product[] = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts
-    all.unshift(product)
-    if (env.PRODUCTS_KV) await kvSaveAll(env.PRODUCTS_KV, all)
-    else _memProducts = all
-    return product
+    const all = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts;
+    all.unshift(product);
+    if (env.PRODUCTS_KV) await kvSaveAll(env.PRODUCTS_KV, all);
+    else _memProducts = all;
+    return product;
   },
-
   // Update product status
-  async setStatus(env: Bindings, id: string, status: string): Promise<boolean> {
+  async setStatus(env, id, status) {
     if (env.DB) {
       try {
-        await env.DB.prepare(`UPDATE products SET status = ?, updated_at = datetime('now') WHERE id = ?`).bind(status, id).run()
-        return true
-      } catch (e: any) { console.error('D1 setStatus error:', e.message) }
+        await env.DB.prepare(`UPDATE products SET status = ?, updated_at = datetime('now') WHERE id = ?`).bind(status, id).run();
+        return true;
+      } catch (e) {
+        console.error("D1 setStatus error:", e.message);
+      }
     }
-    const all: Product[] = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts
-    const idx = all.findIndex(p => p.id === id)
-    if (idx < 0) return false
-    all[idx].status = status
-    all[idx].updated_at = nowISO()
-    if (env.PRODUCTS_KV) await kvSaveAll(env.PRODUCTS_KV, all)
-    else _memProducts = all
-    return true
+    const all = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts;
+    const idx = all.findIndex((p) => p.id === id);
+    if (idx < 0) return false;
+    all[idx].status = status;
+    all[idx].updated_at = nowISO();
+    if (env.PRODUCTS_KV) await kvSaveAll(env.PRODUCTS_KV, all);
+    else _memProducts = all;
+    return true;
   }
-}
-
-// ─── DB init (only when D1 is bound) ─────────────────────────────────────────
-let _dbReady = false
-async function initDB(db?: D1Database) {
-  if (!db || _dbReady) return
+};
+var _dbReady = false;
+async function initDB(db) {
+  if (!db || _dbReady) return;
   try {
     await db.prepare(`CREATE TABLE IF NOT EXISTS products (
       id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL,
@@ -210,412 +2334,336 @@ async function initDB(db?: D1Database) {
       seller_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )`).run()
-    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_products_seller ON products(seller_id)`).run()
-    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_products_status ON products(status)`).run()
-    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_products_cat ON products(category)`).run()
-    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_products_created ON products(created_at DESC)`).run()
-    _dbReady = true
-  } catch (e: any) {
-    console.error('initDB error (non-fatal):', e.message)
+    )`).run();
+    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_products_seller ON products(seller_id)`).run();
+    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_products_status ON products(status)`).run();
+    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_products_cat ON products(category)`).run();
+    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_products_created ON products(created_at DESC)`).run();
+    _dbReady = true;
+  } catch (e) {
+    console.error("initDB error (non-fatal):", e.message);
   }
 }
-
-function nanoid(): string {
-  return 'prod_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+function nanoid() {
+  return "prod_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
-
-// ─── Favicon ────────────────────────────────────────────────────────
-app.get('/favicon.ico', (c) => {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24"><path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="#dc2626"/></svg>`
-  return new Response(svg, { headers: { 'Content-Type': 'image/svg+xml' } })
-})
-
-// ─── Arc Network constants (server-side reference only) ─────────────
-const ARC = {
+app.get("/favicon.ico", (c) => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24"><path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="#dc2626"/></svg>`;
+  return new Response(svg, { headers: { "Content-Type": "image/svg+xml" } });
+});
+var ARC = {
   chainId: 5042002,
-  chainIdHex: '0x4CE2D2',
-  rpc: 'https://rpc.testnet.arc.network',
-  rpcAlt: 'https://rpc.blockdaemon.testnet.arc.network',
-  explorer: 'https://testnet.arcscan.app',
-  faucet: 'https://faucet.circle.com',
-  networkName: 'Arc Testnet',
-  currency: 'USDC',
+  chainIdHex: "0x4CE2D2",
+  rpc: "https://rpc.testnet.arc.network",
+  rpcAlt: "https://rpc.blockdaemon.testnet.arc.network",
+  explorer: "https://testnet.arcscan.app",
+  faucet: "https://faucet.circle.com",
+  networkName: "Arc Testnet",
+  currency: "USDC",
   contracts: {
-    USDC: '0x3600000000000000000000000000000000000000',
-    EURC: '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a',
-    Multicall3: '0xcA11bde05977b3631167028862bE2a173976CA11',
+    USDC: "0x3600000000000000000000000000000000000000",
+    EURC: "0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a",
+    Multicall3: "0xcA11bde05977b3631167028862bE2a173976CA11",
     // ShuklyEscrow: verified on ArcScan (testnet.arcscan.app)
     // Contract: ShuklyEscrow | solc 0.8.34 | optimizer: true, runs: 200 | MIT
     // Verified: https://testnet.arcscan.app/address/0x26f290dAe5A54f68b3191C79d710e2A8C2E5A511
-    ShuklyEscrow: '0x26f290dAe5A54f68b3191C79d710e2A8C2E5A511',
+    ShuklyEscrow: "0x26f290dAe5A54f68b3191C79d710e2A8C2E5A511"
   }
-}
-
-// ─── API Routes ──────────────────────────────────────────────────────
-
-// Arc config endpoint — used by frontend for chain setup
-app.get('/api/arc-config', (c) => {
-  return c.json({ arc: ARC })
-})
-
-// ─── Circle API helper ───────────────────────────────────────────────────────
-const CIRCLE_BASE_URL = 'https://api.circle.com/v1'
-
-async function circleRequest(
-  env: Bindings,
-  method: string,
-  path: string,
-  body?: unknown
-): Promise<{ ok: boolean; status: number; data: any }> {
-  const apiKey = env.CIRCLE_API_KEY
-  if (!apiKey) return { ok: false, status: 500, data: { error: 'CIRCLE_API_KEY not configured' } }
-
-  const headers: Record<string, string> = {
-    'Authorization': `Bearer ${apiKey}`,
-    'Content-Type': 'application/json',
-    'Accept': 'application/json',
-  }
-
-  const opts: RequestInit = { method, headers }
-  if (body && method !== 'GET') opts.body = JSON.stringify(body)
-
+};
+app.get("/api/arc-config", (c) => {
+  return c.json({ arc: ARC });
+});
+var CIRCLE_BASE_URL = "https://api.circle.com/v1";
+async function circleRequest(env, method, path, body) {
+  const apiKey = env.CIRCLE_API_KEY;
+  if (!apiKey) return { ok: false, status: 500, data: { error: "CIRCLE_API_KEY not configured" } };
+  const headers = {
+    "Authorization": `Bearer ${apiKey}`,
+    "Content-Type": "application/json",
+    "Accept": "application/json"
+  };
+  const opts = { method, headers };
+  if (body && method !== "GET") opts.body = JSON.stringify(body);
   try {
-    const res = await fetch(`${CIRCLE_BASE_URL}${path}`, opts)
-    const data = await res.json()
-    return { ok: res.ok, status: res.status, data }
-  } catch (e: any) {
-    return { ok: false, status: 500, data: { error: e.message } }
+    const res = await fetch(`${CIRCLE_BASE_URL}${path}`, opts);
+    const data = await res.json();
+    return { ok: res.ok, status: res.status, data };
+  } catch (e) {
+    return { ok: false, status: 500, data: { error: e.message } };
   }
 }
-
-// ─── Arc Commerce — Payment info & network endpoint ──────────────────────────
-// GET  /api/arc-payment/info — returns network info and token addresses
-app.get('/api/arc-payment/info', (c) => {
+app.get("/api/arc-payment/info", (c) => {
   return c.json({
-    network:   'Arc Testnet',
-    chainId:   ARC.chainId,
-    chainHex:  ARC.chainIdHex,
-    rpc:       ARC.rpc,
-    explorer:  ARC.explorer,
-    faucet:    ARC.faucet,
+    network: "Arc Testnet",
+    chainId: ARC.chainId,
+    chainHex: ARC.chainIdHex,
+    rpc: ARC.rpc,
+    explorer: ARC.explorer,
+    faucet: ARC.faucet,
     tokens: {
-      USDC: { address: ARC.contracts.USDC, decimals: 6, symbol: 'USDC', name: 'USD Coin' },
-      EURC: { address: ARC.contracts.EURC, decimals: 6, symbol: 'EURC', name: 'Euro Coin' },
+      USDC: { address: ARC.contracts.USDC, decimals: 6, symbol: "USDC", name: "USD Coin" },
+      EURC: { address: ARC.contracts.EURC, decimals: 6, symbol: "EURC", name: "Euro Coin" }
     },
     escrow: {
-      address:  ARC.contracts.ShuklyEscrow,
-      deployed: ARC.contracts.ShuklyEscrow !== '0x0000000000000000000000000000000000000000',
-      explorer: `${ARC.explorer}/address/${ARC.contracts.ShuklyEscrow}`,
+      address: ARC.contracts.ShuklyEscrow,
+      deployed: ARC.contracts.ShuklyEscrow !== "0x0000000000000000000000000000000000000000",
+      explorer: `${ARC.explorer}/address/${ARC.contracts.ShuklyEscrow}`
     },
     integration: {
-      name:        'Arc Commerce',
-      version:     '1.0.0',
-      description: 'Circle USDC payment layer — non-destructive extension',
-      source:      'https://github.com/circlefin/arc-commerce',
-      isTestnet:   true,
+      name: "Arc Commerce",
+      version: "1.0.0",
+      description: "Circle USDC payment layer \u2014 non-destructive extension",
+      source: "https://github.com/circlefin/arc-commerce",
+      isTestnet: true
     }
-  })
-})
-
-// POST /api/arc-payment/validate — validate payment inputs server-side
-app.post('/api/arc-payment/validate', async (c) => {
+  });
+});
+app.post("/api/arc-payment/validate", async (c) => {
   try {
-    const body = await c.req.json() as any
-    const { buyerAddress, sellerAddress, amount, token = 'USDC', orderId } = body
-
-    const errors: string[] = []
-
-    // Address validation (basic)
-    const addrRe = /^0x[0-9a-fA-F]{40}$/
-    if (!addrRe.test(buyerAddress))  errors.push('Invalid buyer address')
-    if (!addrRe.test(sellerAddress)) errors.push('Invalid seller address')
-    if (buyerAddress && sellerAddress &&
-        buyerAddress.toLowerCase() === sellerAddress.toLowerCase())
-      errors.push('Buyer and seller cannot be the same address')
+    const body = await c.req.json();
+    const { buyerAddress, sellerAddress, amount, token = "USDC", orderId } = body;
+    const errors = [];
+    const addrRe = /^0x[0-9a-fA-F]{40}$/;
+    if (!addrRe.test(buyerAddress)) errors.push("Invalid buyer address");
+    if (!addrRe.test(sellerAddress)) errors.push("Invalid seller address");
+    if (buyerAddress && sellerAddress && buyerAddress.toLowerCase() === sellerAddress.toLowerCase())
+      errors.push("Buyer and seller cannot be the same address");
     if (!amount || isNaN(Number(amount)) || Number(amount) <= 0)
-      errors.push('Amount must be a positive number')
-    if (!['USDC', 'EURC'].includes(token))
-      errors.push('Token must be USDC or EURC')
-    if (!orderId || typeof orderId !== 'string' || orderId.trim() === '')
-      errors.push('orderId is required')
-
+      errors.push("Amount must be a positive number");
+    if (!["USDC", "EURC"].includes(token))
+      errors.push("Token must be USDC or EURC");
+    if (!orderId || typeof orderId !== "string" || orderId.trim() === "")
+      errors.push("orderId is required");
     if (errors.length > 0) {
-      return c.json({ valid: false, errors }, 400)
+      return c.json({ valid: false, errors }, 400);
     }
-
     return c.json({
       valid: true,
       payment: {
-        orderId:         orderId.trim(),
-        buyerAddress:    buyerAddress.toLowerCase(),
-        sellerAddress:   sellerAddress.toLowerCase(),
-        amount:          Number(amount).toFixed(6),
+        orderId: orderId.trim(),
+        buyerAddress: buyerAddress.toLowerCase(),
+        sellerAddress: sellerAddress.toLowerCase(),
+        amount: Number(amount).toFixed(6),
         token,
-        tokenAddress:    token === 'EURC' ? ARC.contracts.EURC : ARC.contracts.USDC,
-        escrowAddress:   ARC.contracts.ShuklyEscrow,
-        network:         'Arc Testnet',
-        chainId:         ARC.chainId,
+        tokenAddress: token === "EURC" ? ARC.contracts.EURC : ARC.contracts.USDC,
+        escrowAddress: ARC.contracts.ShuklyEscrow,
+        network: "Arc Testnet",
+        chainId: ARC.chainId
       }
-    })
-  } catch (e: any) {
-    return c.json({ valid: false, errors: [e.message] }, 500)
+    });
+  } catch (e) {
+    return c.json({ valid: false, errors: [e.message] }, 500);
   }
-})
-
-// ─── Circle API proxy routes ─────────────────────────────────────────────────
-// All routes are server-side only — CIRCLE_API_KEY never exposed to frontend
-
-// GET /api/circle/ping — verify API key is valid
-app.get('/api/circle/ping', async (c) => {
-  const r = await circleRequest(c.env, 'GET', '/ping')
-  if (!r.ok) return c.json({ ok: false, error: r.data?.message || 'Circle API error', status: r.status }, r.status as any)
-  return c.json({ ok: true, message: 'Circle API reachable', data: r.data })
-})
-
-// GET /api/circle/config — return Circle network config for Arc Testnet (no key exposed)
-app.get('/api/circle/config', (c) => {
-  const hasKey = !!c.env.CIRCLE_API_KEY
+});
+app.get("/api/circle/ping", async (c) => {
+  const r = await circleRequest(c.env, "GET", "/ping");
+  if (!r.ok) return c.json({ ok: false, error: r.data?.message || "Circle API error", status: r.status }, r.status);
+  return c.json({ ok: true, message: "Circle API reachable", data: r.data });
+});
+app.get("/api/circle/config", (c) => {
+  const hasKey = !!c.env.CIRCLE_API_KEY;
   return c.json({
     configured: hasKey,
-    blockchain: 'ARC-TESTNET',
-    usdc_token_id: 'USDC-ARC-TESTNET',
-    network: 'Arc Testnet',
+    blockchain: "ARC-TESTNET",
+    usdc_token_id: "USDC-ARC-TESTNET",
+    network: "Arc Testnet",
     chain_id: ARC.chainId,
     usdc_address: ARC.contracts.USDC,
     eurc_address: ARC.contracts.EURC,
     explorer: ARC.explorer,
     faucet: ARC.faucet,
     // Key is never returned — only presence confirmed
-    key_status: hasKey ? 'configured' : 'missing',
-  })
-})
-
-// GET /api/circle/wallets — list Circle developer-controlled wallets
-app.get('/api/circle/wallets', async (c) => {
-  const r = await circleRequest(c.env, 'GET', '/developer/wallets')
-  if (!r.ok) return c.json({ ok: false, error: r.data?.message || 'Circle API error', status: r.status }, r.status as any)
-  return c.json({ ok: true, wallets: r.data?.data || [], count: r.data?.data?.length || 0 })
-})
-
-// GET /api/circle/wallet/:id/balance — get balance of a specific wallet
-app.get('/api/circle/wallet/:id/balance', async (c) => {
-  const walletId = c.req.param('id')
-  const r = await circleRequest(c.env, 'GET', `/developer/wallets/${walletId}/balances`)
-  if (!r.ok) return c.json({ ok: false, error: r.data?.message || 'Circle API error' }, r.status as any)
-  return c.json({ ok: true, balances: r.data?.data?.tokenBalances || [], walletId })
-})
-
-// POST /api/circle/transfer — initiate a USDC transfer via Circle API
-app.post('/api/circle/transfer', async (c) => {
+    key_status: hasKey ? "configured" : "missing"
+  });
+});
+app.get("/api/circle/wallets", async (c) => {
+  const r = await circleRequest(c.env, "GET", "/developer/wallets");
+  if (!r.ok) return c.json({ ok: false, error: r.data?.message || "Circle API error", status: r.status }, r.status);
+  return c.json({ ok: true, wallets: r.data?.data || [], count: r.data?.data?.length || 0 });
+});
+app.get("/api/circle/wallet/:id/balance", async (c) => {
+  const walletId = c.req.param("id");
+  const r = await circleRequest(c.env, "GET", `/developer/wallets/${walletId}/balances`);
+  if (!r.ok) return c.json({ ok: false, error: r.data?.message || "Circle API error" }, r.status);
+  return c.json({ ok: true, balances: r.data?.data?.tokenBalances || [], walletId });
+});
+app.post("/api/circle/transfer", async (c) => {
   try {
-    const body = await c.req.json() as any
-    const { sourceWalletId, destinationAddress, amount, idempotencyKey } = body
-
+    const body = await c.req.json();
+    const { sourceWalletId, destinationAddress, amount, idempotencyKey } = body;
     if (!sourceWalletId || !destinationAddress || !amount)
-      return c.json({ ok: false, error: 'Missing required fields: sourceWalletId, destinationAddress, amount' }, 400)
-
-    const addrRe = /^0x[0-9a-fA-F]{40}$/
+      return c.json({ ok: false, error: "Missing required fields: sourceWalletId, destinationAddress, amount" }, 400);
+    const addrRe = /^0x[0-9a-fA-F]{40}$/;
     if (!addrRe.test(destinationAddress))
-      return c.json({ ok: false, error: 'Invalid destination address' }, 400)
-
+      return c.json({ ok: false, error: "Invalid destination address" }, 400);
     if (isNaN(Number(amount)) || Number(amount) <= 0)
-      return c.json({ ok: false, error: 'Amount must be a positive number' }, 400)
-
+      return c.json({ ok: false, error: "Amount must be a positive number" }, 400);
     const payload = {
       idempotencyKey: idempotencyKey || crypto.randomUUID(),
-      source: { type: 'wallet', id: sourceWalletId },
-      destination: { type: 'blockchain', address: destinationAddress, chain: 'ARC' },
-      amount: { amount: Number(amount).toFixed(6), currency: 'USD' },
-    }
-
-    const r = await circleRequest(c.env, 'POST', '/transfers', payload)
-    if (!r.ok) return c.json({ ok: false, error: r.data?.message || 'Transfer failed', details: r.data }, r.status as any)
-    return c.json({ ok: true, transfer: r.data?.data, message: 'Transfer initiated' })
-  } catch (e: any) {
-    return c.json({ ok: false, error: e.message }, 500)
+      source: { type: "wallet", id: sourceWalletId },
+      destination: { type: "blockchain", address: destinationAddress, chain: "ARC" },
+      amount: { amount: Number(amount).toFixed(6), currency: "USD" }
+    };
+    const r = await circleRequest(c.env, "POST", "/transfers", payload);
+    if (!r.ok) return c.json({ ok: false, error: r.data?.message || "Transfer failed", details: r.data }, r.status);
+    return c.json({ ok: true, transfer: r.data?.data, message: "Transfer initiated" });
+  } catch (e) {
+    return c.json({ ok: false, error: e.message }, 500);
   }
-})
-
-// GET /api/circle/transfer/:id — get transfer status
-app.get('/api/circle/transfer/:id', async (c) => {
-  const transferId = c.req.param('id')
-  const r = await circleRequest(c.env, 'GET', `/transfers/${transferId}`)
-  if (!r.ok) return c.json({ ok: false, error: r.data?.message || 'Circle API error' }, r.status as any)
-  return c.json({ ok: true, transfer: r.data?.data })
-})
-
-// ─── Products CRUD (off-chain D1 database) ──────────────────────────────────
-
-// GET /api/products — list all active products (optional ?category=&seller=&q=)
-app.get('/api/products', async (c) => {
+});
+app.get("/api/circle/transfer/:id", async (c) => {
+  const transferId = c.req.param("id");
+  const r = await circleRequest(c.env, "GET", `/transfers/${transferId}`);
+  if (!r.ok) return c.json({ ok: false, error: r.data?.message || "Circle API error" }, r.status);
+  return c.json({ ok: true, transfer: r.data?.data });
+});
+app.get("/api/products", async (c) => {
   try {
-    await initDB(c.env.DB)
+    await initDB(c.env.DB);
     const { products, source } = await store.list(c.env, {
-      category: c.req.query('category') || '',
-      seller:   c.req.query('seller')   || '',
-      q:        c.req.query('q')        || ''
-    })
-    return c.json({ products, total: products.length, source })
-  } catch (e: any) {
-    return c.json({ products: [], total: 0, source: 'error', error: e.message })
+      category: c.req.query("category") || "",
+      seller: c.req.query("seller") || "",
+      q: c.req.query("q") || ""
+    });
+    return c.json({ products, total: products.length, source });
+  } catch (e) {
+    return c.json({ products: [], total: 0, source: "error", error: e.message });
   }
-})
-
-// GET /api/products/:id — single product
-app.get('/api/products/:id', async (c) => {
+});
+app.get("/api/products/:id", async (c) => {
   try {
-    await initDB(c.env.DB)
-    const product = await store.get(c.env, c.req.param('id'))
-    if (!product) return c.json({ error: 'Product not found', product: null }, 404)
-    return c.json({ product })
-  } catch (e: any) {
-    return c.json({ error: e.message, product: null }, 500)
+    await initDB(c.env.DB);
+    const product = await store.get(c.env, c.req.param("id"));
+    if (!product) return c.json({ error: "Product not found", product: null }, 404);
+    return c.json({ product });
+  } catch (e) {
+    return c.json({ error: e.message, product: null }, 500);
   }
-})
-
-// POST /api/products — create a product
-app.post('/api/products', async (c) => {
+});
+app.post("/api/products", async (c) => {
   try {
-    await initDB(c.env.DB)
-    const body = await c.req.json() as any
-    const { title, description, price, token = 'USDC', image = '', category = 'Other', stock = 1, seller_id } = body
-    // Validate required fields
+    await initDB(c.env.DB);
+    const body = await c.req.json();
+    const { title, description, price, token = "USDC", image = "", category = "Other", stock = 1, seller_id } = body;
     if (!title || !description || !price || !seller_id)
-      return c.json({ error: 'Missing required fields: title, description, price, seller_id' }, 400)
+      return c.json({ error: "Missing required fields: title, description, price, seller_id" }, 400);
     if (Number(price) <= 0)
-      return c.json({ error: 'Price must be greater than 0' }, 400)
-    if (!['USDC','EURC'].includes(token))
-      return c.json({ error: 'Token must be USDC or EURC' }, 400)
+      return c.json({ error: "Price must be greater than 0" }, 400);
+    if (!["USDC", "EURC"].includes(token))
+      return c.json({ error: "Token must be USDC or EURC" }, 400);
     const product = await store.create(c.env, {
       title: String(title).trim(),
       description: String(description).trim(),
       price: Number(price),
       token: String(token),
-      image: String(image || ''),
+      image: String(image || ""),
       category: String(category),
       stock: Number(stock) || 1,
       seller_id: String(seller_id)
-    })
-    return c.json({ product, success: true }, 201)
-  } catch (e: any) {
-    return c.json({ error: e.message }, 500)
+    });
+    return c.json({ product, success: true }, 201);
+  } catch (e) {
+    return c.json({ error: e.message }, 500);
   }
-})
-
-// DELETE /api/products/:id — soft-delete (seller only)
-app.delete('/api/products/:id', async (c) => {
+});
+app.delete("/api/products/:id", async (c) => {
   try {
-    await initDB(c.env.DB)
-    const { seller_id } = await c.req.json() as any
-    const row = await store.getAny(c.env, c.req.param('id'))
-    if (!row)                          return c.json({ error: 'Product not found' }, 404)
-    if (row.seller_id !== seller_id)   return c.json({ error: 'Unauthorized' }, 403)
-    await store.setStatus(c.env, c.req.param('id'), 'deleted')
-    return c.json({ success: true })
-  } catch (e: any) {
-    return c.json({ error: e.message }, 500)
+    await initDB(c.env.DB);
+    const { seller_id } = await c.req.json();
+    const row = await store.getAny(c.env, c.req.param("id"));
+    if (!row) return c.json({ error: "Product not found" }, 404);
+    if (row.seller_id !== seller_id) return c.json({ error: "Unauthorized" }, 403);
+    await store.setStatus(c.env, c.req.param("id"), "deleted");
+    return c.json({ success: true });
+  } catch (e) {
+    return c.json({ error: e.message }, 500);
   }
-})
-
-// PATCH /api/products/:id/status — pause, resume, delete (seller only)
-app.patch('/api/products/:id/status', async (c) => {
+});
+app.patch("/api/products/:id/status", async (c) => {
   try {
-    await initDB(c.env.DB)
-    const { seller_id, status } = await c.req.json() as any
-    if (!['active','paused','deleted'].includes(status))
-      return c.json({ error: 'Invalid status. Use active, paused, or deleted' }, 400)
-    const row = await store.getAny(c.env, c.req.param('id'))
-    if (!row)                          return c.json({ error: 'Product not found' }, 404)
-    if (row.seller_id !== seller_id)   return c.json({ error: 'Unauthorized' }, 403)
-    await store.setStatus(c.env, c.req.param('id'), status)
-    return c.json({ success: true, status })
-  } catch (e: any) {
-    return c.json({ error: e.message }, 500)
+    await initDB(c.env.DB);
+    const { seller_id, status } = await c.req.json();
+    if (!["active", "paused", "deleted"].includes(status))
+      return c.json({ error: "Invalid status. Use active, paused, or deleted" }, 400);
+    const row = await store.getAny(c.env, c.req.param("id"));
+    if (!row) return c.json({ error: "Product not found" }, 404);
+    if (row.seller_id !== seller_id) return c.json({ error: "Unauthorized" }, 403);
+    await store.setStatus(c.env, c.req.param("id"), status);
+    return c.json({ success: true, status });
+  } catch (e) {
+    return c.json({ error: e.message }, 500);
   }
-})
-
-// GET /api/seller/:address/products — all products (active + paused) for seller dashboard
-app.get('/api/seller/:address/products', async (c) => {
+});
+app.get("/api/seller/:address/products", async (c) => {
   try {
-    await initDB(c.env.DB)
-    const products = await store.listBySeller(c.env, c.req.param('address'))
-    return c.json({ products, total: products.length })
-  } catch (e: any) {
-    return c.json({ products: [], total: 0, error: e.message })
+    await initDB(c.env.DB);
+    const products = await store.listBySeller(c.env, c.req.param("address"));
+    return c.json({ products, total: products.length });
+  } catch (e) {
+    return c.json({ products: [], total: 0, error: e.message });
   }
-})
-
-// Orders: returns empty — orders come from real escrow contract state
-app.get('/api/orders', (c) => {
+});
+app.get("/api/orders", (c) => {
   return c.json({
     orders: [],
     total: 0,
-    source: 'escrow_contract',
-    message: 'No orders yet.'
-  })
-})
-
-// Stats: fetched from blockchain in real-time (frontend calls RPC)
-app.get('/api/stats', (c) => {
+    source: "escrow_contract",
+    message: "No orders yet."
+  });
+});
+app.get("/api/stats", (c) => {
   return c.json({
-    note: 'Stats are fetched live from Arc Network — see /api/arc-config for RPC endpoint',
+    note: "Stats are fetched live from Arc Network \u2014 see /api/arc-config for RPC endpoint",
     explorer: ARC.explorer,
     faucet: ARC.faucet
-  })
-})
-
-// ─── POST /api/orders — save order metadata after on-chain escrow tx ────────
-// Called by frontend AFTER createEscrow + fundEscrow are confirmed on-chain.
-// txHash must be a real 0x... hash — never a placeholder.
-app.post('/api/orders', async (c) => {
-  const body = await c.req.json() as any
+  });
+});
+app.post("/api/orders", async (c) => {
+  const body = await c.req.json();
   if (!body.txHash || !body.buyerAddress || !body.sellerAddress) {
-    return c.json({ error: 'Missing required fields: txHash, buyerAddress, sellerAddress' }, 400)
+    return c.json({ error: "Missing required fields: txHash, buyerAddress, sellerAddress" }, 400);
   }
-  // Reject fake placeholder hashes
-  if (body.txHash.startsWith('PENDING_') || body.txHash === '0x') {
-    return c.json({ error: 'Invalid txHash — must be a real on-chain transaction hash' }, 400)
+  if (body.txHash.startsWith("PENDING_") || body.txHash === "0x") {
+    return c.json({ error: "Invalid txHash \u2014 must be a real on-chain transaction hash" }, 400);
   }
-  const escrowAddr = (c.env as any).SHUKLY_ESCROW_ADDRESS || ARC.contracts.ShuklyEscrow
+  const escrowAddr = c.env.SHUKLY_ESCROW_ADDRESS || ARC.contracts.ShuklyEscrow;
   const order = {
-    id:              body.orderId || `ORD-${Date.now()}`,
-    txHash:          body.txHash,
-    fundTxHash:      body.fundTxHash   || null,    // fundEscrow tx hash
-    buyerAddress:    body.buyerAddress,
-    sellerAddress:   body.sellerAddress,
-    escrowContract:  escrowAddr,                   // always ShuklyEscrow address
-    orderId32:       body.orderId32    || null,     // bytes32 used on-chain
-    amount:          body.amount,
-    token:           body.token,
-    productId:       body.productId,
-    items:           body.items        || [],
-    status:          'escrow_locked',
-    createdAt:       new Date().toISOString(),
-    explorerUrl:     `${ARC.explorer}/tx/${body.fundTxHash || body.txHash}`
-  }
-  return c.json({ order, success: true })
-})
-
-// ─── GET /api/escrow/address — returns the deployed ShuklyEscrow address ─────
-app.get('/api/escrow/address', (c) => {
-  const addr = (c.env as any).SHUKLY_ESCROW_ADDRESS || ARC.contracts.ShuklyEscrow
+    id: body.orderId || `ORD-${Date.now()}`,
+    txHash: body.txHash,
+    fundTxHash: body.fundTxHash || null,
+    // fundEscrow tx hash
+    buyerAddress: body.buyerAddress,
+    sellerAddress: body.sellerAddress,
+    escrowContract: escrowAddr,
+    // always ShuklyEscrow address
+    orderId32: body.orderId32 || null,
+    // bytes32 used on-chain
+    amount: body.amount,
+    token: body.token,
+    productId: body.productId,
+    items: body.items || [],
+    status: "escrow_locked",
+    createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+    explorerUrl: `${ARC.explorer}/tx/${body.fundTxHash || body.txHash}`
+  };
+  return c.json({ order, success: true });
+});
+app.get("/api/escrow/address", (c) => {
+  const addr = c.env.SHUKLY_ESCROW_ADDRESS || ARC.contracts.ShuklyEscrow;
   return c.json({
     address: addr,
-    deployed: addr !== '0x0000000000000000000000000000000000000000',
-    verified: addr === '0x26f290dAe5A54f68b3191C79d710e2A8C2E5A511',
+    deployed: addr !== "0x0000000000000000000000000000000000000000",
+    verified: addr === "0x26f290dAe5A54f68b3191C79d710e2A8C2E5A511",
     explorer: `${ARC.explorer}/address/${addr}`,
     verified_url: `https://testnet.arcscan.app/address/${addr}`
-  })
-})
-
-// ─── GET /api/escrow/abi — returns the verified ABI from ArcScan ─────────────
-app.get('/api/escrow/abi', async (c) => {
+  });
+});
+app.get("/api/escrow/abi", async (c) => {
   try {
-    const addr = (c.env as any).SHUKLY_ESCROW_ADDRESS || ARC.contracts.ShuklyEscrow
-    const resp = await fetch(`https://testnet.arcscan.app/api/v2/smart-contracts/${addr}`)
-    if (!resp.ok) throw new Error(`ArcScan API error: ${resp.status}`)
-    const data: any = await resp.json()
+    const addr = c.env.SHUKLY_ESCROW_ADDRESS || ARC.contracts.ShuklyEscrow;
+    const resp = await fetch(`https://testnet.arcscan.app/api/v2/smart-contracts/${addr}`);
+    if (!resp.ok) throw new Error(`ArcScan API error: ${resp.status}`);
+    const data = await resp.json();
     return c.json({
       address: addr,
       abi: data.abi,
@@ -628,118 +2676,87 @@ app.get('/api/escrow/abi', async (c) => {
       is_fully_verified: data.is_fully_verified,
       verified_at: data.verified_at,
       explorer_url: `https://testnet.arcscan.app/address/${addr}`
-    })
-  } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    });
+  } catch (err) {
+    return c.json({ error: err.message }, 500);
   }
-})
-
-// ─── POST /api/escrow/save-address — saves deployed contract address ─────────
-// Called from /deploy-escrow page after owner deploys the contract via MetaMask.
-app.post('/api/escrow/save-address', async (c) => {
-  const body = await c.req.json() as any
-  if (!body.address || !body.address.startsWith('0x') || body.address.length !== 42) {
-    return c.json({ error: 'Invalid address' }, 400)
+});
+app.post("/api/escrow/save-address", async (c) => {
+  const body = await c.req.json();
+  if (!body.address || !body.address.startsWith("0x") || body.address.length !== 42) {
+    return c.json({ error: "Invalid address" }, 400);
   }
-  // In production, this should persist to KV or D1.
-  // For now we return the address so the frontend can store it in localStorage.
-  return c.json({ success: true, address: body.address, message: 'Store SHUKLY_ESCROW_ADDRESS as a Cloudflare secret to persist across deployments.' })
-})
-
-// AI search: returns empty state since no real products exist yet
-app.post('/api/ai-search', async (c) => {
+  return c.json({ success: true, address: body.address, message: "Store SHUKLY_ESCROW_ADDRESS as a Cloudflare secret to persist across deployments." });
+});
+app.post("/api/ai-search", async (c) => {
   try {
-    const { query, context } = await c.req.json()
-    await initDB(c.env.DB)
-    
-    // Get all products from database
-    const allProducts = await store.list(c.env)
-    
-    // Build context-aware response
-    let message = ''
-    let results = []
-    
-    if (!query || query.trim() === '') {
-      message = context?.page === 'product' && context?.productName
-        ? `I can help you with "${context.productName}" or find similar items. What would you like to know?`
-        : 'Ask me about products, prices, or how to buy on Arc Network!'
-      results = allProducts.slice(0, 3)
+    const { query, context } = await c.req.json();
+    await initDB(c.env.DB);
+    const allProducts = await store.list(c.env);
+    let message = "";
+    let results = [];
+    if (!query || query.trim() === "") {
+      message = context?.page === "product" && context?.productName ? `I can help you with "${context.productName}" or find similar items. What would you like to know?` : "Ask me about products, prices, or how to buy on Arc Network!";
+      results = allProducts.slice(0, 3);
     } else {
-      // Search products
-      const searchTerm = query.toLowerCase()
-      results = allProducts.filter(p => 
-        p.title.toLowerCase().includes(searchTerm) ||
-        p.description.toLowerCase().includes(searchTerm) ||
-        p.category.toLowerCase().includes(searchTerm)
-      )
-      
-      // Context-aware message
+      const searchTerm = query.toLowerCase();
+      results = allProducts.filter(
+        (p) => p.title.toLowerCase().includes(searchTerm) || p.description.toLowerCase().includes(searchTerm) || p.category.toLowerCase().includes(searchTerm)
+      );
       if (results.length > 0) {
-        message = context?.page === 'product' && context?.productName
-          ? `Found ${results.length} product${results.length > 1 ? 's' : ''} matching "${query}". Here are some options similar to "${context.productName}":`
-          : `Found ${results.length} product${results.length > 1 ? 's' : ''} for "${query}" on Arc Network:`
+        message = context?.page === "product" && context?.productName ? `Found ${results.length} product${results.length > 1 ? "s" : ""} matching "${query}". Here are some options similar to "${context.productName}":` : `Found ${results.length} product${results.length > 1 ? "s" : ""} for "${query}" on Arc Network:`;
       } else {
-        message = context?.page === 'product'
-          ? `No exact matches for "${query}". Here are other products you might like:`
-          : `No products found for "${query}". Try searching by category (Electronics, Fashion, etc.) or browse all items!`
-        results = allProducts.slice(0, 3) // Show some suggestions
+        message = context?.page === "product" ? `No exact matches for "${query}". Here are other products you might like:` : `No products found for "${query}". Try searching by category (Electronics, Fashion, etc.) or browse all items!`;
+        results = allProducts.slice(0, 3);
       }
     }
-    
-    // Format results
-    const formattedResults = results.slice(0, 5).map(p => ({
+    const formattedResults = results.slice(0, 5).map((p) => ({
       id: p.id,
       name: p.title,
       price: p.price,
       token: p.token,
       category: p.category
-    }))
-    
-    return c.json({ message, results: formattedResults })
+    }));
+    return c.json({ message, results: formattedResults });
   } catch (error) {
     return c.json({
-      message: 'Error searching products. Please try again.',
+      message: "Error searching products. Please try again.",
       results: []
-    })
+    });
   }
-})
-
-// ─── Pages ───────────────────────────────────────────────────────────
-app.get('/', (c) => c.html(homePage()))
-app.get('/marketplace', (c) => c.html(marketplacePage()))
-// ─── API routes for product page ────────────────────────────────────────────
-app.get('/product/:id', async (c) => {
+});
+app.get("/", (c) => c.html(homePage()));
+app.get("/marketplace", (c) => c.html(marketplacePage()));
+app.get("/product/:id", async (c) => {
   try {
-    await initDB(c.env.DB)
-    const product = await store.get(c.env, c.req.param('id'))
-    if (product) return c.html(productPage(product))
-  } catch {}
-  return c.html(productNotFoundPage(c.req.param('id')))
-})
-app.get('/cart', (c) => c.html(cartPage()))
-app.get('/checkout', (c) => c.html(checkoutPage()))
-app.get('/wallet', (c) => c.html(walletPage()))
-app.get('/wallet/create', (c) => c.redirect('/wallet'))
-app.get('/wallet/import', (c) => c.redirect('/wallet'))
-app.get('/orders', (c) => c.html(ordersPage()))
-app.get('/orders/:id', (c) => c.html(orderDetailPage(c.req.param('id'))))
-app.get('/sell', (c) => c.html(sellPage()))
-app.get('/dashboard', (c) => c.html(sellerDashboardPage()))
-app.get('/profile', (c) => c.html(profilePage()))
-app.get('/register', (c) => c.html(registerPage()))
-app.get('/login', (c) => c.html(loginPage()))
-app.get('/disputes', (c) => c.html(disputesPage()))
-app.get('/notifications', (c) => c.html(notificationsPage()))
-app.get('/terms', (c) => c.html(termsPage()))
-app.get('/privacy', (c) => c.html(privacyPage()))
-app.get('/disclaimer', (c) => c.html(disclaimerPage()))
-app.get('/about', (c) => c.html(aboutPage()))
-app.get('/deploy-escrow', (c) => c.html(deployEscrowPage()))
-
-export default app
-
-// ─── ARC CONFIG (injected into every page for client-side use) ───────
-const ARC_CLIENT_CONFIG = JSON.stringify({
+    await initDB(c.env.DB);
+    const product = await store.get(c.env, c.req.param("id"));
+    if (product) return c.html(productPage(product));
+  } catch {
+  }
+  return c.html(productNotFoundPage(c.req.param("id")));
+});
+app.get("/cart", (c) => c.html(cartPage()));
+app.get("/checkout", (c) => c.html(checkoutPage()));
+app.get("/wallet", (c) => c.html(walletPage()));
+app.get("/wallet/create", (c) => c.redirect("/wallet"));
+app.get("/wallet/import", (c) => c.redirect("/wallet"));
+app.get("/orders", (c) => c.html(ordersPage()));
+app.get("/orders/:id", (c) => c.html(orderDetailPage(c.req.param("id"))));
+app.get("/sell", (c) => c.html(sellPage()));
+app.get("/dashboard", (c) => c.html(sellerDashboardPage()));
+app.get("/profile", (c) => c.html(profilePage()));
+app.get("/register", (c) => c.html(registerPage()));
+app.get("/login", (c) => c.html(loginPage()));
+app.get("/disputes", (c) => c.html(disputesPage()));
+app.get("/notifications", (c) => c.html(notificationsPage()));
+app.get("/terms", (c) => c.html(termsPage()));
+app.get("/privacy", (c) => c.html(privacyPage()));
+app.get("/disclaimer", (c) => c.html(disclaimerPage()));
+app.get("/about", (c) => c.html(aboutPage()));
+app.get("/deploy-escrow", (c) => c.html(deployEscrowPage()));
+var src_default = app;
+var ARC_CLIENT_CONFIG = JSON.stringify({
   chainId: ARC.chainId,
   chainIdHex: ARC.chainIdHex,
   rpc: ARC.rpc,
@@ -749,10 +2766,8 @@ const ARC_CLIENT_CONFIG = JSON.stringify({
   networkName: ARC.networkName,
   currency: ARC.currency,
   contracts: ARC.contracts
-})
-
-// ─── HTML Shell ───────────────────────────────────────────────────────
-function shell(title: string, body: string, extraHead = '') {
+});
+function shell(title, body, extraHead = "") {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -761,7 +2776,7 @@ function shell(title: string, body: string, extraHead = '') {
   <title>${title} | Shukly Store</title>
   
   <!-- Open Graph Meta Tags -->
-  <meta property="og:title" content="Shukly Store – Web3 Marketplace"/>
+  <meta property="og:title" content="Shukly Store \u2013 Web3 Marketplace"/>
   <meta property="og:description" content="Decentralized marketplace powered by smart contracts on Arc Testnet. Explore, test, and experience Web3 commerce in a secure environment."/>
   <meta property="og:image" content="https://www.genspark.ai/api/files/s/eSPDBk0I"/>
   <meta property="og:url" content="https://shukly-store.pages.dev/"/>
@@ -770,7 +2785,7 @@ function shell(title: string, body: string, extraHead = '') {
   
   <!-- Twitter Card Meta Tags -->
   <meta name="twitter:card" content="summary_large_image"/>
-  <meta name="twitter:title" content="Shukly Store – Web3 Marketplace"/>
+  <meta name="twitter:title" content="Shukly Store \u2013 Web3 Marketplace"/>
   <meta name="twitter:description" content="Decentralized marketplace powered by smart contracts on Arc Testnet. Explore, test, and experience Web3 commerce in a secure environment."/>
   <meta name="twitter:image" content="https://www.genspark.ai/api/files/s/eSPDBk0I"/>
   
@@ -869,17 +2884,17 @@ function shell(title: string, body: string, extraHead = '') {
   </script>
   <!-- ethers.js v6 via CDN for wallet + RPC interaction -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
-  <!-- Arc Commerce — Circle USDC payment service layer (non-destructive extension) -->
+  <!-- Arc Commerce \u2014 Circle USDC payment service layer (non-destructive extension) -->
   <script src="/static/arcPayments.js" defer></script>
 </head>
 <body>
   <!-- Testnet Banner -->
   <div id="testnet-banner" role="alert" aria-label="Testnet notice">
-    <span class="banner-text">⚠️ This app is running on <strong>TESTNET</strong>. All transactions are for testing purposes only.</span>
+    <span class="banner-text">\u26A0\uFE0F This app is running on <strong>TESTNET</strong>. All transactions are for testing purposes only.</span>
     <button class="banner-close" onclick="dismissTestnetBanner()" aria-label="Dismiss testnet banner" title="Dismiss">&#x2715;</button>
   </div>
   <script>
-    // Testnet banner dismiss — runs before DOMContentLoaded for zero flicker
+    // Testnet banner dismiss \u2014 runs before DOMContentLoaded for zero flicker
     (function(){
       if(localStorage.getItem('hideTestnetBanner')==='true'){
         var b=document.getElementById('testnet-banner');
@@ -901,19 +2916,17 @@ function shell(title: string, body: string, extraHead = '') {
   ${toastContainer()}
   ${globalScript()}
 </body>
-</html>`
+</html>`;
 }
-
-// ─── Global Script (Arc wallet + balance logic) ───────────────────────
 function globalScript() {
   return `<script>
-// ══════════════════════════════════════════════════════════════
-//  ARC NETWORK — Real wallet integration
+// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+//  ARC NETWORK \u2014 Real wallet integration
 //  Chain ID: 5042002 (Arc Testnet)
 //  RPC: https://rpc.testnet.arc.network
 //  USDC: 0x3600000000000000000000000000000000000000 (6 dec)
 //  EURC: 0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a (6 dec)
-// ══════════════════════════════════════════════════════════════
+// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
 
 const ARC_CHAIN_ID = window.ARC.chainId;
 const ARC_CHAIN_ID_HEX = window.ARC.chainIdHex;
@@ -922,8 +2935,8 @@ const ARC_EXPLORER = window.ARC.explorer;
 const USDC_ADDRESS = window.ARC.contracts.USDC;
 const EURC_ADDRESS = window.ARC.contracts.EURC;
 
-// ShuklyEscrow address — loaded from localStorage (set after deploy) or ARC config
-// Priority: localStorage override → ARC config (hardcoded) → zero address (not deployed)
+// ShuklyEscrow address \u2014 loaded from localStorage (set after deploy) or ARC config
+// Priority: localStorage override \u2192 ARC config (hardcoded) \u2192 zero address (not deployed)
 function getEscrowAddress() {
   const local = localStorage.getItem('shukly_escrow_address');
   if (local && local !== '0x0000000000000000000000000000000000000000') return local;
@@ -948,7 +2961,7 @@ const ERC20_ABI = [
   'function allowance(address owner, address spender) view returns (uint256)'
 ];
 
-// ─── ShuklyEscrow ABI — direct wallet calls (no relayer) ────────────────
+// \u2500\u2500\u2500 ShuklyEscrow ABI \u2014 direct wallet calls (no relayer) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 // States: 0=EMPTY, 1=FUNDED, 2=CONFIRMED, 3=RELEASED, 4=REFUNDED, 5=DISPUTED
 const ESCROW_ABI = [
   'function createEscrow(bytes32 orderId, address seller, address token, uint256 amount) external',
@@ -969,7 +2982,7 @@ const ESCROW_ABI = [
   'event DisputeOpened(bytes32 indexed orderId, address indexed opener)'
 ];
 
-// ─ Toast ──────────────────────────────────────────────────────
+// \u2500 Toast \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 function showToast(msg, type='info') {
   const t = document.getElementById('global-toast');
   if (!t) return;
@@ -978,14 +2991,14 @@ function showToast(msg, type='info') {
   setTimeout(() => { t.className = 'toast ' + type }, 4000);
 }
 
-// ─────────────────────────────────────────────────────────────────
-//  CartStore  — single source of truth, key = "cart"
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+//  CartStore  \u2014 single source of truth, key = "cart"
 //  Structure per item: { id, title, price, currency, quantity, image }
-// ─────────────────────────────────────────────────────────────────
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 const CART_KEY = 'cart';
 
 const CartStore = {
-  /** Read cart from localStorage — always fresh */
+  /** Read cart from localStorage \u2014 always fresh */
   getCart() {
     try { return JSON.parse(localStorage.getItem(CART_KEY) || '[]'); }
     catch { return []; }
@@ -1089,23 +3102,23 @@ const CartStore = {
   }
 };
 
-// ── Backward-compat shims (keep old call-sites working) ────────────
+// \u2500\u2500 Backward-compat shims (keep old call-sites working) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 function getCart()          { return CartStore.getCart(); }
 function saveCart(c)        { CartStore._save(c); }
 function addToCart(product) { CartStore.addToCart(product); }
 function updateCartBadge()  { CartStore._syncBadge(); }
 
-// ─ Wallet state ────────────────────────────────────────────────
+// \u2500 Wallet state \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 let _walletAddress = null;
 let _walletProvider = null;
 let _ethersProvider = null;
 
-// ══════════════════════════════════════════════════════════════
-//  AES-256-GCM Wallet Encryption — Web Crypto API (client-side only)
+// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+//  AES-256-GCM Wallet Encryption \u2014 Web Crypto API (client-side only)
 //  Keys derived via PBKDF2 (SHA-256, 200_000 iterations, 256-bit)
-//  Storage key: rh_wallet_enc  (encrypted)  → persistent
-//  Session key: rh_wallet_sess (plain JSON) → sessionStorage only
-// ══════════════════════════════════════════════════════════════
+//  Storage key: rh_wallet_enc  (encrypted)  \u2192 persistent
+//  Session key: rh_wallet_sess (plain JSON) \u2192 sessionStorage only
+// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
 
 async function _walletDeriveKey(password, salt) {
   const enc = new TextEncoder();
@@ -1185,7 +3198,7 @@ async function unlockWallet(password) {
   } catch { return null; }
 }
 
-// getStoredWallet — returns active wallet from session OR legacy plain rh_wallet
+// getStoredWallet \u2014 returns active wallet from session OR legacy plain rh_wallet
 function getStoredWallet() {
   // 1. Check session (unlocked this tab/session)
   try {
@@ -1207,7 +3220,7 @@ function getStoredWallet() {
   return null;
 }
 
-// storeWallet — legacy plain text (used by MetaMask connect flow)
+// storeWallet \u2014 legacy plain text (used by MetaMask connect flow)
 function storeWallet(w) {
   localStorage.setItem('rh_wallet', JSON.stringify(w));
   sessionStorage.setItem('rh_wallet_sess', JSON.stringify(w));
@@ -1221,11 +3234,11 @@ function clearWallet() {
 
 function updateWalletBadge(address) {
   const el = document.getElementById('wallet-badge');
-  if (el) el.textContent = address ? address.substring(0,8)+'…' : 'Wallet';
+  if (el) el.textContent = address ? address.substring(0,8)+'\u2026' : 'Wallet';
   _walletAddress = address || null;
 }
 
-// ─ Arc Network chain helpers ───────────────────────────────────
+// \u2500 Arc Network chain helpers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 async function switchToArc() {
   if (!window.ethereum) return false;
   try {
@@ -1262,7 +3275,7 @@ async function isOnArcNetwork() {
   } catch { return false; }
 }
 
-// ─ Real balance fetch from Arc Network RPC ─────────────────────
+// \u2500 Real balance fetch from Arc Network RPC \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 async function fetchArcBalances(address) {
   if (!address) return { usdc: '0.00', eurc: '0.00', raw: { usdc: 0n, eurc: 0n } };
   try {
@@ -1303,11 +3316,11 @@ async function fetchArcBalances(address) {
     };
   } catch (err) {
     console.error('Balance fetch error:', err.message);
-    return { usdc: '—', eurc: '—', error: err.message, raw: { usdc: 0n, eurc: 0n } };
+    return { usdc: '\u2014', eurc: '\u2014', error: err.message, raw: { usdc: 0n, eurc: 0n } };
   }
 }
 
-// ─ Connect wallet ──────────────────────────────────────────────
+// \u2500 Connect wallet \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 async function connectWallet(type) {
   if (type === 'metamask') {
     if (!window.ethereum) {
@@ -1316,7 +3329,7 @@ async function connectWallet(type) {
       return;
     }
     try {
-      showToast('Connecting to MetaMask…', 'info');
+      showToast('Connecting to MetaMask\u2026', 'info');
       const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
       if (!accounts.length) { showToast('No accounts found', 'error'); return; }
       const address = accounts[0];
@@ -1324,7 +3337,7 @@ async function connectWallet(type) {
       // Switch to Arc Network
       const onArc = await isOnArcNetwork();
       if (!onArc) {
-        showToast('Switching to Arc Testnet…', 'info');
+        showToast('Switching to Arc Testnet\u2026', 'info');
         const switched = await switchToArc();
         if (!switched) {
           showToast('Please manually switch to Arc Testnet (Chain ID: 5042002)', 'warning');
@@ -1365,7 +3378,7 @@ async function connectWallet(type) {
   }
 }
 
-// ─ Disconnect wallet ───────────────────────────────────────────
+// \u2500 Disconnect wallet \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 function disconnectWallet() {
   clearWallet();
   _walletAddress = null;
@@ -1374,7 +3387,7 @@ function disconnectWallet() {
   setTimeout(() => location.reload(), 800);
 }
 
-// ─ Wallet event listeners (MetaMask) ──────────────────────────
+// \u2500 Wallet event listeners (MetaMask) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 function setupWalletListeners() {
   if (!window.ethereum) return;
   window.ethereum.on('accountsChanged', (accounts) => {
@@ -1389,7 +3402,7 @@ function setupWalletListeners() {
         stored.address = accounts[0];
         storeWallet(stored);
         updateWalletBadge(accounts[0]);
-        showToast('Account changed: ' + accounts[0].substring(0,10) + '…', 'info');
+        showToast('Account changed: ' + accounts[0].substring(0,10) + '\u2026', 'info');
         setTimeout(() => location.reload(), 800);
       }
     }
@@ -1399,7 +3412,7 @@ function setupWalletListeners() {
     if (newChain !== ARC_CHAIN_ID) {
       showToast('Wrong network! Please switch to Arc Testnet (Chain ID: 5042002)', 'warning');
     } else {
-      showToast('Connected to Arc Testnet ✓', 'success');
+      showToast('Connected to Arc Testnet \u2713', 'success');
     }
     setTimeout(() => location.reload(), 1000);
   });
@@ -1410,7 +3423,7 @@ function setupWalletListeners() {
   });
 }
 
-// ─ Fetch real tx history from Arc explorer API ─────────────────
+// \u2500 Fetch real tx history from Arc explorer API \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 async function fetchTxHistory(address, limit = 10) {
   if (!address) return [];
   try {
@@ -1422,7 +3435,7 @@ async function fetchTxHistory(address, limit = 10) {
   } catch { return []; }
 }
 
-// ─ Network indicator banner ────────────────────────────────────
+// \u2500 Network indicator banner \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 async function checkNetworkStatus(containerEl) {
   if (!containerEl) return;
   if (!window.ethereum) {
@@ -1433,7 +3446,7 @@ async function checkNetworkStatus(containerEl) {
     const chainId = await window.ethereum.request({ method: 'eth_chainId' });
     const current = parseInt(chainId, 16);
     if (current === ARC_CHAIN_ID) {
-      containerEl.innerHTML = '<div class="network-ok"><i class="fas fa-circle text-green-500"></i>Connected to <strong>Arc Testnet</strong> (Chain ID: 5042002) · <a href="' + ARC_EXPLORER + '" target="_blank" class="underline ml-1">Explorer</a></div>';
+      containerEl.innerHTML = '<div class="network-ok"><i class="fas fa-circle text-green-500"></i>Connected to <strong>Arc Testnet</strong> (Chain ID: 5042002) \xB7 <a href="' + ARC_EXPLORER + '" target="_blank" class="underline ml-1">Explorer</a></div>';
     } else {
       containerEl.innerHTML = '<div class="network-warning"><i class="fas fa-exclamation-triangle"></i>Wrong network (Chain ID: ' + current + '). <button onclick="switchToArc().then(()=>location.reload())" class="underline ml-1 font-bold">Switch to Arc Testnet</button></div>';
     }
@@ -1442,9 +3455,9 @@ async function checkNetworkStatus(containerEl) {
   }
 }
 
-// ─ Init on every page ─────────────────────────────────────────
+// \u2500 Init on every page \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 document.addEventListener('DOMContentLoaded', () => {
-  // 1. Migrate any items saved under old localStorage keys → canonical 'cart'
+  // 1. Migrate any items saved under old localStorage keys \u2192 canonical 'cart'
   CartStore._migrate();
   // 2. Hydrate cart badge
   updateCartBadge();
@@ -1466,7 +3479,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
-// ─ Transaction Confirmation Modal ─────────────────────────────
+// \u2500 Transaction Confirmation Modal \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 function showTxConfirmModal({ action, amount, token, network, note }) {
   return new Promise((resolve) => {
     // Remove any existing modal
@@ -1497,14 +3510,12 @@ function showTxConfirmModal({ action, amount, token, network, note }) {
   });
 }
 
-// ─ Chat toggle ────────────────────────────────────────────────
+// \u2500 Chat toggle \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 function toggleChat() {
   document.getElementById('chat-panel').classList.toggle('hidden');
 }
-</script>`
+</script>`;
 }
-
-// ─── Navbar ───────────────────────────────────────────────────────────
 function navbar() {
   return `<nav>
   <div class="max-w-7xl mx-auto px-4 flex items-center justify-between h-16 gap-4">
@@ -1519,7 +3530,7 @@ function navbar() {
     </a>
     <div class="hidden md:flex flex-1 max-w-xl mx-4">
       <div class="relative w-full">
-        <input id="nav-search" type="text" placeholder="Search products on Arc Network…" class="w-full pl-10 pr-20 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100 bg-slate-50"/>
+        <input id="nav-search" type="text" placeholder="Search products on Arc Network\u2026" class="w-full pl-10 pr-20 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100 bg-slate-50"/>
         <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm"></i>
         <button onclick="handleNavSearch()" class="absolute right-2 top-1/2 -translate-y-1/2 bg-red-600 text-white px-3 py-1 rounded-lg text-xs font-semibold hover:bg-red-700">Search</button>
       </div>
@@ -1557,14 +3568,11 @@ function navbar() {
     }
     document.getElementById('nav-search')?.addEventListener('keydown', e => { if(e.key==='Enter') handleNavSearch() });
   </script>
-</nav>`
+</nav>`;
 }
-
 function toastContainer() {
-  return `<div id="global-toast" class="toast"></div>`
+  return `<div id="global-toast" class="toast"></div>`;
 }
-
-// ─── AI Chat Widget ───────────────────────────────────────────────────
 function chatWidget() {
   return `
 <button onclick="toggleChat()" class="fixed bottom-6 right-6 w-14 h-14 rounded-full bg-gradient-to-br from-red-500 to-red-800 text-white shadow-xl flex items-center justify-center text-xl hover:scale-110 transition-transform z-[300]" title="HawkAI Assistant">
@@ -1586,13 +3594,13 @@ function chatWidget() {
     </div>
     <div id="chat-messages" class="p-4 h-[420px] overflow-y-auto flex flex-col gap-3 bg-gray-50">
       <div class="chat-bubble-ai text-sm text-slate-700">
-        👋 Hi! I'm <strong>HawkAI</strong>, your Web3 shopping assistant.<br/><br/>
+        \u{1F44B} Hi! I'm <strong>HawkAI</strong>, your Web3 shopping assistant.<br/><br/>
         The marketplace is live on <strong>Arc Network</strong> (Chain ID: 5042002).<br/>
         Ask me about products, escrow protection, or how to buy!
       </div>
     </div>
     <div class="p-3 bg-white border-t border-slate-100 flex gap-2">
-      <input id="chat-input" type="text" placeholder="Ask about products, prices, or how to buy…" class="flex-1 input py-2 text-sm" onkeydown="if(event.key==='Enter')sendChatMessage()"/>
+      <input id="chat-input" type="text" placeholder="Ask about products, prices, or how to buy\u2026" class="flex-1 input py-2 text-sm" onkeydown="if(event.key==='Enter')sendChatMessage()"/>
       <button onclick="sendChatMessage()" class="btn-primary py-2 px-3 text-sm"><i class="fas fa-paper-plane"></i></button>
     </div>
   </div>
@@ -1628,7 +3636,7 @@ async function sendChatMessage(overrideText) {
   
   const msgs = document.getElementById('chat-messages');
   msgs.innerHTML += '<div class="flex justify-end"><div class="chat-bubble-user text-sm text-slate-700">' + query + '</div></div>';
-  msgs.innerHTML += '<div id="ai-typing" class="chat-bubble-ai text-sm text-slate-500 flex items-center gap-2"><div class="loading-spinner"></div> Searching Arc Network…</div>';
+  msgs.innerHTML += '<div id="ai-typing" class="chat-bubble-ai text-sm text-slate-500 flex items-center gap-2"><div class="loading-spinner"></div> Searching Arc Network\u2026</div>';
   msgs.scrollTop = msgs.scrollHeight;
   
   try {
@@ -1655,20 +3663,18 @@ async function sendChatMessage(overrideText) {
       });
       html += '</div>';
     } else {
-      html += '<p class="text-slate-400 text-xs mt-1">💡 Get test USDC/EURC at <a href="' + ARC.faucet + '" target="_blank" class="text-blue-600 underline">faucet.circle.com</a></p>';
+      html += '<p class="text-slate-400 text-xs mt-1">\u{1F4A1} Get test USDC/EURC at <a href="' + ARC.faucet + '" target="_blank" class="text-blue-600 underline">faucet.circle.com</a></p>';
     }
     html += '</div>';
     msgs.innerHTML += html;
   } catch {
     document.getElementById('ai-typing')?.remove();
-    msgs.innerHTML += '<div class="chat-bubble-ai text-sm text-red-500">Search error — Arc Network may be temporarily unreachable.</div>';
+    msgs.innerHTML += '<div class="chat-bubble-ai text-sm text-red-500">Search error \u2014 Arc Network may be temporarily unreachable.</div>';
   }
   msgs.scrollTop = msgs.scrollHeight;
 }
-</script>`
+</script>`;
 }
-
-// ─── Footer ───────────────────────────────────────────────────────────
 function footer() {
   return `<footer style="background:#0f172a;border-top:1px solid #1e293b;padding:32px 0 0;">
     <div class="max-w-7xl mx-auto px-4">
@@ -1684,10 +3690,10 @@ function footer() {
             </div>
             <span class="font-bold text-white text-sm">Shukly<span class="text-amber-400"> Store</span></span>
           </div>
-          <p class="text-xs text-slate-500 leading-relaxed mb-3 max-w-xs">Decentralized marketplace on Arc Network — Circle's stablecoin-native L1.</p>
+          <p class="text-xs text-slate-500 leading-relaxed mb-3 max-w-xs">Decentralized marketplace on Arc Network \u2014 Circle's stablecoin-native L1.</p>
           <div class="flex items-center gap-3 text-xs">
             <span class="flex items-center gap-1.5 text-green-400"><span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse inline-block"></span>Arc Testnet</span>
-            <span class="text-slate-600">·</span>
+            <span class="text-slate-600">\xB7</span>
             <span class="text-slate-500">Chain 5042002</span>
           </div>
         </div>
@@ -1696,7 +3702,10 @@ function footer() {
         <div>
           <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Marketplace</p>
           <ul class="space-y-1.5">
-            ${['Browse:/marketplace','Sell:/sell','Dashboard:/dashboard','My Orders:/orders','Disputes:/disputes'].map(t=>{const[l,u]=t.split(':');return`<li><a href="${u}" class="text-xs text-slate-500 hover:text-red-400 transition-colors">${l}</a></li>`}).join('')}
+            ${["Browse:/marketplace", "Sell:/sell", "Dashboard:/dashboard", "My Orders:/orders", "Disputes:/disputes"].map((t) => {
+    const [l, u] = t.split(":");
+    return `<li><a href="${u}" class="text-xs text-slate-500 hover:text-red-400 transition-colors">${l}</a></li>`;
+  }).join("")}
           </ul>
         </div>
 
@@ -1704,7 +3713,10 @@ function footer() {
         <div>
           <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Wallet</p>
           <ul class="space-y-1.5">
-            ${['My Wallet:/wallet','Profile:/profile'].map(t=>{const[l,u]=t.split(':');return`<li><a href="${u}" class="text-xs text-slate-500 hover:text-red-400 transition-colors">${l}</a></li>`}).join('')}
+            ${["My Wallet:/wallet", "Profile:/profile"].map((t) => {
+    const [l, u] = t.split(":");
+    return `<li><a href="${u}" class="text-xs text-slate-500 hover:text-red-400 transition-colors">${l}</a></li>`;
+  }).join("")}
           </ul>
         </div>
 
@@ -1720,7 +3732,7 @@ function footer() {
         </div>
       </div>
 
-      <!-- Notices row — compact alert strip -->
+      <!-- Notices row \u2014 compact alert strip -->
       <div class="py-3 border-b border-slate-800">
         <div class="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-500">
           <span><i class="fas fa-exclamation-circle text-yellow-500 mr-1"></i><strong class="text-slate-400">Testnet:</strong> No real funds. Testing only.</span>
@@ -1731,44 +3743,41 @@ function footer() {
 
       <!-- Bottom bar -->
       <div class="py-3 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-600">
-        <span>© 2024 Shukly Store · Built on Arc Network (Circle)</span>
+        <span>\xA9 2024 Shukly Store \xB7 Built on Arc Network (Circle)</span>
         <div class="flex items-center gap-3 flex-wrap justify-center">
           <a href="https://github.com/julenosinger/redhawk-store" target="_blank" class="flex items-center gap-1 hover:text-white transition-colors"><i class="fab fa-github"></i> GitHub</a>
-          <span class="text-slate-700">·</span>
+          <span class="text-slate-700">\xB7</span>
           <a href="https://testnet.arcscan.app/address/${ARC.contracts.FxEscrow}" target="_blank" class="flex items-center gap-1 hover:text-red-400 transition-colors"><i class="fas fa-file-contract text-xs"></i> Escrow</a>
-          <span class="text-slate-700">·</span>
+          <span class="text-slate-700">\xB7</span>
           <a href="https://testnet.arcscan.app" target="_blank" class="flex items-center gap-1 hover:text-red-400 transition-colors"><i class="fas fa-external-link-alt text-xs"></i> Explorer</a>
-          <span class="text-slate-700">·</span>
+          <span class="text-slate-700">\xB7</span>
           <a href="https://faucet.circle.com" target="_blank" class="flex items-center gap-1 hover:text-green-400 transition-colors"><i class="fas fa-faucet text-xs"></i> Faucet</a>
-          <span class="text-slate-700">·</span>
+          <span class="text-slate-700">\xB7</span>
           <a href="/terms" class="hover:text-white transition-colors">Terms</a>
-          <span class="text-slate-700">·</span>
+          <span class="text-slate-700">\xB7</span>
           <a href="/privacy" class="hover:text-white transition-colors">Privacy</a>
-          <span class="text-slate-700">·</span>
+          <span class="text-slate-700">\xB7</span>
           <a href="/disclaimer" class="hover:text-white transition-colors">Disclaimer</a>
-          <span class="text-slate-700">·</span>
+          <span class="text-slate-700">\xB7</span>
           <a href="/about" class="hover:text-white transition-colors">About</a>
         </div>
       </div>
 
     </div>
-  </footer>`
+  </footer>`;
 }
-
-// ─── PAGE: HOME ────────────────────────────────────────────────────────
 function homePage() {
   const categories = [
-    { name:'Electronics',            icon:'fas fa-laptop',       accent:'#3b82f6', bg:'#eff6ff' },
-    { name:'Gaming',                 icon:'fas fa-gamepad',       accent:'#8b5cf6', bg:'#f5f3ff' },
-    { name:'Audio',                  icon:'fas fa-headphones',    accent:'#10b981', bg:'#ecfdf5' },
-    { name:'Photography',            icon:'fas fa-camera',        accent:'#f59e0b', bg:'#fffbeb' },
-    { name:'Pet Shop',               icon:'fas fa-paw',           accent:'#f97316', bg:'#fff7ed' },
-    { name:'Baby & Kids',            icon:'fas fa-baby',          accent:'#0ea5e9', bg:'#f0f9ff' },
-    { name:'Beauty & Personal Care', icon:'fas fa-spa',           accent:'#fb7185', bg:'#fff1f2' },
-    { name:'Fashion & Accessories',  icon:'fas fa-tshirt',        accent:'#7c3aed', bg:'#f5f3ff' },
-  ]
-
-  const catCards = categories.map(c => `
+    { name: "Electronics", icon: "fas fa-laptop", accent: "#3b82f6", bg: "#eff6ff" },
+    { name: "Gaming", icon: "fas fa-gamepad", accent: "#8b5cf6", bg: "#f5f3ff" },
+    { name: "Audio", icon: "fas fa-headphones", accent: "#10b981", bg: "#ecfdf5" },
+    { name: "Photography", icon: "fas fa-camera", accent: "#f59e0b", bg: "#fffbeb" },
+    { name: "Pet Shop", icon: "fas fa-paw", accent: "#f97316", bg: "#fff7ed" },
+    { name: "Baby & Kids", icon: "fas fa-baby", accent: "#0ea5e9", bg: "#f0f9ff" },
+    { name: "Beauty & Personal Care", icon: "fas fa-spa", accent: "#fb7185", bg: "#fff1f2" },
+    { name: "Fashion & Accessories", icon: "fas fa-tshirt", accent: "#7c3aed", bg: "#f5f3ff" }
+  ];
+  const catCards = categories.map((c) => `
     <a href="/marketplace?cat=${encodeURIComponent(c.name)}" class="home-cat-card"
        style="--cat-accent:${c.accent};--cat-bg:${c.bg};"
        data-accent="${c.accent}">
@@ -1777,13 +3786,12 @@ function homePage() {
       </div>
       <span class="home-cat-label">${c.name}</span>
       <i class="fas fa-arrow-right home-cat-arrow" style="color:${c.accent};"></i>
-    </a>`).join('')
+    </a>`).join("");
+  return shell("Home", `
 
-  return shell('Home', `
-
-  <!-- ══════════════════════════════════════════════════
-       HERO — Premium dark with depth layers
-  ══════════════════════════════════════════════════ -->
+  <!-- \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+       HERO \u2014 Premium dark with depth layers
+  \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550 -->
   <section class="home-hero">
     <!-- Noise texture overlay -->
     <div class="home-hero-noise"></div>
@@ -1804,7 +3812,7 @@ function homePage() {
         <div class="home-hero-pill">
           <span class="home-hero-dot"></span>
           <span>LIVE ON ARC NETWORK</span>
-          <span class="home-hero-pill-sep">·</span>
+          <span class="home-hero-pill-sep">\xB7</span>
           <span>CHAIN ID 5042002</span>
         </div>
 
@@ -1836,24 +3844,24 @@ function homePage() {
         <!-- Trust chips -->
         <div class="home-trust-chips">
           ${[
-            ['fas fa-shield-alt','#22c55e','Non-Custodial'],
-            ['fas fa-lock','#60a5fa','Zero Key Access'],
-            ['fas fa-file-contract','#a78bfa','Open Contracts'],
-            ['fas fa-receipt','#fb7185','On-Chain Receipts'],
-          ].map(([icon,col,label]) => `
+    ["fas fa-shield-alt", "#22c55e", "Non-Custodial"],
+    ["fas fa-lock", "#60a5fa", "Zero Key Access"],
+    ["fas fa-file-contract", "#a78bfa", "Open Contracts"],
+    ["fas fa-receipt", "#fb7185", "On-Chain Receipts"]
+  ].map(([icon, col, label]) => `
             <div class="home-trust-chip">
               <i class="${icon}" style="color:${col};"></i>
               <span>${label}</span>
-            </div>`).join('')}
+            </div>`).join("")}
         </div>
 
         <!-- Network status -->
         <div id="home-network-status" class="home-network-status">
-          <span class="home-network-dot"></span>Checking Arc Network…
+          <span class="home-network-dot"></span>Checking Arc Network\u2026
         </div>
       </div>
 
-      <!-- RIGHT column — glass card -->
+      <!-- RIGHT column \u2014 glass card -->
       <div class="home-hero-right">
         <!-- Floating green badge -->
         <div class="home-float-badge home-float-badge-top">
@@ -1884,20 +3892,20 @@ function homePage() {
 
           <div class="home-glass-grid">
             ${[
-              ['fas fa-coins',         'USDC / EURC', 'Native Stablecoin','#fbbf24'],
-              ['fas fa-shield-alt',    'Escrow',       'Smart Contract',   '#60a5fa'],
-              ['fas fa-network-wired', 'Arc L1',       'Chain 5042002',    '#818cf8'],
-              ['fas fa-lock',          'Trustless',    'Non-Custodial',    '#4ade80'],
-            ].map(([icon,title,sub,col]) => `
+    ["fas fa-coins", "USDC / EURC", "Native Stablecoin", "#fbbf24"],
+    ["fas fa-shield-alt", "Escrow", "Smart Contract", "#60a5fa"],
+    ["fas fa-network-wired", "Arc L1", "Chain 5042002", "#818cf8"],
+    ["fas fa-lock", "Trustless", "Non-Custodial", "#4ade80"]
+  ].map(([icon, title, sub, col]) => `
               <div class="home-glass-stat">
                 <i class="${icon}" style="color:${col};font-size:15px;margin-bottom:8px;display:block;"></i>
                 <p class="home-glass-stat-title">${title}</p>
                 <p class="home-glass-stat-sub">${sub}</p>
-              </div>`).join('')}
+              </div>`).join("")}
           </div>
 
           <a href="/sell" class="home-glass-cta">
-            <i class="fas fa-plus-circle"></i> Start Selling — Earn USDC
+            <i class="fas fa-plus-circle"></i> Start Selling \u2014 Earn USDC
           </a>
         </div>
 
@@ -1921,19 +3929,19 @@ function homePage() {
     </div>
   </section>
 
-  <!-- ══════════════════════════════════════════════════
+  <!-- \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
        TRUST BAR
-  ══════════════════════════════════════════════════ -->
+  \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550 -->
   <section class="home-trust-bar">
     <div class="home-trust-bar-inner">
       ${[
-        ['fas fa-shield-alt','#22c55e','Escrow Protected','Smart contract locked'],
-        ['fas fa-coins',      '#f59e0b','USDC &amp; EURC', 'Stablecoin payments only'],
-        ['fas fa-network-wired','#6366f1','Arc Network',   'Circle\'s L1 blockchain'],
-        ['fas fa-lock',       '#3b82f6','Non-Custodial',   'You own your keys'],
-        ['fas fa-receipt',    '#ec4899','On-Chain Receipts','Real tx hashes'],
-        ['fas fa-file-contract','#8b5cf6','Smart Contracts','Open source escrow'],
-      ].map(([icon,col,title,sub]) => `
+    ["fas fa-shield-alt", "#22c55e", "Escrow Protected", "Smart contract locked"],
+    ["fas fa-coins", "#f59e0b", "USDC &amp; EURC", "Stablecoin payments only"],
+    ["fas fa-network-wired", "#6366f1", "Arc Network", "Circle's L1 blockchain"],
+    ["fas fa-lock", "#3b82f6", "Non-Custodial", "You own your keys"],
+    ["fas fa-receipt", "#ec4899", "On-Chain Receipts", "Real tx hashes"],
+    ["fas fa-file-contract", "#8b5cf6", "Smart Contracts", "Open source escrow"]
+  ].map(([icon, col, title, sub]) => `
         <div class="home-trust-item">
           <div class="home-trust-icon" style="background:${col}18;">
             <i class="${icon}" style="color:${col};"></i>
@@ -1942,13 +3950,13 @@ function homePage() {
             <p class="home-trust-title">${title}</p>
             <p class="home-trust-sub">${sub}</p>
           </div>
-        </div>`).join('')}
+        </div>`).join("")}
     </div>
   </section>
 
-  <!-- ══════════════════════════════════════════════════
-       CATEGORIES — Large premium cards
-  ══════════════════════════════════════════════════ -->
+  <!-- \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+       CATEGORIES \u2014 Large premium cards
+  \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550 -->
   <section class="home-section">
     <div class="home-section-header">
       <div>
@@ -1964,17 +3972,17 @@ function homePage() {
     </div>
   </section>
 
-  <!-- ══════════════════════════════════════════════════
+  <!-- \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
        DEMO NOTICE
-  ══════════════════════════════════════════════════ -->
+  \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550 -->
   <div class="home-demo-notice">
     <i class="fas fa-info-circle" style="color:#d97706;flex-shrink:0;font-size:15px;"></i>
     <span><strong>Demonstration only:</strong> This marketplace is for demonstration purposes only. All products listed are illustrative and not real.</span>
   </div>
 
-  <!-- ══════════════════════════════════════════════════
+  <!-- \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
        FEATURED PRODUCTS
-  ══════════════════════════════════════════════════ -->
+  \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550 -->
   <section class="home-section home-section-products">
     <div class="home-section-header">
       <div>
@@ -1988,14 +3996,14 @@ function homePage() {
     <div id="home-products-container">
       <div class="home-loading">
         <div class="loading-spinner-lg"></div>
-        <p>Loading products from Arc Network…</p>
+        <p>Loading products from Arc Network\u2026</p>
       </div>
     </div>
   </section>
 
-  <!-- ══════════════════════════════════════════════════
-       HOW IT WORKS — Dark premium section
-  ══════════════════════════════════════════════════ -->
+  <!-- \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+       HOW IT WORKS \u2014 Dark premium section
+  \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550 -->
   <section class="home-how">
     <div class="home-how-grid-bg"></div>
     <div class="home-how-inner">
@@ -2009,11 +4017,11 @@ function homePage() {
       </div>
       <div class="home-how-steps">
         ${[
-          ['01','fas fa-search',      '#ef4444','Find Products',     'Browse real listings from verified sellers on Arc Network'],
-          ['02','fas fa-wallet',      '#3b82f6','Connect Wallet',    'Use MetaMask or our internal wallet on Arc Testnet (Chain 5042002)'],
-          ['03','fas fa-lock',        '#8b5cf6','Escrow Lock',       'USDC/EURC locked in smart contract — fully trustless and transparent'],
-          ['04','fas fa-check-circle','#22c55e','Confirm & Release', 'Confirm delivery → funds automatically released on-chain'],
-        ].map(([n,icon,col,title,desc]) => `
+    ["01", "fas fa-search", "#ef4444", "Find Products", "Browse real listings from verified sellers on Arc Network"],
+    ["02", "fas fa-wallet", "#3b82f6", "Connect Wallet", "Use MetaMask or our internal wallet on Arc Testnet (Chain 5042002)"],
+    ["03", "fas fa-lock", "#8b5cf6", "Escrow Lock", "USDC/EURC locked in smart contract \u2014 fully trustless and transparent"],
+    ["04", "fas fa-check-circle", "#22c55e", "Confirm & Release", "Confirm delivery \u2192 funds automatically released on-chain"]
+  ].map(([n, icon, col, title, desc]) => `
           <div class="home-how-step">
             <div class="home-how-step-num">${n}</div>
             <div class="home-how-step-icon" style="background:${col}22;border:1px solid ${col}33;">
@@ -2021,16 +4029,16 @@ function homePage() {
             </div>
             <h3 class="home-how-step-title">${title}</h3>
             <p class="home-how-step-desc">${desc}</p>
-          </div>`).join('')}
+          </div>`).join("")}
       </div>
       <!-- Connector line (desktop) -->
       <div class="home-how-connector"></div>
     </div>
   </section>
 
-  <!-- ══════════════════════════════════════════════════
-       ABOUT + TRUST SIGNALS — Two-column card
-  ══════════════════════════════════════════════════ -->
+  <!-- \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+       ABOUT + TRUST SIGNALS \u2014 Two-column card
+  \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550 -->
   <section class="home-section home-about-section">
     <div class="home-about-card">
 
@@ -2044,13 +4052,13 @@ function homePage() {
         </div>
         <p class="home-about-body">
           <strong>Shukly Store</strong> is a decentralized marketplace powered by
-          <strong>Arc Network</strong> — Circle's stablecoin-native Layer 1 blockchain.
+          <strong>Arc Network</strong> \u2014 Circle's stablecoin-native Layer 1 blockchain.
           It uses escrow smart contracts to protect every transaction: funds are locked
           on-chain until the buyer confirms delivery, then automatically released to the seller.
         </p>
         <p class="home-about-body">
           All payments are made exclusively in <strong>USDC</strong> (native on Arc) or
-          <strong>EURC</strong> — no fiat, no credit cards, no custodians. The internal wallet
+          <strong>EURC</strong> \u2014 no fiat, no credit cards, no custodians. The internal wallet
           is generated entirely client-side using BIP39 standards; private keys never leave
           your browser.
         </p>
@@ -2069,13 +4077,13 @@ function homePage() {
         <p class="home-about-signals-label">TRUST SIGNALS</p>
         <div class="home-about-signals">
           ${[
-            ['fas fa-lock',          '#22c55e','Non-custodial wallet', 'Your keys never leave your device'],
-            ['fas fa-file-contract', '#3b82f6','Open escrow contracts','Fully auditable on-chain'],
-            ['fab fa-github',        '#1e293b','Open-source',          'Inspect the code on GitHub','https://github.com/julenosinger/redhawk-store'],
-            ['fas fa-network-wired', '#8b5cf6','Arc Testnet',          'Chain ID: 5042002'],
-            ['fas fa-shield-alt',    '#ef4444','Zero key custody',     '100% self-sovereign'],
-            ['fas fa-coins',         '#f59e0b','USDC &amp; EURC',      'Stablecoin native L1'],
-          ].map(([icon,col,title,sub,link]) => `
+    ["fas fa-lock", "#22c55e", "Non-custodial wallet", "Your keys never leave your device"],
+    ["fas fa-file-contract", "#3b82f6", "Open escrow contracts", "Fully auditable on-chain"],
+    ["fab fa-github", "#1e293b", "Open-source", "Inspect the code on GitHub", "https://github.com/julenosinger/redhawk-store"],
+    ["fas fa-network-wired", "#8b5cf6", "Arc Testnet", "Chain ID: 5042002"],
+    ["fas fa-shield-alt", "#ef4444", "Zero key custody", "100% self-sovereign"],
+    ["fas fa-coins", "#f59e0b", "USDC &amp; EURC", "Stablecoin native L1"]
+  ].map(([icon, col, title, sub, link]) => `
             <div class="home-signal-item">
               <div class="home-signal-icon" style="background:${col}14;">
                 <i class="${icon}" style="color:${col};font-size:14px;"></i>
@@ -2084,7 +4092,7 @@ function homePage() {
                 <p class="home-signal-title">${link ? `<a href="${link}" target="_blank" style="color:#3b82f6;text-decoration:none;">${title}</a>` : title}</p>
                 <p class="home-signal-sub">${sub}</p>
               </div>
-            </div>`).join('')}
+            </div>`).join("")}
         </div>
       </div>
 
@@ -2093,11 +4101,11 @@ function homePage() {
 
   ${footer()}
 
-  <!-- ══════════════════════════════════════════════════
+  <!-- \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
        HOME PAGE STYLES
-  ══════════════════════════════════════════════════ -->
+  \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550 -->
   <style>
-  /* ─── Animations ─── */
+  /* \u2500\u2500\u2500 Animations \u2500\u2500\u2500 */
   @keyframes home-bounce {
     0%,100%{transform:translateY(0) translateX(-50%)}
     50%{transform:translateY(7px) translateX(-50%)}
@@ -2115,7 +4123,7 @@ function homePage() {
     100%{background-position:400px 0}
   }
 
-  /* ─── Hero ─── */
+  /* \u2500\u2500\u2500 Hero \u2500\u2500\u2500 */
   .home-hero {
     position:relative;overflow:hidden;
     background:linear-gradient(145deg,#080c14 0%,#0d1425 30%,#130d2e 60%,#1a0808 100%);
@@ -2287,7 +4295,7 @@ function homePage() {
   }
   .home-bounce{font-size:13px;}
 
-  /* ─── Trust bar ─── */
+  /* \u2500\u2500\u2500 Trust bar \u2500\u2500\u2500 */
   .home-trust-bar{background:#fff;border-bottom:1px solid #f0f4f8;}
   .home-trust-bar-inner {
     max-width:1320px;margin:0 auto;padding:0 16px;
@@ -2305,7 +4313,7 @@ function homePage() {
   .home-trust-title{font-weight:700;color:#1e293b;font-size:12px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .home-trust-sub{color:#94a3b8;font-size:10px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 
-  /* ─── Demo notice ─── */
+  /* \u2500\u2500\u2500 Demo notice \u2500\u2500\u2500 */
   .home-demo-notice {
     max-width:1320px;margin:40px auto 0;padding:0 24px;
     background:#fffbeb;border:1px solid #fde68a;border-radius:14px;
@@ -2314,7 +4322,7 @@ function homePage() {
     max-width:calc(1320px - 48px);margin:40px auto 0;
   }
 
-  /* ─── Section layout ─── */
+  /* \u2500\u2500\u2500 Section layout \u2500\u2500\u2500 */
   .home-section{max-width:1320px;margin:0 auto;padding:80px 24px;}
   .home-section-products{padding-bottom:100px;}
   .home-section-header {
@@ -2337,7 +4345,7 @@ function homePage() {
   }
   .home-view-all:hover{background:#fef2f2;border-color:#ef4444;}
 
-  /* ─── Category cards ─── */
+  /* \u2500\u2500\u2500 Category cards \u2500\u2500\u2500 */
   .home-cat-grid{
     display:grid;
     grid-template-columns:repeat(auto-fill,minmax(140px,1fr));
@@ -2381,12 +4389,12 @@ function homePage() {
   }
   .home-cat-card:hover .home-cat-arrow{opacity:1;transform:translateX(0);}
 
-  /* ─── Loading state ─── */
+  /* \u2500\u2500\u2500 Loading state \u2500\u2500\u2500 */
   .home-loading{text-align:center;padding:72px 0;}
   .home-loading .loading-spinner-lg{margin:0 auto 20px;}
   .home-loading p{color:#94a3b8;font-size:14px;}
 
-  /* ─── How it Works ─── */
+  /* \u2500\u2500\u2500 How it Works \u2500\u2500\u2500 */
   .home-how {
     background:linear-gradient(155deg,#080c14 0%,#0e1425 40%,#160a28 70%,#1a0808 100%);
     padding:112px 24px;position:relative;overflow:hidden;
@@ -2431,7 +4439,7 @@ function homePage() {
   }
   @media(min-width:901px){.home-how-connector{display:block;}}
 
-  /* ─── About section ─── */
+  /* \u2500\u2500\u2500 About section \u2500\u2500\u2500 */
   .home-about-section{padding-bottom:100px;}
   .home-about-card{
     background:#fff;border-radius:28px;border:1px solid #f0f4f8;
@@ -2460,7 +4468,7 @@ function homePage() {
   .home-signal-title{font-weight:700;color:#1e293b;font-size:13px;margin:0;}
   .home-signal-sub{color:#94a3b8;font-size:11px;margin:0;}
 
-  /* ─── Product cards (home) ─── */
+  /* \u2500\u2500\u2500 Product cards (home) \u2500\u2500\u2500 */
   .home-product-card {
     background:#fff;border-radius:22px;border:1.5px solid #f0f4f8;
     overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,.05);
@@ -2532,7 +4540,7 @@ function homePage() {
               <i class="fas fa-store"></i>
             </div>
             <h3 style="font-size:1.3rem;font-weight:900;color:#1e293b;margin:0 0 10px;letter-spacing:-.01em;">No Products Listed Yet</h3>
-            <p style="color:#94a3b8;font-size:14px;max-width:380px;margin:0 auto 32px;line-height:1.7;">Be the first seller — list your product and start earning USDC or EURC through smart contract escrow.</p>
+            <p style="color:#94a3b8;font-size:14px;max-width:380px;margin:0 auto 32px;line-height:1.7;">Be the first seller \u2014 list your product and start earning USDC or EURC through smart contract escrow.</p>
             <a href="/sell" class="btn-primary" style="display:inline-flex;margin:0 auto;">
               <i class="fas fa-plus-circle"></i> List the First Product
             </a>
@@ -2582,25 +4590,22 @@ function homePage() {
       </div>\`;
   }
   </script>
-  `)
+  `);
 }
-
-
-// ─── PAGE: MARKETPLACE ─────────────────────────────────────────────────
 function marketplacePage() {
-  return shell('Marketplace', `
+  return shell("Marketplace", `
   <div class="max-w-7xl mx-auto px-4 py-8">
     <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-6">
       <div>
         <h1 class="text-3xl font-bold text-slate-800">Marketplace</h1>
-        <p class="text-slate-500 mt-1">Live product listings · Payments via escrow on Arc Network</p>
+        <p class="text-slate-500 mt-1">Live product listings \xB7 Payments via escrow on Arc Network</p>
       </div>
       <div class="flex items-center gap-3 flex-wrap">
-        <input id="mp-search-bar" type="text" placeholder="Search products…" class="input text-sm py-2 w-48"/>
+        <input id="mp-search-bar" type="text" placeholder="Search products\u2026" class="input text-sm py-2 w-48"/>
         <select id="mp-sort" class="select w-44 text-sm">
           <option value="newest">Sort: Newest</option>
-          <option value="price_asc">Price: Low → High</option>
-          <option value="price_desc">Price: High → Low</option>
+          <option value="price_asc">Price: Low \u2192 High</option>
+          <option value="price_desc">Price: High \u2192 Low</option>
         </select>
         <a href="/sell" class="btn-primary text-sm py-2">
           <i class="fas fa-plus-circle"></i> List Product
@@ -2611,7 +4616,7 @@ function marketplacePage() {
     <!-- Network status bar -->
     <div id="mp-network-status" class="mb-4"></div>
 
-    <!-- Demo Disclaimer — Marketplace -->
+    <!-- Demo Disclaimer \u2014 Marketplace -->
     <div class="demo-disclaimer mb-6">
       <i class="fas fa-info-circle" style="color:#d97706;flex-shrink:0"></i>
       <span><strong>Demonstration only:</strong> This marketplace is for demonstration purposes only. All products listed are illustrative and not real.</span>
@@ -2627,10 +4632,10 @@ function marketplacePage() {
           <div class="mb-5">
             <p class="font-semibold text-slate-700 text-sm mb-2">Category</p>
             <div class="space-y-1.5">
-              ${['All','Electronics','Gaming','Audio','Photography','Wearables','Accessories','Pet Shop','Baby & Kids','Beauty & Personal Care','Fashion & Accessories'].map((cat,i) => `
+              ${["All", "Electronics", "Gaming", "Audio", "Photography", "Wearables", "Accessories", "Pet Shop", "Baby & Kids", "Beauty & Personal Care", "Fashion & Accessories"].map((cat, i) => `
                 <label class="flex items-center gap-2 cursor-pointer hover:text-red-600 text-sm text-slate-600">
-                  <input type="checkbox" data-cat="${cat}" ${i===0?'checked':''} class="cat-filter accent-red-600 w-3.5 h-3.5"/> ${cat}
-                </label>`).join('')}
+                  <input type="checkbox" data-cat="${cat}" ${i === 0 ? "checked" : ""} class="cat-filter accent-red-600 w-3.5 h-3.5"/> ${cat}
+                </label>`).join("")}
             </div>
           </div>
           <div class="mb-5">
@@ -2653,14 +4658,14 @@ function marketplacePage() {
       <div class="flex-1" id="mp-products-container">
         <div class="text-center py-12">
           <div class="loading-spinner-lg mx-auto mb-4"></div>
-          <p class="text-slate-400">Fetching products from Arc Network…</p>
+          <p class="text-slate-400">Fetching products from Arc Network\u2026</p>
         </div>
       </div>
     </div>
   </div>
 
   <script>
-  // ── State ──────────────────────────────────────────────────────────
+  // \u2500\u2500 State \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   let allProducts = [];
   let activeCategory = 'All';
   let sortMode = 'newest';
@@ -2750,7 +4755,7 @@ function marketplacePage() {
       ? '<img src="' + p.image + '" class="w-full h-48 object-cover" onerror="this.style.display=&quot;none&quot;;this.nextElementSibling.style.display=&quot;flex&quot;">'
         + '<div class="w-full h-48 bg-slate-100 items-center justify-center text-slate-300 hidden"><i class="fas fa-image text-4xl"></i></div>'
       : '<div class="w-full h-48 bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center text-slate-300"><i class="fas fa-image text-4xl"></i></div>';
-    const sellerShort = p.seller_id ? (p.seller_id.slice(0,6)+'…'+p.seller_id.slice(-4)) : '—';
+    const sellerShort = p.seller_id ? (p.seller_id.slice(0,6)+'\u2026'+p.seller_id.slice(-4)) : '\u2014';
     return '<div class="product-card">'
       + '<div class="relative overflow-hidden">' + imgEl
       + '<span class="absolute top-2 left-2 badge-escrow"><i class="fas fa-shield-alt mr-1"></i>Escrow</span>'
@@ -2761,7 +4766,7 @@ function marketplacePage() {
       + '<span class="text-xs text-slate-400 font-mono">' + sellerShort + '</span>'
       + '</div>'
       + '<h3 class="font-semibold text-slate-800 mt-2 mb-1 text-sm leading-tight">' + title + '</h3>'
-      + (desc ? '<p class="text-xs text-slate-400 mb-2 leading-relaxed">' + desc + (p.description.length>80?'…':'') + '</p>' : '')
+      + (desc ? '<p class="text-xs text-slate-400 mb-2 leading-relaxed">' + desc + (p.description.length>80?'\u2026':'') + '</p>' : '')
       + '<p class="text-xl font-extrabold text-red-600 mb-3">' + price + ' <span class="text-sm font-semibold">' + tok + '</span></p>'
       + '<div class="flex gap-2">'
       + '<a href="/product/' + p.id + '" class="btn-primary flex-1 text-xs py-2 justify-center"><i class="fas fa-bolt mr-1"></i>Buy Now</a>'
@@ -2769,13 +4774,11 @@ function marketplacePage() {
       + '</div></div></div>';
   }
   </script>
-  `)
+  `);
 }
-
-// ─── PAGE: PRODUCT NOT FOUND (no real product data yet) ────────────────
-function productNotFoundPage(id: string) {
-  return shell('Product', `
-  <!-- Demo Disclaimer — Product Page -->
+function productNotFoundPage(id) {
+  return shell("Product", `
+  <!-- Demo Disclaimer \u2014 Product Page -->
   <div class="max-w-3xl mx-auto px-4 pt-6">
     <div class="demo-disclaimer">
       <i class="fas fa-info-circle" style="color:#d97706;flex-shrink:0"></i>
@@ -2798,25 +4801,22 @@ function productNotFoundPage(id: string) {
       </div>
     </div>
   </div>
-  `)
+  `);
 }
-
-// ─── PAGE: PRODUCT DETAIL ─────────────────────────────────────────────────────
-function productPage(p: any) {
-  const title  = (p.title  || 'Untitled').replace(/</g, '&lt;')
-  const desc   = (p.description || '').replace(/</g, '&lt;')
-  const price  = parseFloat(p.price || 0).toFixed(2)
-  const tok    = p.token || 'USDC'
-  const cat    = (p.category || 'Other').replace(/</g, '&lt;')
-  const seller = (p.seller_id || '').replace(/</g, '&lt;')
-  const imgUrl = p.image || ''
-  const stockN = parseInt(p.stock) || 0
-  const delivType = p.delivery_type || 'manual'
-  const isDigital = delivType === 'instant' || delivType === 'digital'
-
+function productPage(p) {
+  const title = (p.title || "Untitled").replace(/</g, "&lt;");
+  const desc = (p.description || "").replace(/</g, "&lt;");
+  const price = parseFloat(p.price || 0).toFixed(2);
+  const tok = p.token || "USDC";
+  const cat = (p.category || "Other").replace(/</g, "&lt;");
+  const seller = (p.seller_id || "").replace(/</g, "&lt;");
+  const imgUrl = p.image || "";
+  const stockN = parseInt(p.stock) || 0;
+  const delivType = p.delivery_type || "manual";
+  const isDigital = delivType === "instant" || delivType === "digital";
   return shell(title, `
   <style>
-    /* ── Product Page Premium Styles ── */
+    /* \u2500\u2500 Product Page Premium Styles \u2500\u2500 */
     .pd-breadcrumb{display:flex;align-items:center;gap:6px;font-size:13px;color:#94a3b8;margin-bottom:28px;flex-wrap:wrap;position:sticky;top:60px;background:#fff;z-index:95;padding:12px 0;margin-left:-1rem;margin-right:-1rem;padding-left:1rem;padding-right:1rem;transform:translateY(0);opacity:1;transition:transform .3s,opacity .3s;will-change:transform}
     .pd-breadcrumb.hidden-scroll{transform:translateY(-100%);opacity:0;pointer-events:none}
     .pd-breadcrumb a{color:#64748b;text-decoration:none;font-weight:500;transition:color .15s}
@@ -2910,7 +4910,7 @@ function productPage(p: any) {
     .pd-seller-panel .title{font-size:13px;font-weight:800;color:#92400e;display:flex;align-items:center;gap:7px;margin-bottom:6px}
     .pd-seller-panel p{font-size:12px;color:#78350f;line-height:1.5}
 
-    /* Sticky buy bar — all screen sizes, scroll-triggered */
+    /* Sticky buy bar \u2014 all screen sizes, scroll-triggered */
     .pd-sticky-bar{display:flex;position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #f1f5f9;box-shadow:0 -4px 24px rgba(0,0,0,.12);padding:12px 16px 16px;z-index:90;gap:10px;align-items:center;transform:translateY(110%);opacity:0;transition:transform .3s cubic-bezier(.4,0,.2,1),opacity .3s ease,box-shadow .3s ease}
     .pd-sticky-bar.visible{transform:translateY(0);opacity:1;box-shadow:0 -6px 32px rgba(220,38,38,.13)}
     @media(min-width:640px){.pd-sticky-bar{padding:14px 24px 18px}}
@@ -2928,19 +4928,17 @@ function productPage(p: any) {
       <span class="sep"><i class="fas fa-chevron-right"></i></span>
       <span class="pd-breadcrumb-cat">${cat}</span>
       <span class="sep"><i class="fas fa-chevron-right"></i></span>
-      <span class="current">${title.length > 32 ? title.slice(0,32)+'…' : title}</span>
+      <span class="current">${title.length > 32 ? title.slice(0, 32) + "\u2026" : title}</span>
     </nav>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12 items-start">
 
-      <!-- ── LEFT: Image + Description ── -->
+      <!-- \u2500\u2500 LEFT: Image + Description \u2500\u2500 -->
       <div>
         <div class="pd-image-wrap">
-          ${imgUrl
-            ? `<img src="${imgUrl}" alt="${title}"
-                 onerror="this.style.display='none';document.getElementById('img-fallback').style.display='flex'">`
-            : ''}
-          <div id="img-fallback" style="${imgUrl ? 'display:none' : 'display:flex'}" class="pd-image-fallback">
+          ${imgUrl ? `<img src="${imgUrl}" alt="${title}"
+                 onerror="this.style.display='none';document.getElementById('img-fallback').style.display='flex'">` : ""}
+          <div id="img-fallback" style="${imgUrl ? "display:none" : "display:flex"}" class="pd-image-fallback">
             <i class="fas fa-image"></i>
             <span>No image available</span>
           </div>
@@ -2949,7 +4947,7 @@ function productPage(p: any) {
         <!-- Arc Network badge under image -->
         <div class="flex items-center gap-3 mt-4 px-1">
           <span class="pd-arc-badge"><i class="fas fa-network-wired"></i> Arc Network</span>
-          <span class="text-xs text-slate-400">Chain ID 5042002 · Testnet</span>
+          <span class="text-xs text-slate-400">Chain ID 5042002 \xB7 Testnet</span>
           <a href="https://testnet.arcscan.app" target="_blank" class="ml-auto text-xs text-slate-400 hover:text-red-500 transition-colors">
             <i class="fas fa-external-link-alt"></i> Explorer
           </a>
@@ -2962,18 +4960,14 @@ function productPage(p: any) {
         </div>
       </div>
 
-      <!-- ── RIGHT: Details ── -->
+      <!-- \u2500\u2500 RIGHT: Details \u2500\u2500 -->
       <div class="flex flex-col gap-5">
 
         <!-- Header: category + badges -->
         <div class="flex flex-wrap items-center gap-2">
           <span class="pd-cat-badge"><i class="fas fa-tag"></i> ${cat}</span>
-          ${isDigital
-            ? `<span class="pd-delivery-badge instant"><i class="fas fa-bolt"></i> Instant Delivery</span>`
-            : `<span class="pd-delivery-badge manual"><i class="fas fa-clock"></i> Manual Delivery</span>`}
-          ${stockN > 0
-            ? `<span class="pd-stock-badge instock"><span class="dot"></span> In stock (${stockN})</span>`
-            : `<span class="pd-stock-badge outstock"><i class="fas fa-times-circle" style="font-size:9px"></i> Out of stock</span>`}
+          ${isDigital ? `<span class="pd-delivery-badge instant"><i class="fas fa-bolt"></i> Instant Delivery</span>` : `<span class="pd-delivery-badge manual"><i class="fas fa-clock"></i> Manual Delivery</span>`}
+          ${stockN > 0 ? `<span class="pd-stock-badge instock"><span class="dot"></span> In stock (${stockN})</span>` : `<span class="pd-stock-badge outstock"><i class="fas fa-times-circle" style="font-size:9px"></i> Out of stock</span>`}
         </div>
 
         <!-- Title -->
@@ -3015,7 +5009,7 @@ function productPage(p: any) {
         <!-- Private Keys notice -->
         <div class="pd-keys-box">
           <i class="fas fa-lock" style="color:#3b82f6;font-size:15px;flex-shrink:0"></i>
-          <span>We <strong>never</strong> access your private keys — all transactions signed locally in your wallet.</span>
+          <span>We <strong>never</strong> access your private keys \u2014 all transactions signed locally in your wallet.</span>
           <div class="pd-tooltip-wrap">
             <i class="fas fa-question-circle"></i>
             <div class="pd-tooltip">Non-custodial: only you control your funds.</div>
@@ -3024,27 +5018,25 @@ function productPage(p: any) {
 
         <!-- Action Buttons -->
         <div id="product-action-btns" class="flex flex-col gap-3 mt-1">
-          ${stockN > 0
-            ? `<button id="btn-buy-now"
-                onclick="pdBuyNow('${p.id}','${title.replace(/'/g,"\\'")}',${price},'${tok}','${imgUrl}')"
+          ${stockN > 0 ? `<button id="btn-buy-now"
+                onclick="pdBuyNow('${p.id}','${title.replace(/'/g, "\\'")}',${price},'${tok}','${imgUrl}')"
                 class="pd-btn-buy">
                 <i class="fas fa-bolt"></i>
                 Buy Now &mdash; ${price} ${tok}
               </button>
               <button id="btn-add-cart"
-                onclick="pdAddCart('${p.id}','${title.replace(/'/g,"\\'")}',${price},'${tok}','${imgUrl}')"
+                onclick="pdAddCart('${p.id}','${title.replace(/'/g, "\\'")}',${price},'${tok}','${imgUrl}')"
                 class="pd-btn-cart">
                 <i class="fas fa-cart-plus"></i> Add to Cart
               </button>
-              <!-- Arc Commerce badge — non-destructive, lazy-loaded -->
+              <!-- Arc Commerce badge \u2014 non-destructive, lazy-loaded -->
               <div id="arc-pd-badge" style="display:none;align-items:center;gap:6px;font-size:11px;color:#1d4ed8;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:6px 10px;">
                 <span style="background:#1e40af;color:#fff;padding:1px 6px;border-radius:9999px;font-size:10px;font-weight:700;">
                   <i class="fas fa-circle" style="font-size:6px;color:#93c5fd;margin-right:2px;"></i>Arc Commerce
                 </span>
-                <span>Pay with USDC · Arc Testnet</span>
+                <span>Pay with USDC \xB7 Arc Testnet</span>
                 <span id="arc-pd-balance" style="margin-left:auto;font-weight:600;"></span>
-              </div>`
-            : `<div class="pd-outofstock">
+              </div>` : `<div class="pd-outofstock">
                 <i class="fas fa-box-open" style="font-size:28px;opacity:.3;display:block;margin-bottom:8px"></i>
                 <p style="font-weight:700;font-size:15px;color:#64748b;margin-bottom:4px">Out of Stock</p>
                 <p style="font-size:12px;color:#94a3b8">This product is currently unavailable</p>
@@ -3075,11 +5067,11 @@ function productPage(p: any) {
       <div style="font-size:12px;color:#64748b;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${title}</div>
       <div style="font-size:18px;font-weight:900;color:#dc2626;line-height:1.2">${price} <span style="font-size:13px;font-weight:700">${tok}</span></div>
     </div>
-    <button onclick="pdBuyNow('${p.id}','${title.replace(/'/g,"\\'")}',${price},'${tok}','${imgUrl}')"
+    <button onclick="pdBuyNow('${p.id}','${title.replace(/'/g, "\\'")}',${price},'${tok}','${imgUrl}')"
       class="pd-btn-buy" style="width:auto;padding:13px 22px;font-size:14px;flex-shrink:0">
       <i class="fas fa-bolt"></i> Buy Now
     </button>
-  </div>` : ''}
+  </div>` : ""}
 
   <script>
   (function(){
@@ -3096,9 +5088,9 @@ function productPage(p: any) {
     }
   })();
 
-  // ═══════════════════════════════════════════════════════════════════════
-  //  ESCROW-AWARE BUY BUTTON — Dynamic state following escrow lifecycle
-  // ═══════════════════════════════════════════════════════════════════════
+  // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+  //  ESCROW-AWARE BUY BUTTON \u2014 Dynamic state following escrow lifecycle
+  // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
   
   const ESCROW_STATES = {
     IDLE: 'idle',                      // No interaction yet
@@ -3232,16 +5224,16 @@ function productPage(p: any) {
         break;
       case 'deposit':
         // Redirect to checkout to complete deposit
-        showToast('Redirecting to checkout to complete deposit…', 'info');
+        showToast('Redirecting to checkout to complete deposit\u2026', 'info');
         window.location.href = '/checkout';
         break;
       case 'confirm':
         // Redirect to orders page to confirm delivery
-        showToast('Redirecting to your orders to confirm delivery…', 'info');
+        showToast('Redirecting to your orders to confirm delivery\u2026', 'info');
         window.location.href = '/orders';
         break;
       case 'dispute':
-        showToast('Redirecting to disputes…', 'info');
+        showToast('Redirecting to disputes\u2026', 'info');
         window.location.href = '/disputes';
         break;
       default:
@@ -3252,7 +5244,7 @@ function productPage(p: any) {
   // Original buy now function (initiate purchase)
   function pdBuyNow(id, name, price, token, image) {
     const btn = document.getElementById('btn-buy-now');
-    if(btn){ btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing…'; }
+    if(btn){ btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing\u2026'; }
     CartStore.addToCart({ id, title: name, price: parseFloat(price), currency: token, image });
     setTimeout(() => window.location.href = '/cart', 400);
   }
@@ -3281,7 +5273,7 @@ function productPage(p: any) {
   // Initialize escrow-aware button on page load
   (function() {
     const productId = '${p.id}';
-    const productName = '${title.replace(/'/g,"\\'")}';
+    const productName = '${title.replace(/'/g, "\\'")}';
     const price = ${price};
     const token = '${tok}';
     const image = '${imgUrl}';
@@ -3290,7 +5282,7 @@ function productPage(p: any) {
     updateBuyButton(productId, productName, price, token, image);
   })();
 
-  // ── Arc Commerce: lazy-load USDC balance badge on product page ────────
+  // \u2500\u2500 Arc Commerce: lazy-load USDC balance badge on product page \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   (function(){
     async function loadArcBadge() {
       const badge = document.getElementById('arc-pd-badge');
@@ -3304,13 +5296,13 @@ function productPage(p: any) {
       if (!window.ArcPayments) return;
 
       const wallet = getStoredWallet();
-      if (!wallet || !wallet.address) return; // no wallet — keep badge hidden
+      if (!wallet || !wallet.address) return; // no wallet \u2014 keep badge hidden
 
       // Show badge
       badge.style.display = 'flex';
 
       const balEl = document.getElementById('arc-pd-balance');
-      if (balEl) balEl.textContent = '…';
+      if (balEl) balEl.textContent = '\u2026';
 
       try {
         const res = await Promise.race([
@@ -3328,7 +5320,7 @@ function productPage(p: any) {
     setTimeout(loadArcBadge, 800);
   })();
 
-  // Breadcrumb scroll behavior — hides on scroll up, shows on scroll down
+  // Breadcrumb scroll behavior \u2014 hides on scroll up, shows on scroll down
   (function(){
     const breadcrumb = document.querySelector('.pd-breadcrumb');
     if(!breadcrumb) return;
@@ -3358,7 +5350,7 @@ function productPage(p: any) {
     }, { passive: true });
   })();
 
-  // Sticky bar — appears on scroll down, hides on scroll up
+  // Sticky bar \u2014 appears on scroll down, hides on scroll up
   (function(){
     const bar = document.getElementById('pd-sticky-bar');
     if(!bar) return;
@@ -3388,12 +5380,10 @@ function productPage(p: any) {
     }, { passive: true });
   })();
   </script>
-  `)
+  `);
 }
-
-// ─── PAGE: CART ────────────────────────────────────────────────────────
 function cartPage() {
-  return shell('Cart', `
+  return shell("Cart", `
   <div class="max-w-5xl mx-auto px-4 py-8">
     <h1 class="text-3xl font-bold text-slate-800 mb-6 flex items-center gap-3">
       <i class="fas fa-shopping-cart text-red-500"></i> Your Cart
@@ -3434,7 +5424,7 @@ function cartPage() {
     </div>
   </div>
   <script>
-  // ── Cart page helpers — all read/write via CartStore ──────────────
+  // \u2500\u2500 Cart page helpers \u2014 all read/write via CartStore \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   function renderCart() {
     const cart      = CartStore.getCart();
     const container = document.getElementById('cart-items');
@@ -3475,7 +5465,7 @@ function cartPage() {
         + '<p class="text-xs text-slate-400">Qty: ' + qty + '</p>'
         + '</div>'
         + '<div class="flex items-center gap-2 flex-shrink-0">'
-        + '<button data-id="' + id + '" data-delta="-1" class="qty-btn w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center hover:bg-red-100 font-bold text-sm">−</button>'
+        + '<button data-id="' + id + '" data-delta="-1" class="qty-btn w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center hover:bg-red-100 font-bold text-sm">\u2212</button>'
         + '<span class="font-bold w-6 text-center text-sm">' + qty + '</span>'
         + '<button data-id="' + id + '" data-delta="1" class="qty-btn w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center hover:bg-red-100 font-bold text-sm">+</button>'
         + '</div>'
@@ -3517,12 +5507,10 @@ function cartPage() {
 
   document.addEventListener('DOMContentLoaded', renderCart);
   </script>
-  `)
+  `);
 }
-
-// ─── PAGE: CHECKOUT ────────────────────────────────────────────────────
 function checkoutPage() {
-  return shell('Checkout', `
+  return shell("Checkout", `
   <div class="max-w-4xl mx-auto px-4 py-8">
     <h1 class="text-3xl font-bold text-slate-800 mb-2 flex items-center gap-3">
       <i class="fas fa-lock text-red-500"></i> Secure Checkout
@@ -3538,16 +5526,16 @@ function checkoutPage() {
         <i class="fas fa-route text-red-500"></i> Escrow Flow on Arc Network
       </h3>
       <div class="flex items-center gap-2 overflow-x-auto pb-2">
-        ${[['Confirm','fas fa-check'],['Lock USDC/EURC','fas fa-lock'],['Seller Ships','fas fa-shipping-fast'],['You Confirm','fas fa-box-open'],['Released','fas fa-coins']].map(([label,icon],i) => `
+        ${[["Confirm", "fas fa-check"], ["Lock USDC/EURC", "fas fa-lock"], ["Seller Ships", "fas fa-shipping-fast"], ["You Confirm", "fas fa-box-open"], ["Released", "fas fa-coins"]].map(([label, icon], i) => `
           <div class="flex items-center gap-2 shrink-0">
             <div class="flex flex-col items-center">
-              <div class="w-10 h-10 rounded-full ${i===0?'bg-red-600 text-white':'bg-slate-200 text-slate-400'} flex items-center justify-center">
+              <div class="w-10 h-10 rounded-full ${i === 0 ? "bg-red-600 text-white" : "bg-slate-200 text-slate-400"} flex items-center justify-center">
                 <i class="${icon} text-sm"></i>
               </div>
-              <p class="text-xs text-center mt-1 ${i===0?'text-red-600 font-medium':'text-slate-400'} w-16">${label}</p>
+              <p class="text-xs text-center mt-1 ${i === 0 ? "text-red-600 font-medium" : "text-slate-400"} w-16">${label}</p>
             </div>
-            ${i<4?'<div class="w-8 h-0.5 bg-slate-200 mb-5"></div>':''}
-          </div>`).join('')}
+            ${i < 4 ? '<div class="w-8 h-0.5 bg-slate-200 mb-5"></div>' : ""}
+          </div>`).join("")}
       </div>
     </div>
 
@@ -3567,7 +5555,7 @@ function checkoutPage() {
             <label class="cursor-pointer">
               <input type="radio" name="token" value="EURC" class="sr-only peer"/>
               <div class="card p-4 flex items-center gap-3 peer-checked:border-red-500 peer-checked:bg-red-50 hover:border-red-300 transition-all">
-                <div class="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center"><span class="font-bold text-indigo-700">€</span></div>
+                <div class="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center"><span class="font-bold text-indigo-700">\u20AC</span></div>
                 <div><p class="font-bold text-slate-800">EURC</p><p class="text-slate-400 text-xs">Euro stablecoin</p></div>
               </div>
             </label>
@@ -3593,15 +5581,15 @@ function checkoutPage() {
         <div class="card p-5 mb-4">
           <h3 class="font-bold text-slate-800 mb-4">Order Summary</h3>
           <div id="co-items" class="space-y-3 mb-4 text-sm">
-            <div class="text-slate-400 text-center py-4">Loading…</div>
+            <div class="text-slate-400 text-center py-4">Loading\u2026</div>
           </div>
           <div class="border-t pt-4 space-y-2 text-sm">
-            <div class="flex justify-between text-slate-600"><span>Subtotal</span><span id="co-sub">—</span></div>
-            <div class="flex justify-between text-slate-600"><span>Platform Fee (1.5%)</span><span id="co-fee">—</span></div>
+            <div class="flex justify-between text-slate-600"><span>Subtotal</span><span id="co-sub">\u2014</span></div>
+            <div class="flex justify-between text-slate-600"><span>Platform Fee (1.5%)</span><span id="co-fee">\u2014</span></div>
             <div class="flex justify-between text-slate-600"><span>Gas (Arc Network)</span><span class="text-blue-600">~0.01 USDC</span></div>
-            <div class="flex justify-between text-slate-400 text-xs"><span>Government Fee</span><span>—</span></div>
+            <div class="flex justify-between text-slate-400 text-xs"><span>Government Fee</span><span>\u2014</span></div>
             <div class="border-t pt-2 flex justify-between font-extrabold text-lg">
-              <span>Total</span><span id="co-total" class="text-red-600">—</span>
+              <span>Total</span><span id="co-total" class="text-red-600">\u2014</span>
             </div>
           </div>
         </div>
@@ -3629,10 +5617,10 @@ function checkoutPage() {
           <p class="font-semibold flex items-center gap-1"><i class="fas fa-info-circle"></i> 3-step on-chain escrow</p>
           <p><span class="font-medium">Step 1:</span> Approve ShuklyEscrow to spend your tokens (one-time)</p>
           <p><span class="font-medium">Step 2:</span> Create escrow slot on-chain (<code>createEscrow</code>)</p>
-          <p><span class="font-medium">Step 3:</span> Lock funds in escrow (<code>fundEscrow</code>) — "to" = escrow contract, never seller</p>
+          <p><span class="font-medium">Step 3:</span> Lock funds in escrow (<code>fundEscrow</code>) \u2014 "to" = escrow contract, never seller</p>
         </div>
 
-        <!-- ── Arc Commerce — USDC balance & payment status ── -->
+        <!-- \u2500\u2500 Arc Commerce \u2014 USDC balance & payment status \u2500\u2500 -->
         <div id="arc-payment-status" class="mt-3 p-3 rounded-lg border text-xs hidden">
           <!-- populated by initArcPaymentUI() -->
         </div>
@@ -3678,20 +5666,20 @@ function checkoutPage() {
       document.getElementById('co-wallet-link').style.display='none';
     }
 
-    // ── Arc Commerce: show USDC balance panel (non-blocking) ──────────
+    // \u2500\u2500 Arc Commerce: show USDC balance panel (non-blocking) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     initArcPaymentUI(w);
   });
 
-  // ════════════════════════════════════════════════════════════════════
-  //  confirmOrder — Direct ShuklyEscrow contract calls (no relayer)
+  // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+  //  confirmOrder \u2014 Direct ShuklyEscrow contract calls (no relayer)
   //
   //  Flow (all on-chain, user signs each tx with their own wallet):
-  //   1. approve(escrowAddress, MaxUint256)  — ERC-20 approval
+  //   1. approve(escrowAddress, MaxUint256)  \u2014 ERC-20 approval
   //   2. createEscrow(orderId32, seller, token, amount)
-  //   3. fundEscrow(orderId32)              — pulls tokens into escrow
+  //   3. fundEscrow(orderId32)              \u2014 pulls tokens into escrow
   //
-  //  Funds go to ShuklyEscrow contract ONLY — never directly to seller.
-  // ════════════════════════════════════════════════════════════════════
+  //  Funds go to ShuklyEscrow contract ONLY \u2014 never directly to seller.
+  // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
   async function confirmOrder() {
     const btn = document.getElementById('co-confirm-btn');
     function resetBtn() {
@@ -3699,23 +5687,23 @@ function checkoutPage() {
     }
     function setBtn(text) {
       if (btn) btn.innerHTML = '<span class="loading-spinner inline-block mr-2"></span>' + text;
-      // ── Arc Commerce: mirror step in status panel ──────────────────
+      // \u2500\u2500 Arc Commerce: mirror step in status panel \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
       updateArcPaymentStatus('loading', text);
     }
 
-    // ── 1. Wallet check ──────────────────────────────────────────────
+    // \u2500\u2500 1. Wallet check \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     const w = getStoredWallet();
     if (!w) {
-      showToast('Connect a wallet first — redirecting…', 'error');
+      showToast('Connect a wallet first \u2014 redirecting\u2026', 'error');
       setTimeout(() => { window.location.href = '/wallet'; }, 1200);
       return;
     }
 
-    // ── 2. Network check ─────────────────────────────────────────────
+    // \u2500\u2500 2. Network check \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     if (w.type === 'metamask' && window.ethereum) {
       const onArc = await isOnArcNetwork();
       if (!onArc) {
-        showToast('Switching to Arc Testnet…', 'info');
+        showToast('Switching to Arc Testnet\u2026', 'info');
         const switched = await switchToArc();
         if (!switched) {
           showToast('Please switch to Arc Testnet in MetaMask manually', 'warning');
@@ -3724,11 +5712,11 @@ function checkoutPage() {
       }
     }
 
-    // ── 3. Cart check ────────────────────────────────────────────────
+    // \u2500\u2500 3. Cart check \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     const cart = getCart();
     if (!cart.length) { showToast('Cart is empty', 'error'); return; }
 
-    // ── 4. Escrow contract check ─────────────────────────────────────
+    // \u2500\u2500 4. Escrow contract check \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     const escrowAddress = getEscrowAddress();
     console.log('[confirmOrder] escrowAddress:', escrowAddress);
     if (!isEscrowDeployed()) {
@@ -3737,14 +5725,14 @@ function checkoutPage() {
       return;
     }
 
-    // ── 5. Calculate amount & token ──────────────────────────────────
+    // \u2500\u2500 5. Calculate amount & token \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     const total = cart.reduce((s, i) => s + (parseFloat(i.price) || 0) * ((i.quantity || i.qty) || 1), 0);
     const tokenSel = document.querySelector('input[name="token"]:checked');
     const token = tokenSel ? tokenSel.value : 'USDC';
     const tokenAddress = token === 'USDC' ? window.ARC.contracts.USDC : window.ARC.contracts.EURC;
     console.log('[confirmOrder] token:', token, tokenAddress, 'amount:', total);
 
-    // ── 6. Resolve seller ────────────────────────────────────────────
+    // \u2500\u2500 6. Resolve seller \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     let sellerAddress = null;
     try {
       const pid = cart[0]?.id;
@@ -3772,7 +5760,7 @@ function checkoutPage() {
     }
     console.log('[confirmOrder] sellerAddress:', sellerAddress);
 
-    // ── 7. Confirmation modal ────────────────────────────────────────
+    // \u2500\u2500 7. Confirmation modal \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     const confirmed = await showTxConfirmModal({
       action:  'Lock Funds in Escrow',
       amount:  total.toFixed(2),
@@ -3783,9 +5771,9 @@ function checkoutPage() {
     if (!confirmed) { showToast('Transaction cancelled', 'info'); return; }
 
     if (btn) btn.disabled = true;
-    setBtn('Connecting to wallet…');
+    setBtn('Connecting to wallet\u2026');
 
-    // ── 8. Get signer ────────────────────────────────────────────────
+    // \u2500\u2500 8. Get signer \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     let provider, signer;
     try {
       if (w.type === 'metamask' && window.ethereum) {
@@ -3810,17 +5798,17 @@ function checkoutPage() {
       resetBtn(); return;
     }
 
-    // ── 9. Build amount & orderId ────────────────────────────────────
+    // \u2500\u2500 9. Build amount & orderId \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     const amountWei = ethers.parseUnits((Math.round(total * 1_000_000) / 1_000_000).toFixed(6), 6);
     const orderId   = 'ORD-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
     const orderId32 = ethers.id(orderId);
-    console.log('[confirmOrder] orderId:', orderId, '→ bytes32:', orderId32);
+    console.log('[confirmOrder] orderId:', orderId, '\u2192 bytes32:', orderId32);
     console.log('[confirmOrder] amountWei:', amountWei.toString());
 
     const erc20Contract  = new ethers.Contract(tokenAddress,  ERC20_ABI,  signer);
     const escrowContract = new ethers.Contract(escrowAddress, ESCROW_ABI, signer);
 
-    // ══ PRE-VALIDATION: Check token balance ════════════════════════
+    // \u2550\u2550 PRE-VALIDATION: Check token balance \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
     try {
       const signerAddr = await signer.getAddress();
       const balance = await erc20Contract.balanceOf(signerAddr);
@@ -3840,27 +5828,27 @@ function checkoutPage() {
       // Continue anyway - will fail at tx time if really insufficient
     }
 
-    // ══ STEP 1/3: ERC-20 approve ════════════════════════════════════
+    // \u2550\u2550 STEP 1/3: ERC-20 approve \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
     let approveTxHash = null;
     try {
-      setBtn('Step 1/3 — Checking allowance…');
+      setBtn('Step 1/3 \u2014 Checking allowance\u2026');
       const signerAddr = await signer.getAddress();
       const allowance = await erc20Contract.allowance(signerAddr, escrowAddress);
       console.log('[confirmOrder] allowance:', allowance.toString(), 'need:', amountWei.toString());
 
       if (allowance < amountWei) {
-        setBtn('Step 1/3 — Approve token spend (confirm in wallet)…');
-        showToast('Step 1/3: Approve ' + token + ' for escrow — confirm in wallet…', 'info');
+        setBtn('Step 1/3 \u2014 Approve token spend (confirm in wallet)\u2026');
+        showToast('Step 1/3: Approve ' + token + ' for escrow \u2014 confirm in wallet\u2026', 'info');
         const approveTx = await erc20Contract.approve(escrowAddress, ethers.MaxUint256);
         console.log('[confirmOrder] approve tx:', approveTx.hash);
-        setBtn('Step 1/3 — Waiting for approval confirmation…');
-        showToast('Approval tx sent: ' + approveTx.hash.slice(0, 14) + '… Waiting…', 'info');
+        setBtn('Step 1/3 \u2014 Waiting for approval confirmation\u2026');
+        showToast('Approval tx sent: ' + approveTx.hash.slice(0, 14) + '\u2026 Waiting\u2026', 'info');
         const approveReceipt = await approveTx.wait(1);
         if (!approveReceipt || approveReceipt.status === 0) throw new Error('Approval tx reverted on-chain');
         approveTxHash = approveTx.hash;
-        showToast('Token approved! ✓ Tx: ' + approveTx.hash.slice(0, 14) + '…', 'success');
+        showToast('Token approved! \u2713 Tx: ' + approveTx.hash.slice(0, 14) + '\u2026', 'success');
       } else {
-        showToast('Allowance sufficient ✓ — skipping approve', 'success');
+        showToast('Allowance sufficient \u2713 \u2014 skipping approve', 'success');
       }
     } catch (err) {
       const msg = (err.code === 'ACTION_REJECTED' || err.code === 4001)
@@ -3871,23 +5859,23 @@ function checkoutPage() {
       resetBtn(); return;
     }
 
-    // ══ STEP 2/3: createEscrow ══════════════════════════════════════
+    // \u2550\u2550 STEP 2/3: createEscrow \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
     let createTxHash = null;
     try {
-      setBtn('Step 2/3 — Creating escrow slot (confirm in wallet)…');
-      showToast('Step 2/3: createEscrow — confirm in wallet…', 'info');
+      setBtn('Step 2/3 \u2014 Creating escrow slot (confirm in wallet)\u2026');
+      showToast('Step 2/3: createEscrow \u2014 confirm in wallet\u2026', 'info');
       console.log('[confirmOrder] createEscrow args:', orderId32, sellerAddress, tokenAddress, amountWei.toString());
 
-      // Arc Testnet eth_estimateGas can fail silently — pass explicit gasLimit to skip estimation
+      // Arc Testnet eth_estimateGas can fail silently \u2014 pass explicit gasLimit to skip estimation
       const createTx = await escrowContract.createEscrow(orderId32, sellerAddress, tokenAddress, amountWei, { gasLimit: 300000 });
       console.log('[confirmOrder] createEscrow tx:', createTx.hash);
-      setBtn('Step 2/3 — Waiting for createEscrow confirmation…');
-      showToast('createEscrow sent: ' + createTx.hash.slice(0, 14) + '… Waiting…', 'info');
+      setBtn('Step 2/3 \u2014 Waiting for createEscrow confirmation\u2026');
+      showToast('createEscrow sent: ' + createTx.hash.slice(0, 14) + '\u2026 Waiting\u2026', 'info');
 
       const createReceipt = await createTx.wait(1);
-      if (!createReceipt || createReceipt.status === 0) throw new Error('createEscrow tx reverted — check contract address and inputs');
+      if (!createReceipt || createReceipt.status === 0) throw new Error('createEscrow tx reverted \u2014 check contract address and inputs');
       createTxHash = createTx.hash;
-      showToast('Escrow slot created! ✓ Tx: ' + createTx.hash.slice(0, 14) + '…', 'success');
+      showToast('Escrow slot created! \u2713 Tx: ' + createTx.hash.slice(0, 14) + '\u2026', 'success');
     } catch (err) {
       // Decode revert reason: Arc Testnet often returns no revert data
       let msg;
@@ -3913,23 +5901,23 @@ function checkoutPage() {
       resetBtn(); return;
     }
 
-    // ══ STEP 3/3: fundEscrow ════════════════════════════════════════
+    // \u2550\u2550 STEP 3/3: fundEscrow \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
     let fundTxHash = null;
     try {
-      setBtn('Step 3/3 — Locking funds in escrow (confirm in wallet)…');
-      showToast('Step 3/3: fundEscrow — confirm in wallet…', 'info');
+      setBtn('Step 3/3 \u2014 Locking funds in escrow (confirm in wallet)\u2026');
+      showToast('Step 3/3: fundEscrow \u2014 confirm in wallet\u2026', 'info');
       console.log('[confirmOrder] fundEscrow orderId32:', orderId32);
 
-      // Arc Testnet eth_estimateGas can fail silently — pass explicit gasLimit
+      // Arc Testnet eth_estimateGas can fail silently \u2014 pass explicit gasLimit
       const fundTx = await escrowContract.fundEscrow(orderId32, { gasLimit: 200000 });
       console.log('[confirmOrder] fundEscrow tx:', fundTx.hash);
-      setBtn('Step 3/3 — Waiting for fundEscrow confirmation…');
-      showToast('fundEscrow sent: ' + fundTx.hash.slice(0, 14) + '… Waiting…', 'info');
+      setBtn('Step 3/3 \u2014 Waiting for fundEscrow confirmation\u2026');
+      showToast('fundEscrow sent: ' + fundTx.hash.slice(0, 14) + '\u2026 Waiting\u2026', 'info');
 
       const fundReceipt = await fundTx.wait(1);
-      if (!fundReceipt || fundReceipt.status === 0) throw new Error('fundEscrow tx reverted — check token allowance and escrow state');
+      if (!fundReceipt || fundReceipt.status === 0) throw new Error('fundEscrow tx reverted \u2014 check token allowance and escrow state');
       fundTxHash = fundTx.hash;
-      showToast('Funds locked in escrow! ✓ Tx: ' + fundTx.hash.slice(0, 14) + '…', 'success');
+      showToast('Funds locked in escrow! \u2713 Tx: ' + fundTx.hash.slice(0, 14) + '\u2026', 'success');
     } catch (err) {
       let msg;
       if (err.code === 'ACTION_REJECTED' || err.code === 4001) {
@@ -3944,7 +5932,7 @@ function checkoutPage() {
       resetBtn(); return;
     }
 
-    // ══ Save order ══════════════════════════════════════════════════
+    // \u2550\u2550 Save order \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
     const orderData = {
       orderId, orderId32,
       txHash:       createTxHash,
@@ -3957,7 +5945,7 @@ function checkoutPage() {
       items:        cart
     };
 
-    // Backend save (optional — best effort)
+    // Backend save (optional \u2014 best effort)
     try {
       await fetch('/api/orders', {
         method: 'POST',
@@ -3989,20 +5977,20 @@ function checkoutPage() {
     localStorage.removeItem('cart');
     try { CartStore._syncBadge([]); } catch (e) {}
 
-    setBtn('Funds locked! Redirecting…');
-    showToast('✓ Funds locked in escrow! Order ' + orderId, 'success');
+    setBtn('Funds locked! Redirecting\u2026');
+    showToast('\u2713 Funds locked in escrow! Order ' + orderId, 'success');
     setTimeout(() => { window.location.href = '/orders/' + orderId; }, 1200);
   }
 
-  // ════════════════════════════════════════════════════════════════════
-  //  ARC COMMERCE — USDC Balance Panel + Status Hook
+  // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+  //  ARC COMMERCE \u2014 USDC Balance Panel + Status Hook
   //  Non-destructive: only adds UI, does NOT change confirmOrder flow
-  // ════════════════════════════════════════════════════════════════════
+  // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
 
   /**
-   * initArcPaymentUI — shows USDC balance and Arc Commerce badge.
+   * initArcPaymentUI \u2014 shows USDC balance and Arc Commerce badge.
    * Called once after wallet is confirmed on DOMContentLoaded.
-   * Never throws — all errors are silent (panel stays hidden).
+   * Never throws \u2014 all errors are silent (panel stays hidden).
    */
   async function initArcPaymentUI(wallet) {
     const panel = document.getElementById('arc-payment-status');
@@ -4020,11 +6008,11 @@ function checkoutPage() {
         });
       }
 
-      if (!window.ArcPayments) return; // script failed to load — silent
+      if (!window.ArcPayments) return; // script failed to load \u2014 silent
 
       // Show loading state
       panel.className = 'mt-3 p-3 rounded-lg border border-blue-200 bg-blue-50 text-xs text-blue-800';
-      panel.innerHTML = '<i class="fas fa-circle-notch fa-spin mr-1"></i> Checking USDC balance via Arc Network…';
+      panel.innerHTML = '<i class="fas fa-circle-notch fa-spin mr-1"></i> Checking USDC balance via Arc Network\u2026';
       panel.classList.remove('hidden');
 
       if (!wallet || !wallet.address) {
@@ -4032,14 +6020,14 @@ function checkoutPage() {
         return;
       }
 
-      // Get USDC balance (non-blocking — 5s timeout)
+      // Get USDC balance (non-blocking \u2014 5s timeout)
       const balResult = await Promise.race([
         window.ArcPayments.getBalance(wallet.address, 'USDC'),
         new Promise(r => setTimeout(() => r({ ok: false, balance: '?' }), 5000))
       ]);
 
       const isAvailable = window.ArcPayments.isAvailable();
-      const balFormatted = balResult.ok ? parseFloat(balResult.balance).toFixed(2) : '—';
+      const balFormatted = balResult.ok ? parseFloat(balResult.balance).toFixed(2) : '\u2014';
 
       // Get cart total for balance check
       const cart = getCart();
@@ -4062,7 +6050,7 @@ function checkoutPage() {
               : '<a href="https://faucet.circle.com" target="_blank" class="text-orange-700 font-semibold underline"><i class="fas fa-exclamation-circle mr-1"></i>Get USDC</a>'
             )
           + '</div>'
-          + '<p class="mt-1 text-green-700 opacity-75">Powered by Circle · Arc Testnet (Chain ID 5042002)</p>';
+          + '<p class="mt-1 text-green-700 opacity-75">Powered by Circle \xB7 Arc Testnet (Chain ID 5042002)</p>';
       } else {
         panel.className = 'mt-3 p-3 rounded-lg border border-slate-200 bg-slate-50 text-xs text-slate-500';
         panel.innerHTML =
@@ -4070,13 +6058,13 @@ function checkoutPage() {
           + 'USDC balance: <strong>' + balFormatted + ' USDC</strong>';
       }
     } catch (e) {
-      // Silent fail — never disrupt checkout
+      // Silent fail \u2014 never disrupt checkout
       console.warn('[Arc Commerce UI]', e.message);
     }
   }
 
   /**
-   * updateArcPaymentStatus — updates the panel during confirmOrder steps.
+   * updateArcPaymentStatus \u2014 updates the panel during confirmOrder steps.
    * Called by the ArcPayments onStatus hook (non-destructive).
    */
   function updateArcPaymentStatus(step, message) {
@@ -4100,17 +6088,15 @@ function checkoutPage() {
       + '<i class="' + icon + ' mr-1"></i>' + message;
   }
   </script>
-  `)
+  `);
 }
-
-// ─── PAGE: WALLET ──────────────────────────────────────────────────────
 function walletPage() {
-  return shell('Wallet', `
+  return shell("Wallet", `
   <div class="max-w-4xl mx-auto px-4 py-8">
     <h1 class="text-3xl font-bold text-slate-800 mb-2 flex items-center gap-3">
       <i class="fas fa-wallet text-red-500"></i> Shukly Store Wallet
     </h1>
-    <p class="text-slate-500 mb-2">Non-custodial wallet — your keys, your funds, on Arc Network.</p>
+    <p class="text-slate-500 mb-2">Non-custodial wallet \u2014 your keys, your funds, on Arc Network.</p>
     <div id="wallet-network-status" class="mb-6"></div>
 
     <!-- Unlock Wallet (shown when encrypted wallet exists but session not active) -->
@@ -4207,25 +6193,25 @@ function walletPage() {
             </div>
             <div>
               <p class="font-bold text-lg">Shukly Store Wallet</p>
-              <p class="text-red-200 text-xs">Arc Testnet · Chain 5042002</p>
+              <p class="text-red-200 text-xs">Arc Testnet \xB7 Chain 5042002</p>
             </div>
           </div>
           <div class="text-right">
             <div id="network-dot" class="w-3 h-3 rounded-full bg-yellow-400 ml-auto animate-pulse"></div>
-            <p class="text-red-200 text-xs mt-1" id="wallet-network-label">Checking…</p>
+            <p class="text-red-200 text-xs mt-1" id="wallet-network-label">Checking\u2026</p>
           </div>
         </div>
         <div class="mb-4">
           <p class="text-red-200 text-xs mb-1">Wallet Address</p>
           <div class="flex items-center gap-2">
-            <p class="font-mono text-sm break-all" id="wallet-addr-display">—</p>
+            <p class="font-mono text-sm break-all" id="wallet-addr-display">\u2014</p>
             <button onclick="copyAddress()" class="text-red-200 hover:text-white text-xs shrink-0"><i class="fas fa-copy"></i></button>
           </div>
           <a id="explorer-link" href="#" target="_blank" class="text-red-300 text-xs hover:text-white mt-1 inline-flex items-center gap-1">
             <i class="fas fa-external-link-alt text-xs"></i> View on Arc Explorer
           </a>
         </div>
-        <!-- Balances — fetched live from Arc RPC -->
+        <!-- Balances \u2014 fetched live from Arc RPC -->
         <div class="grid grid-cols-2 gap-4">
           <div class="bg-white/10 rounded-xl p-4">
             <p class="text-red-200 text-xs mb-1">USDC Balance</p>
@@ -4239,7 +6225,7 @@ function walletPage() {
             <div id="eurc-balance-display" class="flex items-center gap-2">
               <div class="loading-spinner" style="width:16px;height:16px;border-width:1.5px"></div>
             </div>
-            <p class="text-red-300 text-xs mt-1">0x89B5…D72a</p>
+            <p class="text-red-300 text-xs mt-1">0x89B5\u2026D72a</p>
           </div>
         </div>
         <button onclick="refreshBalances()" class="mt-3 text-red-200 hover:text-white text-xs flex items-center gap-1">
@@ -4249,11 +6235,11 @@ function walletPage() {
 
       <!-- Actions -->
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
-        ${[['fas fa-paper-plane','Send','openSendModal()'],['fas fa-qrcode','Receive','openReceiveModal()'],['fas fa-external-link-alt','Explorer','openExplorer()'],['fas fa-history','Orders','window.location.href=&quot;/orders&quot;']].map(([icon,label,action])=>`
+        ${[["fas fa-paper-plane", "Send", "openSendModal()"], ["fas fa-qrcode", "Receive", "openReceiveModal()"], ["fas fa-external-link-alt", "Explorer", "openExplorer()"], ["fas fa-history", "Orders", "window.location.href=&quot;/orders&quot;"]].map(([icon, label, action]) => `
           <button onclick="${action}" class="card p-4 flex flex-col items-center gap-2 hover:border-red-300 hover:bg-red-50 transition-all">
             <div class="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center text-red-600"><i class="${icon}"></i></div>
             <p class="text-sm font-semibold text-slate-700">${label}</p>
-          </button>`).join('')}
+          </button>`).join("")}
       </div>
 
       <!-- Wallet transparency notice (dashboard) -->
@@ -4271,7 +6257,7 @@ function walletPage() {
         <div id="tx-history-container">
           <div class="text-center py-6">
             <div class="loading-spinner mx-auto mb-2"></div>
-            <p class="text-slate-400 text-sm">Fetching from Arc Network…</p>
+            <p class="text-slate-400 text-sm">Fetching from Arc Network\u2026</p>
           </div>
         </div>
       </div>
@@ -4296,7 +6282,7 @@ function walletPage() {
       <div class="space-y-4">
         <div>
           <label class="block text-sm font-medium text-slate-700 mb-1">Recipient Address (Arc Testnet)</label>
-          <input type="text" id="send-to" placeholder="0x…" class="input"/>
+          <input type="text" id="send-to" placeholder="0x\u2026" class="input"/>
         </div>
         <div>
           <label class="block text-sm font-medium text-slate-700 mb-1">Token</label>
@@ -4334,7 +6320,7 @@ function walletPage() {
       </div>
       <p class="font-medium text-slate-800 mb-1">Your Arc Network Address</p>
       <div class="flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-2 mb-3 justify-center">
-        <p class="font-mono text-xs text-slate-600 break-all" id="receive-addr">—</p>
+        <p class="font-mono text-xs text-slate-600 break-all" id="receive-addr">\u2014</p>
         <button onclick="copyAddress()" class="text-red-500 shrink-0"><i class="fas fa-copy text-sm"></i></button>
       </div>
       <p class="text-slate-400 text-xs mb-3">Send only USDC or EURC on <strong>Arc Testnet (Chain ID: 5042002)</strong>.</p>
@@ -4372,16 +6358,16 @@ function walletPage() {
         // Fallback: show local orders
         const orders = JSON.parse(localStorage.getItem('rh_orders') || '[]');
         if (!orders.length) {
-          container.innerHTML = '<div class="empty-state" style="padding:24px"><i class="fas fa-receipt" style="font-size:24px;margin-bottom:8px"></i><p class="text-sm">No transactions yet</p><a href="https://faucet.circle.com" target="_blank" class="text-red-600 text-xs hover:underline mt-1 block">Get test tokens to start →</a></div>';
+          container.innerHTML = '<div class="empty-state" style="padding:24px"><i class="fas fa-receipt" style="font-size:24px;margin-bottom:8px"></i><p class="text-sm">No transactions yet</p><a href="https://faucet.circle.com" target="_blank" class="text-red-600 text-xs hover:underline mt-1 block">Get test tokens to start \u2192</a></div>';
           return;
         }
         container.innerHTML = orders.slice(-5).reverse().map(o =>
           '<div class="flex items-center gap-3 py-3 border-b border-slate-50 last:border-0">'
           + '<div class="w-9 h-9 rounded-full bg-red-100 flex items-center justify-center text-red-600"><i class="fas fa-shopping-bag text-sm"></i></div>'
-          + '<div class="flex-1"><p class="font-medium text-sm text-slate-800">Escrow — ' + o.id + '</p>'
-          + '<p class="text-xs text-slate-400 addr-mono">' + (o.txHash||'').substring(0,24) + '…</p></div>'
+          + '<div class="flex-1"><p class="font-medium text-sm text-slate-800">Escrow \u2014 ' + o.id + '</p>'
+          + '<p class="text-xs text-slate-400 addr-mono">' + (o.txHash||'').substring(0,24) + '\u2026</p></div>'
           + '<div class="text-right"><p class="font-bold text-red-600 text-sm">-' + (o.total||0).toFixed(2) + ' USDC</p>'
-          + (o.explorerUrl ? '<a href="' + o.explorerUrl + '" target="_blank" class="text-blue-500 text-xs hover:underline">Explorer ↗</a>' : '')
+          + (o.explorerUrl ? '<a href="' + o.explorerUrl + '" target="_blank" class="text-blue-500 text-xs hover:underline">Explorer \u2197</a>' : '')
           + '</div></div>'
         ).join('');
         return;
@@ -4391,9 +6377,9 @@ function walletPage() {
         '<div class="flex items-center gap-3 py-3 border-b border-slate-50 last:border-0">'
         + '<div class="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center text-blue-600"><i class="fas fa-exchange-alt text-sm"></i></div>'
         + '<div class="flex-1"><p class="font-medium text-sm text-slate-800">' + (tx.method||'Transfer') + '</p>'
-        + '<p class="text-xs text-slate-400 addr-mono">' + (tx.hash||'').substring(0,24) + '…</p></div>'
+        + '<p class="text-xs text-slate-400 addr-mono">' + (tx.hash||'').substring(0,24) + '\u2026</p></div>'
         + '<div class="text-right">'
-        + '<a href="' + ARC.explorer + '/tx/' + tx.hash + '" target="_blank" class="text-blue-500 text-xs hover:underline">View ↗</a></div></div>'
+        + '<a href="' + ARC.explorer + '/tx/' + tx.hash + '" target="_blank" class="text-blue-500 text-xs hover:underline">View \u2197</a></div></div>'
       ).join('');
     } catch {
       container.innerHTML = '<div class="text-center py-4 text-slate-400 text-sm">Could not fetch transaction history from Arc Explorer.</div>';
@@ -4432,14 +6418,14 @@ function walletPage() {
         const amountWei = ethers.parseUnits(amount, 6); // 6 decimals
         let txResponse;
         if (token === 'USDC') {
-          // USDC is native on Arc — send as native transfer
+          // USDC is native on Arc \u2014 send as native transfer
           txResponse = await signer.sendTransaction({ to, value: amountWei * BigInt('1000000000000') });
         } else {
           // EURC is ERC-20
           const contract = new ethers.Contract(EURC_ADDRESS, ERC20_ABI, signer);
           txResponse = await contract.transfer(to, amountWei);
         }
-        showToast('Transaction sent! Hash: ' + txResponse.hash.substring(0,12) + '…', 'success');
+        showToast('Transaction sent! Hash: ' + txResponse.hash.substring(0,12) + '\u2026', 'success');
         closeSendModal();
         setTimeout(() => refreshBalances(), 3000);
       } catch(err) {
@@ -4454,7 +6440,7 @@ function walletPage() {
     checkNetworkStatus(document.getElementById('wallet-network-status'));
     const w = getStoredWallet();
     if (w) {
-      // ── Active session: show wallet dashboard ──────────────────
+      // \u2500\u2500 Active session: show wallet dashboard \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
       document.getElementById('no-wallet-state').classList.add('hidden');
       document.getElementById('unlock-wallet-state').classList.add('hidden');
       document.getElementById('has-wallet-state').classList.remove('hidden');
@@ -4479,7 +6465,7 @@ function walletPage() {
       // Load tx history
       await loadTxHistory(w.address);
     } else if (hasEncryptedWallet()) {
-      // ── Encrypted wallet exists but no active session: show unlock ──
+      // \u2500\u2500 Encrypted wallet exists but no active session: show unlock \u2500\u2500
       document.getElementById('no-wallet-state').classList.add('hidden');
       document.getElementById('unlock-wallet-state').classList.remove('hidden');
       setTimeout(() => { const el = document.getElementById('unlock-password'); if (el) el.focus(); }, 100);
@@ -4494,7 +6480,7 @@ function walletPage() {
     errEl.classList.add('hidden');
     if (!pwd) { errEl.classList.remove('hidden'); return; }
     btn.disabled = true;
-    btn.innerHTML = '<span class=\\"loading-spinner inline-block mr-2\\"></span>Unlocking…';
+    btn.innerHTML = '<span class=\\"loading-spinner inline-block mr-2\\"></span>Unlocking\u2026';
     const w = await unlockWallet(pwd);
     if (!w) {
       errEl.classList.remove('hidden');
@@ -4516,18 +6502,16 @@ function walletPage() {
   }
 
   function confirmResetWallet() {
-    if (!confirm('⚠️ This will delete your encrypted wallet data from this browser.\\nYou will need your seed phrase to restore access.\\n\\nContinue?')) return;
+    if (!confirm('\u26A0\uFE0F This will delete your encrypted wallet data from this browser.\\nYou will need your seed phrase to restore access.\\n\\nContinue?')) return;
     clearWallet();
     showToast('Wallet data removed. Import again with seed phrase.', 'info');
     setTimeout(() => location.reload(), 1000);
   }
   </script>
-  `)
+  `);
 }
-
-// ─── PAGE: ORDERS ───────────────────────────────────────────────────────
 function ordersPage() {
-  return shell('My Orders', `
+  return shell("My Orders", `
   <div class="max-w-4xl mx-auto px-4 py-8">
     <div class="flex items-center justify-between gap-4 mb-2 flex-wrap">
       <h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3">
@@ -4560,7 +6544,7 @@ function ordersPage() {
     <div id="orders-container">
       <div class="card p-8 text-center">
         <div class="loading-spinner-lg mx-auto mb-3"></div>
-        <p class="text-slate-400 text-sm">Loading your orders…</p>
+        <p class="text-slate-400 text-sm">Loading your orders\u2026</p>
       </div>
     </div>
   </div>
@@ -4568,13 +6552,11 @@ function ordersPage() {
   <!-- Receipt / Shipping Modal root -->
   <div id="receipt-modal-root"></div>
 
-  <!-- Orders page logic — no inline JS, loaded from static file -->
+  <!-- Orders page logic \u2014 no inline JS, loaded from static file -->
   <script src="/static/orders.js" defer></script>
-  `)
+  `);
 }
-
-// ─── PAGE: ORDER DETAIL ─────────────────────────────────────────────────
-function orderDetailPage(id: string) {
+function orderDetailPage(id) {
   return shell(`Order ${id}`, `
   <div class="max-w-3xl mx-auto px-4 py-8">
     <div class="flex items-center gap-3 mb-6">
@@ -4584,7 +6566,7 @@ function orderDetailPage(id: string) {
     <div id="order-detail-container">
       <div class="card p-8 text-center">
         <div class="loading-spinner-lg mx-auto mb-4"></div>
-        <p class="text-slate-400">Loading order from Arc Network…</p>
+        <p class="text-slate-400">Loading order from Arc Network\u2026</p>
       </div>
     </div>
   </div>
@@ -4612,56 +6594,56 @@ function orderDetailPage(id: string) {
     let actionBtns='';
     var isDisputed=order.status==='dispute';
     var isPending=order.status==='escrow_pending';
-    // ── SELLER ACTIONS ──────────────────────────────────────────────────
+    // \u2500\u2500 SELLER ACTIONS \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     // Only the seller sees seller-specific actions; buyer NEVER sees Release Funds
     if(isSeller){
       if(order.status==='escrow_pending')
-        // Funds not locked yet — warn seller
+        // Funds not locked yet \u2014 warn seller
         actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm font-semibold"><i class="fas fa-clock"></i> Awaiting escrow lock by buyer</span>';
 
       if(order.status==='escrow_locked')
-        // Funds locked — seller can now ship
+        // Funds locked \u2014 seller can now ship
         actionBtns+='<button data-oid="'+order.id+'" data-status="shipped" class="update-status-btn btn-primary"><i class="fas fa-shipping-fast mr-1"></i> Mark as Shipped</button>';
 
       if(order.status==='shipped')
-        // Shipped — waiting for buyer to confirm delivery
+        // Shipped \u2014 waiting for buyer to confirm delivery
         actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 text-sm font-semibold"><i class="fas fa-clock"></i> Waiting for buyer confirmation</span>';
 
       if(order.status==='delivery_confirmed'){
-        // Buyer confirmed delivery — seller CAN now release funds
+        // Buyer confirmed delivery \u2014 seller CAN now release funds
         if(order.orderId32)
           actionBtns+='<button data-oid="'+order.id+'" data-status="funds_released" class="update-status-btn btn-primary" style="background:linear-gradient(135deg,#16a34a,#15803d);"><i class="fas fa-coins mr-1"></i> Release Funds</button>';
         else
-          actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm font-semibold"><i class="fas fa-exclamation-triangle"></i> No on-chain escrow ID — cannot release</span>';
+          actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm font-semibold"><i class="fas fa-exclamation-triangle"></i> No on-chain escrow ID \u2014 cannot release</span>';
       }
 
       if(order.status==='funds_released')
         actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-semibold"><i class="fas fa-check-circle"></i> Funds released to you</span>';
 
       if(isDisputed)
-        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm font-semibold"><i class="fas fa-lock"></i> Funds Locked — Dispute Active</span>';
+        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm font-semibold"><i class="fas fa-lock"></i> Funds Locked \u2014 Dispute Active</span>';
     }
 
-    // ── BUYER ACTIONS ───────────────────────────────────────────────────
+    // \u2500\u2500 BUYER ACTIONS \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     // Buyer sees ONLY: Confirm Delivery (when shipped)
-    // Buyer NEVER sees Release Funds — that is a seller-only action
+    // Buyer NEVER sees Release Funds \u2014 that is a seller-only action
     if(isBuyer){
       if(order.status==='escrow_locked')
-        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-green-50 border border-green-200 text-green-700 text-sm font-semibold"><i class="fas fa-lock"></i> Funds locked in escrow — waiting for shipping</span>';
+        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-green-50 border border-green-200 text-green-700 text-sm font-semibold"><i class="fas fa-lock"></i> Funds locked in escrow \u2014 waiting for shipping</span>';
 
       if(order.status==='shipped')
-        // Buyer confirms receipt of goods → calls confirmDelivery on-chain
+        // Buyer confirms receipt of goods \u2192 calls confirmDelivery on-chain
         actionBtns+='<button data-oid="'+order.id+'" data-status="delivery_confirmed" class="update-status-btn btn-secondary"><i class="fas fa-check-circle mr-1"></i> Confirm Delivery</button>';
 
       if(order.status==='delivery_confirmed')
-        // Delivery confirmed — waiting for seller to release funds
-        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-green-50 border border-green-200 text-green-700 text-sm font-semibold"><i class="fas fa-check-circle"></i> Delivery confirmed — waiting for seller to release funds</span>';
+        // Delivery confirmed \u2014 waiting for seller to release funds
+        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-green-50 border border-green-200 text-green-700 text-sm font-semibold"><i class="fas fa-check-circle"></i> Delivery confirmed \u2014 waiting for seller to release funds</span>';
 
       if(order.status==='funds_released')
-        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-semibold"><i class="fas fa-check-circle"></i> Order complete — funds released to seller</span>';
+        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-semibold"><i class="fas fa-check-circle"></i> Order complete \u2014 funds released to seller</span>';
 
       if(isDisputed)
-        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm font-semibold"><i class="fas fa-gavel"></i> Dispute Active — awaiting resolution</span>';
+        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm font-semibold"><i class="fas fa-gavel"></i> Dispute Active \u2014 awaiting resolution</span>';
     }
 
     container.innerHTML=
@@ -4669,7 +6651,7 @@ function orderDetailPage(id: string) {
       // Role badge
       +(isSeller ? '<div class="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm font-medium text-amber-800"><i class="fas fa-store"></i> You are the seller of this order</div>' : '')
       +(isBuyer  ? '<div class="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-xl text-sm font-medium text-blue-800"><i class="fas fa-shopping-bag"></i> You are the buyer of this order</div>' : '')
-      // ── Escrow Pending warning banner ────────────────────────────
+      // \u2500\u2500 Escrow Pending warning banner \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
       +(order.status==='escrow_pending'
         ? '<div class="card p-5 bg-amber-50 border-amber-300">'
           +'<div class="flex items-start gap-3">'
@@ -4681,7 +6663,7 @@ function orderDetailPage(id: string) {
           +'<p class="text-amber-600 text-xs mt-2 font-medium">Go to <a href="/deploy-escrow" class="underline">Deploy Escrow</a> to set up the contract, then retry checkout.</p>'
           +'</div></div></div>'
         : '')
-      // ── Funds Released banner ────────────────────────────────────
+      // \u2500\u2500 Funds Released banner \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
       +(order.status==='funds_released'
         ? '<div class="card p-6 text-center bg-emerald-50 border-emerald-200">'
           +'<div class="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-3">'
@@ -4715,7 +6697,7 @@ function orderDetailPage(id: string) {
       +'<h2 class="font-bold text-slate-800 mb-4 flex items-center gap-2"><i class="fas fa-receipt text-red-500"></i> On-Chain Details</h2>'
       +'<div class="space-y-3 text-sm">'
       +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Order ID</span><span class="font-mono font-medium text-right">'+order.id+'</span></div>'
-      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Escrow Contract</span><a href="'+('${ARC.explorer}'+'/address/'+(order.escrowContract||''))+'" target="_blank" class="font-mono text-xs text-blue-600 hover:underline text-right break-all">'+(order.escrowContract||'—')+'</a></div>'
+      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Escrow Contract</span><a href="'+('${ARC.explorer}'+'/address/'+(order.escrowContract||''))+'" target="_blank" class="font-mono text-xs text-blue-600 hover:underline text-right break-all">'+(order.escrowContract||'\u2014')+'</a></div>'
       +(order.orderId32 ? '<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Order ID (bytes32)</span><span class="font-mono text-xs text-right break-all">'+order.orderId32+'</span></div>' : '')
       // createEscrow tx hash
       +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Create Tx</span>'
@@ -4733,18 +6715,18 @@ function orderDetailPage(id: string) {
         ? '<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Confirm Delivery Tx</span>'
           +'<a href="'+(order.confirmDeliveryUrl||'${ARC.explorer}/tx/'+order.confirmDeliveryTx)+'" target="_blank" class="font-mono text-xs text-blue-600 hover:underline text-right break-all">'+order.confirmDeliveryTx+'</a></div>'
         : '')
-      // Release tx hash (takerDeliver) — only shown after release
+      // Release tx hash (takerDeliver) \u2014 only shown after release
       +(order.releaseTxHash
         ? '<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Release Tx</span>'
           +'<a href="'+(order.releaseTxUrl||('${ARC.explorer}/tx/'+order.releaseTxHash))+'" target="_blank" class="font-mono text-xs text-emerald-600 hover:underline text-right break-all">'+order.releaseTxHash+'</a></div>'
         : '')
-      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Buyer</span><span class="font-mono text-xs text-right break-all">'+(order.buyerAddress||'—')+'</span></div>'
-      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Seller</span><span class="font-mono text-xs text-right break-all">'+(order.sellerAddress||'—')+'</span></div>'
+      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Buyer</span><span class="font-mono text-xs text-right break-all">'+(order.buyerAddress||'\u2014')+'</span></div>'
+      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Seller</span><span class="font-mono text-xs text-right break-all">'+(order.sellerAddress||'\u2014')+'</span></div>'
       +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Amount</span><span class="font-bold text-red-600">'+(order.amount||0)+' '+(order.token||'USDC')+'</span></div>'
       +'<div class="flex justify-between"><span class="text-slate-500">Network</span><span class="font-medium">Arc Testnet (Chain 5042002)</span></div>'
       +'<div class="flex justify-between"><span class="text-slate-500">Created</span><span>'+new Date(order.createdAt).toLocaleString()+'</span></div>'
       +'</div></div>'
-      // Shipping Info — shown to buyer when available
+      // Shipping Info \u2014 shown to buyer when available
       +(isBuyer && order.shippingInfo
         ? '<div class="card p-6" style="background:#f0f9ff;border:1px solid #bae6fd;">'
           +'<h2 class="font-bold text-blue-800 mb-4 flex items-center gap-2"><i class="fas fa-shipping-fast text-blue-500"></i> Shipping Information</h2>'
@@ -4760,7 +6742,7 @@ function orderDetailPage(id: string) {
           +'<div class="flex justify-between items-start gap-4"><span class="text-blue-700 shrink-0 font-medium">Sent at</span><span class="text-xs text-slate-500">'+new Date(order.shippingInfo.sentAt).toLocaleString()+'</span></div>'
           +'</div></div>'
         : '')
-      // Shipping Info — shown to seller (read-only view of what was sent)
+      // Shipping Info \u2014 shown to seller (read-only view of what was sent)
       +(isSeller && order.shippingInfo
         ? '<div class="card p-6" style="background:#fffbeb;border:1px solid #fde68a;">'
           +'<h2 class="font-bold text-amber-800 mb-4 flex items-center gap-2"><i class="fas fa-shipping-fast text-amber-500"></i> Shipping Info Sent to Buyer</h2>'
@@ -4798,11 +6780,11 @@ function orderDetailPage(id: string) {
       return;
     }
 
-    // ══════════════════════════════════════════════════════════════════
-    //  CONFIRM DELIVERY — BUYER calls confirmDelivery(orderId32)
+    // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    //  CONFIRM DELIVERY \u2014 BUYER calls confirmDelivery(orderId32)
     //  Security: Only the buyer can confirm delivery.
     //  This signals goods received; seller can now call releaseFunds.
-    // ══════════════════════════════════════════════════════════════════
+    // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
     if(s==='delivery_confirmed'){
       const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
       const idx=orders.findIndex(o=>o.id===id);
@@ -4811,9 +6793,9 @@ function orderDetailPage(id: string) {
 
       const btn=event && event.target;
       const origLabel='<i class="fas fa-check-circle mr-1"></i> Confirm Delivery';
-      if(btn){ btn.disabled=true; btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Initialising…'; }
+      if(btn){ btn.disabled=true; btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Initialising\u2026'; }
 
-      // ── ROLE CHECK: only the buyer can confirm delivery ────────────
+      // \u2500\u2500 ROLE CHECK: only the buyer can confirm delivery \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
       const _w0 = getStoredWallet();
       if(!_w0){
         showToast('Connect wallet to confirm delivery','error');
@@ -4823,7 +6805,7 @@ function orderDetailPage(id: string) {
       const _isBuyer0 = order.buyerAddress && order.buyerAddress.toLowerCase() === _w0.address.toLowerCase();
       if(!_isBuyer0){
         showToast('Only the buyer can confirm delivery','error');
-        console.error('[confirmDelivery] Role check failed — caller is not the buyer');
+        console.error('[confirmDelivery] Role check failed \u2014 caller is not the buyer');
         if(btn){ btn.disabled=false; btn.innerHTML=origLabel; }
         return;
       }
@@ -4861,15 +6843,15 @@ function orderDetailPage(id: string) {
         }
 
         const escrowContract = new ethers.Contract(escrowAddress, ESCROW_ABI, signer);
-        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Confirming delivery…';
-        showToast('Sending confirmDelivery on-chain…','info');
+        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Confirming delivery\u2026';
+        showToast('Sending confirmDelivery on-chain\u2026','info');
 
         const tx = await escrowContract.confirmDelivery(order.orderId32, { gasLimit: 150000 });
-        showToast('Tx sent: '+tx.hash.slice(0,14)+'… Waiting…','info');
+        showToast('Tx sent: '+tx.hash.slice(0,14)+'\u2026 Waiting\u2026','info');
         const receipt = await tx.wait(1);
         if(!receipt || receipt.status===0) throw new Error('confirmDelivery reverted');
 
-        showToast('Delivery confirmed on-chain! Tx: '+tx.hash.slice(0,14)+'…','success');
+        showToast('Delivery confirmed on-chain! Tx: '+tx.hash.slice(0,14)+'\u2026','success');
         orders[idx].status             = 'delivery_confirmed';
         orders[idx].confirmDeliveryTx  = tx.hash;
         orders[idx].confirmDeliveryUrl = window.ARC.explorer+'/tx/'+tx.hash;
@@ -4886,18 +6868,18 @@ function orderDetailPage(id: string) {
       return;
     }
 
-    // ══════════════════════════════════════════════════════════════════
-    //  RELEASE FUNDS — SELLER calls releaseFunds(orderId32) on ShuklyEscrow
+    // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    //  RELEASE FUNDS \u2014 SELLER calls releaseFunds(orderId32) on ShuklyEscrow
     //  Security: Only the seller can call this function.
-    //  Direct on-chain call — no Permit2, no relayer, no signature
+    //  Direct on-chain call \u2014 no Permit2, no relayer, no signature
     //
     //  Flow:
     //   1. Seller calls releaseFunds(orderId32) on ShuklyEscrow
     //   2. Contract releases locked tokens to seller
     //   3. UI updates ONLY after tx is confirmed (receipt.status === 1)
     //
-    //  "to" address = ShuklyEscrow contract — never directly to seller
-    // ══════════════════════════════════════════════════════════════════
+    //  "to" address = ShuklyEscrow contract \u2014 never directly to seller
+    // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
     if(s==='funds_released'){
       const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
       const idx=orders.findIndex(o=>o.id===id);
@@ -4906,9 +6888,9 @@ function orderDetailPage(id: string) {
 
       const btn=event && event.target;
       const origLabel='<i class="fas fa-coins mr-1"></i> Release Funds';
-      if(btn){ btn.disabled=true; btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Initialising…'; }
+      if(btn){ btn.disabled=true; btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Initialising\u2026'; }
 
-      // ── ROLE CHECK: only the seller can release funds ──────────────
+      // \u2500\u2500 ROLE CHECK: only the seller can release funds \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
       const _w = getStoredWallet();
       if(!_w){
         showToast('Connect wallet to release funds','error');
@@ -4918,14 +6900,14 @@ function orderDetailPage(id: string) {
       const _isSeller = order.sellerAddress && order.sellerAddress.toLowerCase() === _w.address.toLowerCase();
       if(!_isSeller){
         showToast('Only the seller can release funds from escrow','error');
-        console.error('[releaseFunds] Role check failed — caller is not the seller');
+        console.error('[releaseFunds] Role check failed \u2014 caller is not the seller');
         if(btn){ btn.disabled=false; btn.innerHTML=origLabel; }
         return;
       }
 
-      // ── STATUS CHECK: must be delivery_confirmed ───────────────────
+      // \u2500\u2500 STATUS CHECK: must be delivery_confirmed \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
       if(order.status !== 'delivery_confirmed'){
-        showToast('Cannot release funds — buyer has not confirmed delivery yet','error');
+        showToast('Cannot release funds \u2014 buyer has not confirmed delivery yet','error');
         if(btn){ btn.disabled=false; btn.innerHTML=origLabel; }
         return;
       }
@@ -4933,7 +6915,7 @@ function orderDetailPage(id: string) {
       if(!order.orderId32){
         showToast(
           'This order was not locked on-chain (no orderId32). ' +
-          'Funds were never deposited into the escrow contract — nothing to release.',
+          'Funds were never deposited into the escrow contract \u2014 nothing to release.',
           'error'
         );
         if(btn){ btn.disabled=false; btn.innerHTML=origLabel; }
@@ -4941,7 +6923,7 @@ function orderDetailPage(id: string) {
       }
 
       try {
-        // ── Connect wallet ─────────────────────────────────────────
+        // \u2500\u2500 Connect wallet \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
         const w=getStoredWallet();
         if(!w){ showToast('Connect wallet to release funds','error'); if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return; }
 
@@ -4962,7 +6944,7 @@ function orderDetailPage(id: string) {
           if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return;
         }
 
-        // ── Get escrow contract ────────────────────────────────────
+        // \u2500\u2500 Get escrow contract \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
         const escrowAddress = getEscrowAddress();
         if(!escrowAddress || escrowAddress==='0x0000000000000000000000000000000000000000'){
           showToast('Escrow contract not configured. Visit /deploy-escrow.','error');
@@ -4971,12 +6953,12 @@ function orderDetailPage(id: string) {
 
         const escrowContract = new ethers.Contract(escrowAddress, ESCROW_ABI, signer);
 
-        // ── Call releaseFunds(orderId32) — no permit, no signature ──
-        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Sending to escrow…';
-        showToast('Broadcasting releaseFunds to ShuklyEscrow…','info');
+        // \u2500\u2500 Call releaseFunds(orderId32) \u2014 no permit, no signature \u2500\u2500
+        if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Sending to escrow\u2026';
+        showToast('Broadcasting releaseFunds to ShuklyEscrow\u2026','info');
 
         const txResponse = await escrowContract.releaseFunds(order.orderId32, { gasLimit: 200000 });
-        showToast('Tx sent! Waiting for confirmation… '+txResponse.hash.slice(0,14)+'…','info');
+        showToast('Tx sent! Waiting for confirmation\u2026 '+txResponse.hash.slice(0,14)+'\u2026','info');
 
         // Wait for on-chain confirmation before updating UI
         const receipt = await txResponse.wait(1);
@@ -4985,9 +6967,9 @@ function orderDetailPage(id: string) {
         }
 
         const releaseTxHash = txResponse.hash;
-        showToast('Funds released! Tx: '+releaseTxHash.slice(0,14)+'…','success');
+        showToast('Funds released! Tx: '+releaseTxHash.slice(0,14)+'\u2026','success');
 
-        // ── Update order status ONLY after confirmed receipt ───────
+        // \u2500\u2500 Update order status ONLY after confirmed receipt \u2500\u2500\u2500\u2500\u2500\u2500\u2500
         orders[idx].status         = 'funds_released';
         orders[idx].releaseTxHash  = releaseTxHash;
         orders[idx].releaseTxUrl   = window.ARC.explorer+'/tx/'+releaseTxHash;
@@ -5005,7 +6987,7 @@ function orderDetailPage(id: string) {
       return;
     }
 
-    // ── Default: update status locally (shipped, completed, etc.) ──
+    // \u2500\u2500 Default: update status locally (shipped, completed, etc.) \u2500\u2500
     const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
     const i=orders.findIndex(o=>o.id===id);
     if(i>=0){
@@ -5039,7 +7021,7 @@ function orderDetailPage(id: string) {
       '<div><label style="display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;">Tracking Link (optional)</label>'+
       '<input id="ship-link-d" type="url" placeholder="https://tracking.example.com/ABC123" style="width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;box-sizing:border-box;"/></div>'+
       '<div><label style="display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;">Additional Notes (optional)</label>'+
-      '<textarea id="ship-notes-d" rows="3" placeholder="Any notes for the buyer…" style="width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;resize:none;box-sizing:border-box;"></textarea></div>'+
+      '<textarea id="ship-notes-d" rows="3" placeholder="Any notes for the buyer\u2026" style="width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;resize:none;box-sizing:border-box;"></textarea></div>'+
       '</div>'+
       '<div style="padding:14px 20px;border-top:1px solid #f1f5f9;display:flex;gap:8px;justify-content:flex-end;">'+
       '<button id="ship-cancel-d" style="padding:8px 16px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;color:#64748b;font-size:13px;cursor:pointer;">Cancel</button>'+
@@ -5086,7 +7068,7 @@ function orderDetailPage(id: string) {
       '<div id="dispute-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;">'+
       '<div style="background:#fff;border-radius:16px;box-shadow:0 25px 60px rgba(0,0,0,0.3);width:100%;max-width:560px;max-height:92vh;overflow-y:auto;">'+
 
-      // ── Header
+      // \u2500\u2500 Header
       '<div style="display:flex;align-items:center;justify-content:space-between;padding:20px 20px 14px;border-bottom:1px solid #f1f5f9;">'+
       '<div style="display:flex;align-items:center;gap:10px;">'+
       '<div style="width:38px;height:38px;border-radius:10px;background:#fee2e2;display:flex;align-items:center;justify-content:center;"><i class="fas fa-gavel" style="color:#dc2626;font-size:16px;"></i></div>'+
@@ -5095,13 +7077,13 @@ function orderDetailPage(id: string) {
       '<button id="disp-close" style="width:32px;height:32px;border:none;background:#f8fafc;border-radius:8px;cursor:pointer;font-size:18px;color:#64748b;">&times;</button>'+
       '</div>'+
 
-      // ── Fund-lock notice
+      // \u2500\u2500 Fund-lock notice
       '<div style="margin:16px 20px 0;padding:12px 14px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;display:flex;gap:10px;align-items:flex-start;">'+
       '<i class="fas fa-lock" style="color:#dc2626;margin-top:2px;flex-shrink:0;"></i>'+
       '<div style="font-size:13px;color:#7f1d1d;"><strong>Funds will remain locked.</strong> While a dispute is open, USDC/EURC stays in the Arc Network escrow contract. No release or transfer is possible until the dispute is resolved.</div>'+
       '</div>'+
 
-      // ── Form body
+      // \u2500\u2500 Form body
       '<div style="padding:20px;display:flex;flex-direction:column;gap:16px;">'+
 
       // Description textarea
@@ -5124,7 +7106,7 @@ function orderDetailPage(id: string) {
 
       '</div>'+
 
-      // ── Footer buttons
+      // \u2500\u2500 Footer buttons
       '<div style="padding:14px 20px;border-top:1px solid #f1f5f9;display:flex;gap:8px;justify-content:flex-end;">'+
       '<button id="disp-cancel" style="padding:9px 18px;border:1.5px solid #e2e8f0;border-radius:8px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:600;cursor:pointer;">Cancel</button>'+
       '<button id="disp-submit" style="padding:9px 22px;border:none;border-radius:8px;background:#dc2626;color:#fff;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:7px;"><i class="fas fa-gavel"></i> Submit Dispute</button>'+
@@ -5132,10 +7114,10 @@ function orderDetailPage(id: string) {
 
       '</div></div>';
 
-    // ── Selected files state
+    // \u2500\u2500 Selected files state
     var selectedFiles=[];
 
-    // ── Dropzone styling
+    // \u2500\u2500 Dropzone styling
     var dz=document.getElementById('disp-dropzone');
     dz.addEventListener('click',function(){ document.getElementById('disp-file-input').click(); });
     dz.addEventListener('dragover',function(e){e.preventDefault();this.style.borderColor='#dc2626';this.style.background='#fff5f5';});
@@ -5145,7 +7127,7 @@ function orderDetailPage(id: string) {
       addFiles(Array.from(e.dataTransfer.files));
     });
 
-    // ── File input change
+    // \u2500\u2500 File input change
     document.getElementById('disp-file-input').addEventListener('change',function(){
       addFiles(Array.from(this.files));
       this.value=''; // reset so same file can be re-added after remove
@@ -5186,12 +7168,12 @@ function orderDetailPage(id: string) {
       });
     }
 
-    // ── escapeHtml helper (local scope)
+    // \u2500\u2500 escapeHtml helper (local scope)
     function escapeHtml(s){
       return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
-    // ── Read files as Data URLs for local storage
+    // \u2500\u2500 Read files as Data URLs for local storage
     function readFileAsDataURL(file){
       return new Promise(function(resolve){
         var r=new FileReader();
@@ -5200,23 +7182,23 @@ function orderDetailPage(id: string) {
       });
     }
 
-    // ── Close handlers
+    // \u2500\u2500 Close handlers
     function closeDisputeModal(){root.innerHTML='';}
     document.getElementById('disp-close').onclick=closeDisputeModal;
     document.getElementById('disp-cancel').onclick=closeDisputeModal;
     document.getElementById('dispute-overlay').addEventListener('click',function(e){if(e.target===this)closeDisputeModal();});
 
-    // ── Submit
+    // \u2500\u2500 Submit
     document.getElementById('disp-submit').onclick=async function(){
       var desc=document.getElementById('disp-desc').value.trim();
       if(!desc){showToast('Please describe your issue before submitting','error');document.getElementById('disp-desc').focus();return;}
 
       var btn=this;
       btn.disabled=true;
-      btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Saving…';
+      btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Saving\u2026';
 
       try{
-        // Read all files as Data URLs (stored locally — IPFS integration point)
+        // Read all files as Data URLs (stored locally \u2014 IPFS integration point)
         var fileRecords=await Promise.all(selectedFiles.map(readFileAsDataURL));
 
         // Save evidence object
@@ -5248,7 +7230,7 @@ function orderDetailPage(id: string) {
         }
 
         closeDisputeModal();
-        showToast('Dispute opened — funds remain locked in Arc escrow. Evidence saved.','success');
+        showToast('Dispute opened \u2014 funds remain locked in Arc escrow. Evidence saved.','success');
         setTimeout(function(){location.reload();},900);
 
       }catch(e){
@@ -5264,7 +7246,7 @@ function orderDetailPage(id: string) {
     // Delegate to the shared showReceiptModal function
     showReceiptModal('${id}');
   }
-  /* Bootstrap — same IIFE pattern as orders.js (no setTimeout) */
+  /* Bootstrap \u2014 same IIFE pattern as orders.js (no setTimeout) */
   (function(){
     function _run(){
       if(!document.getElementById('order-detail-container')){
@@ -5280,14 +7262,12 @@ function orderDetailPage(id: string) {
     }
   })();
   </script>
-  `)
+  `);
 }
-
-// ─── PAGE: SELL ─────────────────────────────────────────────────────────
 function sellPage() {
-  return shell('Sell on Shukly Store', `
+  return shell("Sell on Shukly Store", `
   <style>
-    /* ── Multi-image upload system ───────────────────────────── */
+    /* \u2500\u2500 Multi-image upload system \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */
     .mi-drop-zone {
       border: 2px dashed #cbd5e1;
       border-radius: 16px;
@@ -5441,7 +7421,7 @@ function sellPage() {
         <i class="fas fa-store"></i>
       </div>
       <h1 class="text-3xl font-extrabold text-slate-800 mb-2">Start Selling</h1>
-      <p class="text-slate-500">List your product on Arc Network — receive USDC or EURC through escrow.</p>
+      <p class="text-slate-500">List your product on Arc Network \u2014 receive USDC or EURC through escrow.</p>
     </div>
 
     <!-- Wallet check -->
@@ -5456,7 +7436,7 @@ function sellPage() {
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label class="block text-sm font-semibold text-slate-700 mb-1">Product Name *</label>
-            <input type="text" id="prod-name" placeholder="e.g. Vintage Sneakers, Handmade Bracelet…" class="input"/>
+            <input type="text" id="prod-name" placeholder="e.g. Vintage Sneakers, Handmade Bracelet\u2026" class="input"/>
           </div>
           <div>
             <label class="block text-sm font-semibold text-slate-700 mb-1">Category *</label>
@@ -5472,7 +7452,7 @@ function sellPage() {
         </div>
         <div>
           <label class="block text-sm font-semibold text-slate-700 mb-1">Description *</label>
-          <textarea id="prod-desc" rows="4" placeholder="Describe your product in detail…" class="input resize-none"></textarea>
+          <textarea id="prod-desc" rows="4" placeholder="Describe your product in detail\u2026" class="input resize-none"></textarea>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
@@ -5492,13 +7472,13 @@ function sellPage() {
           </div>
         </div>
 
-        <!-- ═══════════════════════════════════════════════════════
+        <!-- \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
              MULTI-IMAGE UPLOAD (max 5)
-             ═══════════════════════════════════════════════════ -->
+             \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550 -->
         <div>
           <div class="flex items-center justify-between mb-2">
             <label class="block text-sm font-semibold text-slate-700">
-              Product Images <span class="font-normal text-slate-400">(1–5 images)</span>
+              Product Images <span class="font-normal text-slate-400">(1\u20135 images)</span>
             </label>
             <!-- Source tab switcher -->
             <div class="flex gap-1 bg-slate-100 rounded-lg p-1">
@@ -5513,7 +7493,7 @@ function sellPage() {
             </div>
           </div>
 
-          <!-- ── UPLOAD tab ──────────────────────────── -->
+          <!-- \u2500\u2500 UPLOAD tab \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 -->
           <div id="img-panel-upload">
 
             <!-- Drop zone (doubles as grid container when images exist) -->
@@ -5540,13 +7520,13 @@ function sellPage() {
                 <p class="text-sm font-semibold text-slate-500 mb-1">
                   Drag &amp; drop images here or <span class="text-red-600">click to choose</span>
                 </p>
-                <p class="text-xs text-slate-400">JPG, PNG, WEBP · Max 5 MB per image · Up to 5 images · Auto-compressed</p>
+                <p class="text-xs text-slate-400">JPG, PNG, WEBP \xB7 Max 5 MB per image \xB7 Up to 5 images \xB7 Auto-compressed</p>
               </div>
 
               <!-- global processing overlay (shown while any image is compressing) -->
               <div id="mi-processing-overlay" class="hidden" style="pointer-events:none;position:absolute;inset:0;background:rgba(255,255,255,.7);border-radius:14px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:13px;color:#64748b;">
                 <span class="loading-spinner inline-block"></span>
-                <span id="mi-processing-text">Processing…</span>
+                <span id="mi-processing-text">Processing\u2026</span>
               </div>
             </div>
 
@@ -5567,7 +7547,7 @@ function sellPage() {
             </div>
           </div>
 
-          <!-- ── URL / IPFS tab ──────────────────────── -->
+          <!-- \u2500\u2500 URL / IPFS tab \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 -->
           <div id="img-panel-url" class="hidden">
             <input type="url" id="prod-img" placeholder="https://... or ipfs://..." class="input mb-2"/>
             <div id="img-url-preview-wrap" class="hidden mt-2 flex items-center gap-3">
@@ -5586,7 +7566,7 @@ function sellPage() {
             </p>
           </div>
 
-          <!-- Hidden field — always holds the primary/cover image for listProduct() -->
+          <!-- Hidden field \u2014 always holds the primary/cover image for listProduct() -->
           <input type="hidden" id="prod-img-final"/>
         </div>
 
@@ -5597,11 +7577,11 @@ function sellPage() {
           </h4>
           <div class="space-y-2 text-sm">
             <div class="flex justify-between text-slate-600">
-              <span>Product Price</span><span id="fee-product-price">—</span>
+              <span>Product Price</span><span id="fee-product-price">\u2014</span>
             </div>
             <div class="flex justify-between text-slate-600">
               <span>Platform Fee (2%)</span>
-              <span id="fee-platform" class="text-red-600 font-semibold">—</span>
+              <span id="fee-platform" class="text-red-600 font-semibold">\u2014</span>
             </div>
             <div class="flex justify-between text-slate-600">
               <span>Arc Network Gas Fee (est.)</span>
@@ -5609,7 +7589,7 @@ function sellPage() {
             </div>
             <div class="border-t border-slate-200 pt-2 flex justify-between font-bold text-slate-800">
               <span>You Receive (est.)</span>
-              <span id="fee-you-receive" class="text-green-600">—</span>
+              <span id="fee-you-receive" class="text-green-600">\u2014</span>
             </div>
           </div>
           <p class="text-xs text-slate-400 mt-3"><i class="fas fa-info-circle mr-1"></i>Platform fee is deducted from the sale amount when escrow is released.</p>
@@ -5629,11 +7609,11 @@ function sellPage() {
   </div>
 
   <script>
-  // ════════════════════════════════════════════════════════════════════════
-  //  MULTI-IMAGE UPLOAD SYSTEM — max 5 images
+  // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+  //  MULTI-IMAGE UPLOAD SYSTEM \u2014 max 5 images
   //  State: _miImages = [{ dataUrl, name, originalSize, compressedSize }]
   //  Cover = _miImages[0]
-  // ════════════════════════════════════════════════════════════════════════
+  // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
   const MI_MAX         = 5;
   const MI_MAX_BYTES   = 5 * 1024 * 1024; // 5 MB per image
   const MI_VALID_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
@@ -5642,7 +7622,7 @@ function sellPage() {
   let _miDragIdx      = -1;  // index of thumb being dragged
   let _miProcessing   = false;
 
-  // ── compress one File → dataURL ──────────────────────────────────────
+  // \u2500\u2500 compress one File \u2192 dataURL \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   function miCompress(file, maxW, maxH, quality) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -5665,7 +7645,7 @@ function sellPage() {
     });
   }
 
-  // ── process a batch of dropped / selected Files ──────────────────────
+  // \u2500\u2500 process a batch of dropped / selected Files \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   async function miHandleFiles(fileList) {
     if (_miProcessing) return;
     const files = Array.from(fileList);
@@ -5714,10 +7694,10 @@ function sellPage() {
 
     for (let i = 0; i < unique.length; i++) {
       const file = unique[i];
-      if (procText) procText.textContent = 'Compressing ' + (i + 1) + '/' + unique.length + '…';
+      if (procText) procText.textContent = 'Compressing ' + (i + 1) + '/' + unique.length + '\u2026';
 
       try {
-        // First pass: 1200×1200 at 0.82
+        // First pass: 1200\xD71200 at 0.82
         let dataUrl = await miCompress(file, 1200, 1200, 0.82);
         // If still large, second pass
         if (dataUrl.length > 800 * 1024) {
@@ -5740,7 +7720,7 @@ function sellPage() {
     miSyncFinal();
   }
 
-  // ── render the grid ───────────────────────────────────────────────────
+  // \u2500\u2500 render the grid \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   function miRender() {
     const grid      = document.getElementById('mi-grid');
     const bar       = document.getElementById('mi-bar');
@@ -5855,7 +7835,7 @@ function sellPage() {
     }
   }
 
-  // ── remove by index ───────────────────────────────────────────────────
+  // \u2500\u2500 remove by index \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   function miRemove(idx) {
     _miImages.splice(idx, 1);
     miRender();
@@ -5863,13 +7843,13 @@ function sellPage() {
     miHideError();
   }
 
-  // ── sync cover image → hidden field used by listProduct() ────────────
+  // \u2500\u2500 sync cover image \u2192 hidden field used by listProduct() \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   function miSyncFinal() {
     const field = document.getElementById('prod-img-final');
     if (field) field.value = _miImages.length > 0 ? _miImages[0].dataUrl : '';
   }
 
-  // ── zone click (only when clicking empty area, not on thumbs) ────────
+  // \u2500\u2500 zone click (only when clicking empty area, not on thumbs) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   function miZoneClick(e) {
     // Don't open picker if clicking a thumb or the add-slot (handled separately)
     if (e.target.closest('.mi-thumb') || e.target.closest('.mi-add-slot')) return;
@@ -5877,7 +7857,7 @@ function sellPage() {
     document.getElementById('mi-file-input').click();
   }
 
-  // ── drag & drop on zone ───────────────────────────────────────────────
+  // \u2500\u2500 drag & drop on zone \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   function miDragOver(e) {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
@@ -5900,7 +7880,7 @@ function sellPage() {
     if (files && files.length) miHandleFiles(files);
   }
 
-  // ── error helpers ─────────────────────────────────────────────────────
+  // \u2500\u2500 error helpers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   function miShowError(msg) {
     const el = document.getElementById('mi-error');
     const tx = document.getElementById('mi-error-text');
@@ -5912,7 +7892,7 @@ function sellPage() {
     if (el) { el.classList.add('hidden'); el.style.display = 'none'; }
   }
 
-  // ── tab switcher ──────────────────────────────────────────────────────
+  // \u2500\u2500 tab switcher \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   function miSwitchTab(tab) {
     const isUpload = tab === 'upload';
     document.getElementById('img-panel-upload').classList.toggle('hidden', !isUpload);
@@ -5933,9 +7913,9 @@ function sellPage() {
   // Keep old name as alias (called from URL tab)
   function switchImgTab(tab) { miSwitchTab(tab); }
 
-  // ════════════════════════════════════════════════════════════════════════
-  //  listProduct — unchanged except reads prod-img-final (set by miSyncFinal)
-  // ════════════════════════════════════════════════════════════════════════
+  // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+  //  listProduct \u2014 unchanged except reads prod-img-final (set by miSyncFinal)
+  // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
   async function listProduct() {
     const w = getStoredWallet();
     if (!w) { showToast('Connect a wallet first', 'error'); window.location.href = '/wallet'; return; }
@@ -5951,7 +7931,7 @@ function sellPage() {
     if (priceVal <= 0) { showToast('Price must be greater than zero', 'error'); return; }
 
     const btn = document.getElementById('sell-submit-btn');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="loading-spinner inline-block mr-2"></span>Publishing…'; }
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="loading-spinner inline-block mr-2"></span>Publishing\u2026'; }
 
     try {
       const res = await fetch('/api/products', {
@@ -5977,15 +7957,15 @@ function sellPage() {
     }
   }
 
-  // ════════════════════════════════════════════════════════════════════════
-  //  DOMContentLoaded — wallet check, fee breakdown, URL tab preview
-  // ════════════════════════════════════════════════════════════════════════
+  // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+  //  DOMContentLoaded \u2014 wallet check, fee breakdown, URL tab preview
+  // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
   document.addEventListener('DOMContentLoaded', async () => {
     checkNetworkStatus(document.getElementById('sell-network-status'));
     const w  = getStoredWallet();
     const wc = document.getElementById('sell-wallet-check');
     if (!w) {
-      wc.innerHTML = '<div class="network-warning"><i class="fas fa-exclamation-triangle"></i>You need to connect a wallet to list products. <a href="/wallet" class="underline font-bold ml-1">Connect Wallet →</a></div>';
+      wc.innerHTML = '<div class="network-warning"><i class="fas fa-exclamation-triangle"></i>You need to connect a wallet to list products. <a href="/wallet" class="underline font-bold ml-1">Connect Wallet \u2192</a></div>';
     } else {
       wc.innerHTML = '<div class="network-ok"><i class="fas fa-check-circle text-green-600"></i>Seller: <span class="font-mono text-xs ml-1">' + w.address + '</span></div>';
     }
@@ -6004,10 +7984,10 @@ function sellPage() {
       const fplatEl= document.getElementById('fee-platform');
       const farcEl = document.getElementById('fee-arc');
       const fyoEl  = document.getElementById('fee-you-receive');
-      if (fpEl)    fpEl.textContent   = p > 0 ? p.toFixed(6) + ' ' + tok : '—';
-      if (fplatEl) fplatEl.textContent= p > 0 ? platformFee.toFixed(6) + ' ' + tok : '—';
+      if (fpEl)    fpEl.textContent   = p > 0 ? p.toFixed(6) + ' ' + tok : '\u2014';
+      if (fplatEl) fplatEl.textContent= p > 0 ? platformFee.toFixed(6) + ' ' + tok : '\u2014';
       if (farcEl)  farcEl.textContent = '~0.001 ' + tok;
-      if (fyoEl)   fyoEl.textContent  = p > 0 ? youReceive.toFixed(6) + ' ' + tok : '—';
+      if (fyoEl)   fyoEl.textContent  = p > 0 ? youReceive.toFixed(6) + ' ' + tok : '\u2014';
     }
     const priceInput  = document.getElementById('prod-price');
     const tokenSelect = document.getElementById('prod-token');
@@ -6037,12 +8017,10 @@ function sellPage() {
     miRender();
   });
   </script>
-  `)
+  `);
 }
-
-// ─── PAGE: SELLER DASHBOARD ──────────────────────────────────────────────
 function sellerDashboardPage() {
-  return shell('Seller Dashboard', `
+  return shell("Seller Dashboard", `
   <div class="max-w-5xl mx-auto px-4 py-8">
 
     <!-- Header -->
@@ -6076,25 +8054,25 @@ function sellerDashboardPage() {
         </div>
       </div>
       <div id="dash-products-container">
-        <!-- populated by JS — no static spinner to avoid permanent loading state -->
+        <!-- populated by JS \u2014 no static spinner to avoid permanent loading state -->
       </div>
     </div>
 
   </div>
 
   <script>
-  // ── Seller Dashboard — fully functional logic ──────────────────────────
+  // \u2500\u2500 Seller Dashboard \u2014 fully functional logic \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   var _dashProducts = [];
   var _dashFilter   = 'all';
   var _dashAddress  = null;
 
-  // ── helpers ──────────────────────────────────────────────────────────
+  // \u2500\u2500 helpers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   function _dashShowLoading(){
     var c = document.getElementById('dash-products-container');
     if(c) c.innerHTML =
       '<div class="text-center py-12">'
       +'<div class="loading-spinner-lg mx-auto mb-4"></div>'
-      +'<p class="text-slate-400 text-sm">Loading your products…</p>'
+      +'<p class="text-slate-400 text-sm">Loading your products\u2026</p>'
       +'</div>';
   }
 
@@ -6114,14 +8092,14 @@ function sellerDashboardPage() {
     if(s) s.innerHTML = '';
   }
 
-  // ── init ──────────────────────────────────────────────────────────────
+  // \u2500\u2500 init \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   function _dashInit(){
     var wallet = (typeof getStoredWallet === 'function') ? getStoredWallet() : null;
     var wc = document.getElementById('dash-wallet-check');
     var container = document.getElementById('dash-products-container');
 
     if(!wallet || !wallet.address){
-      // No wallet — clear spinner, show connect prompt
+      // No wallet \u2014 clear spinner, show connect prompt
       if(container) container.innerHTML = '';
       _dashClearStats();
       if(wc) wc.innerHTML =
@@ -6135,21 +8113,21 @@ function sellerDashboardPage() {
       return;
     }
 
-    // Wallet connected — clear wallet-check banner if any
+    // Wallet connected \u2014 clear wallet-check banner if any
     if(wc) wc.innerHTML = '';
     _dashAddress = wallet.address;
     _dashShowLoading();
     loadDashboardProducts(wallet.address);
   }
 
-  // Fire on DOMContentLoaded — guard against globalScript timing
+  // Fire on DOMContentLoaded \u2014 guard against globalScript timing
   if(document.readyState === 'loading'){
     document.addEventListener('DOMContentLoaded', _dashInit);
   } else {
     _dashInit();
   }
 
-  // ── fetch products ────────────────────────────────────────────────────
+  // \u2500\u2500 fetch products \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   async function loadDashboardProducts(address){
     if(!address){ _dashShowError('No wallet address.'); return; }
     _dashAddress = address;
@@ -6166,7 +8144,7 @@ function sellerDashboardPage() {
     }
   }
 
-  // ── stats ─────────────────────────────────────────────────────────────
+  // \u2500\u2500 stats \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   function renderDashStats(){
     var total  = _dashProducts.length;
     var active = _dashProducts.filter(function(p){return p.status==='active';}).length;
@@ -6191,7 +8169,7 @@ function sellerDashboardPage() {
     }).join('');
   }
 
-  // ── filter buttons ────────────────────────────────────────────────────
+  // \u2500\u2500 filter buttons \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   function filterDashProducts(f){
     _dashFilter = f;
     document.querySelectorAll('.dash-filter-btn').forEach(function(b){
@@ -6201,7 +8179,7 @@ function sellerDashboardPage() {
     renderDashProducts();
   }
 
-  // ── render table ──────────────────────────────────────────────────────
+  // \u2500\u2500 render table \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   function renderDashProducts(){
     var container = document.getElementById('dash-products-container');
     if(!container) return;
@@ -6250,17 +8228,17 @@ function sellerDashboardPage() {
             ? '<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700">Paused</span>'
             : '<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700">Deleted</span>';
         var imgEl = p.image
-          ? '<img src="'+p.image+'" class="w-10 h-10 rounded-lg object-cover mr-3 shrink-0" onerror="this.style.display=\'none\'">'
+          ? '<img src="'+p.image+'" class="w-10 h-10 rounded-lg object-cover mr-3 shrink-0" onerror="this.style.display='none'">'
           : '<div class="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center mr-3 shrink-0"><i class="fas fa-image text-slate-300"></i></div>';
         var actionBtns = '';
         if(p.status==='active'){
-          actionBtns += '<button onclick="dashPauseProduct(\''+p.id+'\')" class="text-amber-600 hover:text-amber-800 text-xs font-semibold px-2 py-1 rounded hover:bg-amber-50" title="Pause Listing"><i class="fas fa-pause mr-1"></i>Pause</button>';
+          actionBtns += '<button onclick="dashPauseProduct(''+p.id+'')" class="text-amber-600 hover:text-amber-800 text-xs font-semibold px-2 py-1 rounded hover:bg-amber-50" title="Pause Listing"><i class="fas fa-pause mr-1"></i>Pause</button>';
         }
         if(p.status==='paused'){
-          actionBtns += '<button onclick="dashResumeProduct(\''+p.id+'\')" class="text-green-600 hover:text-green-800 text-xs font-semibold px-2 py-1 rounded hover:bg-green-50" title="Resume Listing"><i class="fas fa-play mr-1"></i>Resume</button>';
+          actionBtns += '<button onclick="dashResumeProduct(''+p.id+'')" class="text-green-600 hover:text-green-800 text-xs font-semibold px-2 py-1 rounded hover:bg-green-50" title="Resume Listing"><i class="fas fa-play mr-1"></i>Resume</button>';
         }
         actionBtns += '<a href="/product/'+p.id+'" class="text-blue-600 hover:text-blue-800 text-xs font-semibold px-2 py-1 rounded hover:bg-blue-50" title="View Product"><i class="fas fa-eye mr-1"></i>View</a>';
-        actionBtns += '<button onclick="dashDeleteProduct(\''+p.id+'\')" class="text-red-500 hover:text-red-700 text-xs font-semibold px-2 py-1 rounded hover:bg-red-50" title="Delete Product"><i class="fas fa-trash mr-1"></i>Delete</button>';
+        actionBtns += '<button onclick="dashDeleteProduct(''+p.id+'')" class="text-red-500 hover:text-red-700 text-xs font-semibold px-2 py-1 rounded hover:bg-red-50" title="Delete Product"><i class="fas fa-trash mr-1"></i>Delete</button>';
         return '<tr class="border-b border-slate-50 hover:bg-slate-50 transition-colors">'
           +'<td class="py-3 px-2"><div class="flex items-center">'+imgEl
           +'<div><p class="font-semibold text-slate-800 text-xs leading-tight line-clamp-2 max-w-xs">'+((p.title||'Untitled').replace(/</g,'&lt;'))+'</p>'
@@ -6276,7 +8254,7 @@ function sellerDashboardPage() {
       +'</tbody></table></div>';
   }
 
-  // ── action handlers ───────────────────────────────────────────────────
+  // \u2500\u2500 action handlers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   async function dashPauseProduct(productId){
     if(!confirm('Pause this listing? It will be hidden from the marketplace but not deleted.')) return;
     var wallet = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
@@ -6288,7 +8266,7 @@ function sellerDashboardPage() {
       });
       var data = await res.json();
       if(!res.ok){ showToast(data.error||'Failed to pause','error'); return; }
-      showToast('Listing paused — hidden from marketplace','info');
+      showToast('Listing paused \u2014 hidden from marketplace','info');
       await loadDashboardProducts(wallet.address);
     } catch(e){ showToast('Network error','error'); }
   }
@@ -6325,13 +8303,10 @@ function sellerDashboardPage() {
     } catch(e){ showToast('Network error','error'); }
   }
   </script>
-  `)
+  `);
 }
-
-
-// ─── PAGE: PROFILE ──────────────────────────────────────────────────────
 function profilePage() {
-  return shell('Profile', `
+  return shell("Profile", `
   <div class="max-w-4xl mx-auto px-4 py-8">
     <h1 class="text-3xl font-bold text-slate-800 mb-6 flex items-center gap-3">
       <i class="fas fa-user text-red-500"></i> My Profile
@@ -6372,9 +8347,9 @@ function profilePage() {
             <h3 class="font-bold text-slate-800 flex items-center gap-2">
               <i class="fas fa-wallet text-red-500"></i> Arc Network Wallet
             </h3>
-            <a href="/wallet" class="text-red-600 text-sm hover:underline">Manage →</a>
+            <a href="/wallet" class="text-red-600 text-sm hover:underline">Manage \u2192</a>
           </div>
-          <div id="prof-wallet-info" class="text-slate-400 text-sm">Loading…</div>
+          <div id="prof-wallet-info" class="text-slate-400 text-sm">Loading\u2026</div>
         </div>
         <!-- Stats (from localStorage orders) -->
         <div class="grid grid-cols-3 gap-4" id="prof-stats">
@@ -6389,7 +8364,7 @@ function profilePage() {
   document.addEventListener('DOMContentLoaded', async () => {
     const w=getStoredWallet();
     if(w){
-      document.getElementById('prof-address').textContent=w.address.substring(0,10)+'…'+w.address.slice(-6);
+      document.getElementById('prof-address').textContent=w.address.substring(0,10)+'\u2026'+w.address.slice(-6);
       document.getElementById('prof-network-badge').innerHTML='<span class="arc-badge text-xs"><i class="fas fa-network-wired text-xs"></i> Arc Testnet</span>';
       document.getElementById('prof-wallet-info').innerHTML=
         '<div class="space-y-1">'
@@ -6402,16 +8377,14 @@ function profilePage() {
       document.getElementById('stat-spent').textContent=(orders.reduce((s,o)=>s+(o.amount||0),0)).toFixed(2);
       document.getElementById('stat-completed').textContent=orders.filter(o=>o.status==='completed').length;
     } else {
-      document.getElementById('prof-wallet-info').innerHTML='<a href="/wallet" class="text-red-600 hover:underline">Connect wallet →</a>';
+      document.getElementById('prof-wallet-info').innerHTML='<a href="/wallet" class="text-red-600 hover:underline">Connect wallet \u2192</a>';
     }
   });
   </script>
-  `)
+  `);
 }
-
-// ─── PAGE: REGISTER ──────────────────────────────────────────────────────
 function registerPage() {
-  return shell('Register', `
+  return shell("Register", `
   <div class="min-h-screen flex items-center justify-center px-4 py-12 bg-gradient-to-br from-red-50 to-white">
     <div class="w-full max-w-md">
       <div class="text-center mb-8">
@@ -6455,12 +8428,10 @@ function registerPage() {
       </div>
     </div>
   </div>
-  `)
+  `);
 }
-
-// ─── PAGE: LOGIN ──────────────────────────────────────────────────────────
 function loginPage() {
-  return shell('Login', `
+  return shell("Login", `
   <div class="min-h-screen flex items-center justify-center px-4 py-12 bg-gradient-to-br from-red-50 to-white">
     <div class="w-full max-w-md">
       <div class="text-center mb-8">
@@ -6492,12 +8463,10 @@ function loginPage() {
       </div>
     </div>
   </div>
-  `)
+  `);
 }
-
-// ─── PAGE: DISPUTES ───────────────────────────────────────────────────────
 function disputesPage() {
-  return shell('Disputes', `
+  return shell("Disputes", `
   <div class="max-w-4xl mx-auto px-4 py-8">
     <h1 class="text-3xl font-bold text-slate-800 mb-2 flex items-center gap-3">
       <i class="fas fa-gavel text-red-500"></i> Dispute Resolution
@@ -6517,7 +8486,7 @@ function disputesPage() {
     <div id="disputes-container">
       <div class="text-center py-8">
         <div class="loading-spinner-lg mx-auto mb-4"></div>
-        <p class="text-slate-400">Loading disputes…</p>
+        <p class="text-slate-400">Loading disputes\u2026</p>
       </div>
     </div>
 
@@ -6526,12 +8495,10 @@ function disputesPage() {
   </div>
   <!-- Disputes logic is in /static/disputes.js (no inline script) -->
   <script src="/static/disputes.js" defer></script>
-  `)
+  `);
 }
-
-// ─── PAGE: NOTIFICATIONS ──────────────────────────────────────────────────
 function notificationsPage() {
-  return shell('Notifications', `
+  return shell("Notifications", `
   <div class="max-w-2xl mx-auto px-4 py-8">
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3">
@@ -6540,7 +8507,7 @@ function notificationsPage() {
       <button onclick="clearNotifs()" class="btn-secondary text-sm">Mark all read</button>
     </div>
     <div id="notif-list">
-      <div class="text-center py-8"><div class="loading-spinner-lg mx-auto mb-4"></div><p class="text-slate-400">Loading…</p></div>
+      <div class="text-center py-8"><div class="loading-spinner-lg mx-auto mb-4"></div><p class="text-slate-400">Loading\u2026</p></div>
     </div>
   </div>
   <script>
@@ -6561,7 +8528,7 @@ function notificationsPage() {
     }
 
     if(!notifs.length){
-      container.innerHTML='<div class="card p-12 text-center"><div class="empty-state"><i class="fas fa-bell-slash"></i><h3 class="font-bold text-slate-600 mb-2">No Notifications</h3><p class="text-sm">Notifications are triggered by real Arc Network events — escrow creation, shipments, and releases.</p></div></div>';
+      container.innerHTML='<div class="card p-12 text-center"><div class="empty-state"><i class="fas fa-bell-slash"></i><h3 class="font-bold text-slate-600 mb-2">No Notifications</h3><p class="text-sm">Notifications are triggered by real Arc Network events \u2014 escrow creation, shipments, and releases.</p></div></div>';
       return;
     }
     container.innerHTML=notifs.map(n=>
@@ -6575,19 +8542,17 @@ function notificationsPage() {
   });
   function clearNotifs(){ showToast('All notifications marked as read','info'); document.querySelectorAll('.notification-item .rounded-full.bg-red-500').forEach(el=>el.remove()); }
   </script>
-  `)
+  `);
 }
-
-// ─── PAGE: TERMS OF SERVICE ──────────────────────────────────────────────
 function termsPage() {
-  return shell('Terms of Service', `
+  return shell("Terms of Service", `
   <div class="max-w-3xl mx-auto px-4 py-12 legal-page">
     <div class="card p-8">
       <div class="flex items-center gap-3 mb-6">
         <div class="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center text-red-600"><i class="fas fa-file-alt"></i></div>
         <div>
           <h1>Terms of Service</h1>
-          <p class="text-slate-400 text-sm">Last updated: January 2024 · Shukly Store</p>
+          <p class="text-slate-400 text-sm">Last updated: January 2024 \xB7 Shukly Store</p>
         </div>
       </div>
 
@@ -6638,19 +8603,17 @@ function termsPage() {
       </div>
     </div>
   </div>
-  `)
+  `);
 }
-
-// ─── PAGE: PRIVACY POLICY ────────────────────────────────────────────────
 function privacyPage() {
-  return shell('Privacy Policy', `
+  return shell("Privacy Policy", `
   <div class="max-w-3xl mx-auto px-4 py-12 legal-page">
     <div class="card p-8">
       <div class="flex items-center gap-3 mb-6">
         <div class="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center text-red-600"><i class="fas fa-lock"></i></div>
         <div>
           <h1>Privacy Policy</h1>
-          <p class="text-slate-400 text-sm">Last updated: January 2024 · Shukly Store</p>
+          <p class="text-slate-400 text-sm">Last updated: January 2024 \xB7 Shukly Store</p>
         </div>
       </div>
 
@@ -6670,7 +8633,7 @@ function privacyPage() {
       <h2>2. Information Stored Locally</h2>
       <p>The following data is stored exclusively in your browser's localStorage and never transmitted to our servers:</p>
       <ul>
-        <li>Encrypted wallet data (address only — private key encrypted with your password)</li>
+        <li>Encrypted wallet data (address only \u2014 private key encrypted with your password)</li>
         <li>Shopping cart contents</li>
         <li>Order metadata (transaction hashes, escrow status)</li>
         <li>UI preferences (e.g., banner dismissed state)</li>
@@ -6682,10 +8645,10 @@ function privacyPage() {
       <h2>4. Third-Party Services</h2>
       <p>Shukly Store may interact with the following third-party services:</p>
       <ul>
-        <li><strong>Arc Network RPC</strong> (rpc.testnet.arc.network) — for blockchain queries</li>
-        <li><strong>Arc Explorer</strong> (testnet.arcscan.app) — public blockchain explorer</li>
-        <li><strong>Circle Faucet</strong> (faucet.circle.com) — for testnet tokens</li>
-        <li><strong>CDN resources</strong> (Tailwind, FontAwesome, ethers.js) — loaded from public CDNs</li>
+        <li><strong>Arc Network RPC</strong> (rpc.testnet.arc.network) \u2014 for blockchain queries</li>
+        <li><strong>Arc Explorer</strong> (testnet.arcscan.app) \u2014 public blockchain explorer</li>
+        <li><strong>Circle Faucet</strong> (faucet.circle.com) \u2014 for testnet tokens</li>
+        <li><strong>CDN resources</strong> (Tailwind, FontAwesome, ethers.js) \u2014 loaded from public CDNs</li>
       </ul>
 
       <h2>5. No Tracking</h2>
@@ -6707,19 +8670,17 @@ function privacyPage() {
       </div>
     </div>
   </div>
-  `)
+  `);
 }
-
-// ─── PAGE: DISCLAIMER ────────────────────────────────────────────────────
 function disclaimerPage() {
-  return shell('Disclaimer', `
+  return shell("Disclaimer", `
   <div class="max-w-3xl mx-auto px-4 py-12 legal-page">
     <div class="card p-8">
       <div class="flex items-center gap-3 mb-6">
         <div class="w-10 h-10 rounded-xl bg-yellow-100 flex items-center justify-center text-yellow-600"><i class="fas fa-exclamation-triangle"></i></div>
         <div>
           <h1>Disclaimer</h1>
-          <p class="text-slate-400 text-sm">Last updated: January 2024 · Shukly Store</p>
+          <p class="text-slate-400 text-sm">Last updated: January 2024 \xB7 Shukly Store</p>
         </div>
       </div>
 
@@ -6759,12 +8720,10 @@ function disclaimerPage() {
       </div>
     </div>
   </div>
-  `)
+  `);
 }
-
-// ─── PAGE: ABOUT ─────────────────────────────────────────────────────────
 function aboutPage() {
-  return shell('About', `
+  return shell("About", `
   <div class="max-w-3xl mx-auto px-4 py-12 legal-page">
     <div class="card p-8">
       <div class="flex items-center gap-3 mb-6">
@@ -6783,13 +8742,13 @@ function aboutPage() {
       </div>
 
       <h2>What is Shukly Store?</h2>
-      <p>Shukly Store is a decentralized marketplace powered by <strong>Arc Network</strong> — Circle's stablecoin-native Layer 1 blockchain. It uses escrow smart contracts to protect every transaction: buyer funds are locked on-chain until delivery is confirmed, then automatically released to the seller.</p>
+      <p>Shukly Store is a decentralized marketplace powered by <strong>Arc Network</strong> \u2014 Circle's stablecoin-native Layer 1 blockchain. It uses escrow smart contracts to protect every transaction: buyer funds are locked on-chain until delivery is confirmed, then automatically released to the seller.</p>
 
       <h2>Technology Stack</h2>
       <ul>
         <li><strong>Blockchain:</strong> Arc Network Testnet (Chain ID: 5042002, EVM-compatible)</li>
         <li><strong>Payments:</strong> USDC (native on Arc) and EURC (ERC-20)</li>
-        <li><strong>Escrow:</strong> ShuklyEscrow smart contract — deployed via /deploy-escrow page</li>
+        <li><strong>Escrow:</strong> ShuklyEscrow smart contract \u2014 deployed via /deploy-escrow page</li>
         <li><strong>Wallet:</strong> Non-custodial, BIP39 seed phrase, client-side key generation (ethers.js)</li>
         <li><strong>Frontend:</strong> Hono.js on Cloudflare Workers, Tailwind CSS</li>
         <li><strong>Storage:</strong> IPFS for product images and shipment proofs</li>
@@ -6799,7 +8758,7 @@ function aboutPage() {
       <ul>
         <li>Private keys are generated client-side and never transmitted to any server</li>
         <li>Wallet data stored locally in browser, encrypted with user password</li>
-        <li>Zero-custody architecture — we cannot access user funds</li>
+        <li>Zero-custody architecture \u2014 we cannot access user funds</li>
         <li>All transactions require explicit user confirmation before signing</li>
         <li>No auto-connection or silent signature requests</li>
       </ul>
@@ -6839,12 +8798,10 @@ function aboutPage() {
       </div>
     </div>
   </div>
-  `)
+  `);
 }
-
-// ─── PAGE: DEPLOY ESCROW ──────────────────────────────────────────────────
 function deployEscrowPage() {
-  return shell('Deploy ShuklyEscrow', `
+  return shell("Deploy ShuklyEscrow", `
   <div class="max-w-2xl mx-auto px-4 py-8">
     <h1 class="text-3xl font-bold text-slate-800 mb-2 flex items-center gap-3">
       <i class="fas fa-code text-red-500"></i> ShuklyEscrow Contract
@@ -6856,7 +8813,7 @@ function deployEscrowPage() {
       <div class="flex items-start gap-3">
         <i class="fas fa-check-circle text-green-600 text-xl mt-0.5 shrink-0"></i>
         <div class="flex-1">
-          <p class="font-semibold text-green-800 text-sm">Contract Source Code Verified ✅</p>
+          <p class="font-semibold text-green-800 text-sm">Contract Source Code Verified \u2705</p>
           <p class="text-green-700 text-xs mt-1 font-mono break-all">0x26f290dAe5A54f68b3191C79d710e2A8C2E5A511</p>
           <div class="flex flex-wrap gap-2 mt-2">
             <a href="https://testnet.arcscan.app/address/0x26f290dAe5A54f68b3191C79d710e2A8C2E5A511" target="_blank"
@@ -6878,9 +8835,9 @@ function deployEscrowPage() {
           </div>
           <div class="mt-3 text-xs text-green-700 space-y-0.5">
             <p><strong>Compiler:</strong> solc v0.8.34+commit.80d5c536</p>
-            <p><strong>Optimization:</strong> Enabled — 200 runs</p>
+            <p><strong>Optimization:</strong> Enabled \u2014 200 runs</p>
             <p><strong>License:</strong> MIT</p>
-            <p><strong>Not a proxy</strong> — direct implementation contract</p>
+            <p><strong>Not a proxy</strong> \u2014 direct implementation contract</p>
             <p><strong>No constructor arguments</strong></p>
           </div>
         </div>
@@ -6901,7 +8858,7 @@ function deployEscrowPage() {
     <div class="card p-6 mb-4">
       <h2 class="font-bold text-slate-800 mb-4"><i class="fas fa-rocket mr-2 text-red-500"></i> Deploy Contract</h2>
       <div id="current-escrow" class="mb-4 p-3 rounded-lg bg-slate-50 border text-sm text-slate-600">
-        <strong>Current escrow address:</strong> <span id="current-escrow-addr" class="font-mono">loading…</span>
+        <strong>Current escrow address:</strong> <span id="current-escrow-addr" class="font-mono">loading\u2026</span>
       </div>
       <button id="deploy-btn" onclick="deployContract()" class="btn-primary w-full justify-center py-3 text-base font-bold">
         <i class="fas fa-rocket mr-2"></i> Deploy ShuklyEscrow via MetaMask
@@ -6929,10 +8886,10 @@ function deployEscrowPage() {
       <h3 class="font-semibold text-slate-700 mb-2">ShuklyEscrow Functions</h3>
       <ul class="space-y-1 font-mono text-xs">
         <li><span class="text-purple-600">createEscrow</span>(bytes32 orderId, address seller, address token, uint256 amount)</li>
-        <li><span class="text-purple-600">fundEscrow</span>(bytes32 orderId) — pulls tokens from buyer</li>
-        <li><span class="text-purple-600">confirmDelivery</span>(bytes32 orderId) — buyer confirms receipt</li>
-        <li><span class="text-purple-600">releaseFunds</span>(bytes32 orderId) — releases to seller</li>
-        <li><span class="text-purple-600">refund</span>(bytes32 orderId) — returns to buyer</li>
+        <li><span class="text-purple-600">fundEscrow</span>(bytes32 orderId) \u2014 pulls tokens from buyer</li>
+        <li><span class="text-purple-600">confirmDelivery</span>(bytes32 orderId) \u2014 buyer confirms receipt</li>
+        <li><span class="text-purple-600">releaseFunds</span>(bytes32 orderId) \u2014 releases to seller</li>
+        <li><span class="text-purple-600">refund</span>(bytes32 orderId) \u2014 returns to buyer</li>
         <li><span class="text-purple-600">openDispute</span>(bytes32 orderId)</li>
         <li><span class="text-purple-600">getEscrow</span>(bytes32 orderId) view</li>
       </ul>
@@ -6956,7 +8913,7 @@ function deployEscrowPage() {
     const input = document.getElementById('manual-addr-input');
     const addr = (input.value || '').trim();
     if (!addr || !addr.startsWith('0x') || addr.length !== 42) {
-      alert('Invalid address — must be a 42-char hex address starting with 0x');
+      alert('Invalid address \u2014 must be a 42-char hex address starting with 0x');
       return;
     }
     localStorage.setItem('shukly_escrow_address', addr);
@@ -6980,7 +8937,7 @@ function deployEscrowPage() {
     try {
       if(!window.ethereum) { setStatus('<i class="fas fa-exclamation-circle mr-2"></i>MetaMask not detected. Please install MetaMask.', 'error'); return; }
       btn.disabled = true;
-      btn.innerHTML = '<span class="loading-spinner inline-block mr-2"></span>Connecting MetaMask…';
+      btn.innerHTML = '<span class="loading-spinner inline-block mr-2"></span>Connecting MetaMask\u2026';
 
       const provider = new ethers.BrowserProvider(window.ethereum);
       await provider.send('eth_requestAccounts', []);
@@ -6996,15 +8953,15 @@ function deployEscrowPage() {
 
       const signer = await provider.getSigner();
       const deployerAddr = await signer.getAddress();
-      setStatus('<i class="fas fa-spinner fa-spin mr-2"></i>Deploying from <code class="font-mono text-xs">'+deployerAddr.slice(0,14)+'…</code> — confirm in MetaMask…', 'info');
-      btn.innerHTML = '<span class="loading-spinner inline-block mr-2"></span>Confirm in MetaMask…';
+      setStatus('<i class="fas fa-spinner fa-spin mr-2"></i>Deploying from <code class="font-mono text-xs">'+deployerAddr.slice(0,14)+'\u2026</code> \u2014 confirm in MetaMask\u2026', 'info');
+      btn.innerHTML = '<span class="loading-spinner inline-block mr-2"></span>Confirm in MetaMask\u2026';
 
       // Deploy using ContractFactory with full ABI
       const factory = new ethers.ContractFactory(ESCROW_ABI, ESCROW_BYTECODE, signer);
       const contract = await factory.deploy();
 
-      setStatus('<i class="fas fa-spinner fa-spin mr-2"></i>Waiting for on-chain confirmation… <code class="font-mono text-xs">'+contract.deploymentTransaction().hash.slice(0,14)+'…</code>', 'info');
-      btn.innerHTML = '<span class="loading-spinner inline-block mr-2"></span>Waiting for confirmation…';
+      setStatus('<i class="fas fa-spinner fa-spin mr-2"></i>Waiting for on-chain confirmation\u2026 <code class="font-mono text-xs">'+contract.deploymentTransaction().hash.slice(0,14)+'\u2026</code>', 'info');
+      btn.innerHTML = '<span class="loading-spinner inline-block mr-2"></span>Waiting for confirmation\u2026';
 
       await contract.waitForDeployment();
       const deployedAddress = await contract.getAddress();
@@ -7020,7 +8977,7 @@ function deployEscrowPage() {
       document.getElementById('deployed-explorer-link').href = explorerUrl;
       resultEl.classList.remove('hidden');
 
-      setStatus('<i class="fas fa-check-circle mr-2"></i>Deployed at <code class="font-mono text-xs">'+deployedAddress+'</code>. Tx: <a href="'+window.ARC.explorer+'/tx/'+txHash+'" target="_blank" class="underline font-mono text-xs">'+txHash.slice(0,18)+'…</a>', 'success');
+      setStatus('<i class="fas fa-check-circle mr-2"></i>Deployed at <code class="font-mono text-xs">'+deployedAddress+'</code>. Tx: <a href="'+window.ARC.explorer+'/tx/'+txHash+'" target="_blank" class="underline font-mono text-xs">'+txHash.slice(0,18)+'\u2026</a>', 'success');
       btn.innerHTML = '<i class="fas fa-check mr-2"></i> Deployed Successfully';
 
     } catch(err) {
@@ -7033,5 +8990,20 @@ function deployEscrowPage() {
     }
   }
   </script>
-  `)
+  `);
 }
+
+// api/_entry.tsx
+var wrapped = new Hono2();
+wrapped.use("*", async (c, next) => {
+  c.env = {
+    CIRCLE_API_KEY: process.env.CIRCLE_API_KEY ?? ""
+  };
+  return next();
+});
+wrapped.route("/", src_default);
+var handler = handle(wrapped);
+var entry_default = handler;
+export {
+  entry_default as default
+};
