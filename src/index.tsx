@@ -122,11 +122,19 @@ async function cfKvGet(key: string): Promise<Product[] | null> {
   const account = process.env.CF_ACCOUNT_ID
   if (!token || !account) return null
   try {
+    // AbortController: timeout after 8s to avoid hanging Vercel serverless fn
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 8000)
     const res = await fetch(`${CF_KV_URL}/${account}/storage/kv/namespaces/${CF_KV_NS}/values/${key}`, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { Authorization: `Bearer ${token}` },
+      signal: ctrl.signal
     })
+    clearTimeout(timer)
+    // 404 means key genuinely doesn't exist yet → return empty array
     if (res.status === 404) return []
+    if (!res.ok) return null   // any other error → fall through to next backend
     const text = await res.text()
+    if (!text || text === 'null') return []
     return JSON.parse(text) as Product[]
   } catch { return null }
 }
@@ -135,14 +143,18 @@ async function cfKvSet(key: string, value: Product[]): Promise<void> {
   const account = process.env.CF_ACCOUNT_ID
   if (!token || !account) return
   try {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 8000)
     const form = new FormData()
     form.append('value', JSON.stringify(value))
     form.append('metadata', '{}')
     await fetch(`${CF_KV_URL}/${account}/storage/kv/namespaces/${CF_KV_NS}/values/${key}`, {
       method: 'PUT',
       headers: { Authorization: `Bearer ${token}` },
-      body: form
+      body: form,
+      signal: ctrl.signal
     })
+    clearTimeout(timer)
   } catch { /* silent */ }
 }
 
@@ -154,7 +166,13 @@ function hasCfKV(): boolean {
   return !!(process.env.CF_API_TOKEN && process.env.CF_ACCOUNT_ID)
 }
 
+// Strip images from products to create a slim version for fast listing
+function makeSlim(products: Product[]): Product[] {
+  return products.map(({ image: _img, ...rest }) => rest as Product)
+}
+
 // Universal get/set — tries Vercel KV → CF KV REST → CF binding → memory
+// storageGet: returns FULL products (with images) — used for individual lookups
 async function storageGet(cfBinding?: any): Promise<{ data: Product[]; source: string }> {
   if (hasVercelKV()) {
     const d = await vercelKvGet('products_v1')
@@ -169,9 +187,51 @@ async function storageGet(cfBinding?: any): Promise<{ data: Product[]; source: s
   }
   return { data: _memProducts, source: 'memory' }
 }
+
+// storageGetSlim: returns products WITHOUT images — fast, ~10KB vs ~2MB
+// Used by /api/products list endpoint on Vercel to avoid downloading 2MB from CF KV
+async function storageGetSlim(cfBinding?: any): Promise<{ data: Product[]; source: string }> {
+  if (hasVercelKV()) {
+    const d = await vercelKvGet('products_slim_v1')
+    if (d !== null && d.length > 0) return { data: d, source: 'vercel-kv-slim' }
+    // fallback to full and slim it
+    const full = await vercelKvGet('products_v1')
+    if (full !== null) return { data: makeSlim(full), source: 'vercel-kv' }
+  }
+  if (hasCfKV()) {
+    // Try slim key first (tiny ~10KB payload)
+    const slim = await cfKvGet('products_slim_v1')
+    if (slim !== null && slim.length > 0) return { data: slim, source: 'cf-kv-rest-slim' }
+    // Slim key not populated yet: fetch full and slim it (one-time cost until next write)
+    const full = await cfKvGet('products_v1')
+    if (full !== null) {
+      const slimmed = makeSlim(full)
+      // Write slim key in background for future requests
+      cfKvSet('products_slim_v1', slimmed).catch(() => {})
+      return { data: slimmed, source: 'cf-kv-rest' }
+    }
+  }
+  if (cfBinding) {
+    const all = await kvGetAll(cfBinding)
+    return { data: makeSlim(all), source: 'KV' }
+  }
+  return { data: makeSlim(_memProducts), source: 'memory' }
+}
 async function storageSet(products: Product[], cfBinding?: any): Promise<void> {
-  if (hasVercelKV())      { await vercelKvSet('products_v1', products); return }
-  if (hasCfKV())          { await cfKvSet('products_v1', products); return }
+  if (hasVercelKV()) {
+    await vercelKvSet('products_v1', products)
+    // Also write slim version (no images) for fast listing
+    await vercelKvSet('products_slim_v1', makeSlim(products))
+    return
+  }
+  if (hasCfKV()) {
+    // Write full version and slim version in parallel
+    await Promise.all([
+      cfKvSet('products_v1', products),
+      cfKvSet('products_slim_v1', makeSlim(products))
+    ])
+    return
+  }
   if (cfBinding)          { await kvSaveAll(cfBinding, products); return }
   _memProducts = products
 }
@@ -195,8 +255,8 @@ const store = {
         console.error('D1 list error:', e.message)
       }
     }
-    // CF KV REST → Vercel KV → CF binding → memory
-    const { data: all, source } = await storageGet(env.PRODUCTS_KV)
+    // CF KV REST slim (no images, ~10KB) → full fallback → CF binding → memory
+    const { data: all, source } = await storageGetSlim(env.PRODUCTS_KV)
     let filtered = all.filter(p => p.status === 'active')
     if (opts.category) filtered = filtered.filter(p => p.category === opts.category)
     if (opts.seller)   filtered = filtered.filter(p => p.seller_id === opts.seller)

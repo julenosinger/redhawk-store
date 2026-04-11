@@ -2236,11 +2236,17 @@ async function cfKvGet(key) {
   const account = process.env.CF_ACCOUNT_ID;
   if (!token || !account) return null;
   try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8e3);
     const res = await fetch(`${CF_KV_URL}/${account}/storage/kv/namespaces/${CF_KV_NS}/values/${key}`, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { Authorization: `Bearer ${token}` },
+      signal: ctrl.signal
     });
+    clearTimeout(timer);
     if (res.status === 404) return [];
+    if (!res.ok) return null;
     const text = await res.text();
+    if (!text || text === "null") return [];
     return JSON.parse(text);
   } catch {
     return null;
@@ -2251,14 +2257,18 @@ async function cfKvSet(key, value) {
   const account = process.env.CF_ACCOUNT_ID;
   if (!token || !account) return;
   try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8e3);
     const form = new FormData();
     form.append("value", JSON.stringify(value));
     form.append("metadata", "{}");
     await fetch(`${CF_KV_URL}/${account}/storage/kv/namespaces/${CF_KV_NS}/values/${key}`, {
       method: "PUT",
       headers: { Authorization: `Bearer ${token}` },
-      body: form
+      body: form,
+      signal: ctrl.signal
     });
+    clearTimeout(timer);
   } catch {
   }
 }
@@ -2267,6 +2277,9 @@ function hasVercelKV() {
 }
 function hasCfKV() {
   return !!(process.env.CF_API_TOKEN && process.env.CF_ACCOUNT_ID);
+}
+function makeSlim(products) {
+  return products.map(({ image: _img, ...rest }) => rest);
 }
 async function storageGet(cfBinding) {
   if (hasVercelKV()) {
@@ -2282,13 +2295,41 @@ async function storageGet(cfBinding) {
   }
   return { data: _memProducts, source: "memory" };
 }
+async function storageGetSlim(cfBinding) {
+  if (hasVercelKV()) {
+    const d = await vercelKvGet("products_slim_v1");
+    if (d !== null && d.length > 0) return { data: d, source: "vercel-kv-slim" };
+    const full = await vercelKvGet("products_v1");
+    if (full !== null) return { data: makeSlim(full), source: "vercel-kv" };
+  }
+  if (hasCfKV()) {
+    const slim = await cfKvGet("products_slim_v1");
+    if (slim !== null && slim.length > 0) return { data: slim, source: "cf-kv-rest-slim" };
+    const full = await cfKvGet("products_v1");
+    if (full !== null) {
+      const slimmed = makeSlim(full);
+      cfKvSet("products_slim_v1", slimmed).catch(() => {
+      });
+      return { data: slimmed, source: "cf-kv-rest" };
+    }
+  }
+  if (cfBinding) {
+    const all = await kvGetAll(cfBinding);
+    return { data: makeSlim(all), source: "KV" };
+  }
+  return { data: makeSlim(_memProducts), source: "memory" };
+}
 async function storageSet(products, cfBinding) {
   if (hasVercelKV()) {
     await vercelKvSet("products_v1", products);
+    await vercelKvSet("products_slim_v1", makeSlim(products));
     return;
   }
   if (hasCfKV()) {
-    await cfKvSet("products_v1", products);
+    await Promise.all([
+      cfKvSet("products_v1", products),
+      cfKvSet("products_slim_v1", makeSlim(products))
+    ]);
     return;
   }
   if (cfBinding) {
@@ -2324,7 +2365,7 @@ var store = {
         console.error("D1 list error:", e.message);
       }
     }
-    const { data: all, source } = await storageGet(env.PRODUCTS_KV);
+    const { data: all, source } = await storageGetSlim(env.PRODUCTS_KV);
     let filtered = all.filter((p) => p.status === "active");
     if (opts.category) filtered = filtered.filter((p) => p.category === opts.category);
     if (opts.seller) filtered = filtered.filter((p) => p.seller_id === opts.seller);
