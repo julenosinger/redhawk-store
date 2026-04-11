@@ -3697,6 +3697,9 @@ function navbar() {
       <a href="/dashboard" class="hidden sm:flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-colors">
         <i class="fas fa-chart-line text-xs"></i> Dashboard
       </a>
+      <a href="/about" class="hidden sm:flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-colors">
+        <i class="fas fa-info-circle text-xs"></i> About Us
+      </a>
       <a href="/wallet" id="wallet-nav-btn" class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-red-50 text-red-700 hover:bg-red-100 transition-colors border border-red-100">
         <i class="fas fa-wallet text-xs"></i>
         <span id="wallet-badge">Wallet</span>
@@ -8931,82 +8934,277 @@ function disclaimerPage() {
   `);
 }
 function aboutPage() {
-  return shell("About", `
-  <div class="max-w-3xl mx-auto px-4 py-12 legal-page">
-    <div class="card p-8">
-      <div class="flex items-center gap-3 mb-6">
-        <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-red-500 to-red-800 flex items-center justify-center shadow">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="white" opacity=".9"/></svg>
+  const jsonLd = JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "Shukly Store",
+    "description": "Testnet-only application built on Arc Network for experimental and development purposes. No real financial transactions or assets involved.",
+    "applicationCategory": "FinanceApplication",
+    "operatingSystem": "Web",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    }
+  });
+  return shell(
+    "About Us",
+    `
+  <!-- \u2500\u2500 About Us Page \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 -->
+  <div class="max-w-4xl mx-auto px-4 py-10">
+
+    <!-- \u2500\u2500 Hero banner \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 -->
+    <div style="background:linear-gradient(135deg,#1e293b 0%,#0f172a 100%);border-radius:24px;padding:48px 40px;margin-bottom:32px;position:relative;overflow:hidden;">
+      <div style="position:absolute;top:-40px;right:-40px;width:220px;height:220px;background:radial-gradient(circle,rgba(220,38,38,.18) 0%,transparent 70%);pointer-events:none;"></div>
+      <div style="position:absolute;bottom:-30px;left:-30px;width:160px;height:160px;background:radial-gradient(circle,rgba(245,158,11,.1) 0%,transparent 70%);pointer-events:none;"></div>
+      <div style="display:flex;align-items:center;gap:16px;margin-bottom:24px;position:relative;">
+        <div style="width:56px;height:56px;border-radius:16px;background:linear-gradient(135deg,#dc2626,#991b1b);display:flex;align-items:center;justify-content:center;box-shadow:0 8px 24px rgba(220,38,38,.35);flex-shrink:0;">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="white" opacity=".9"/></svg>
         </div>
         <div>
-          <h1>About Shukly Store</h1>
-          <p class="text-slate-400 text-sm">Decentralized marketplace on Arc Network</p>
+          <h1 style="font-size:2rem;font-weight:900;color:#fff;margin:0;line-height:1.1;">About Us</h1>
+          <p style="color:#94a3b8;font-size:.9rem;margin:4px 0 0;">Shukly Store \xB7 Testnet Application on Arc Network</p>
         </div>
       </div>
-
-      <div class="demo-disclaimer mb-6">
-        <i class="fas fa-flask" style="color:#d97706;flex-shrink:0"></i>
-        <span><strong>Demo project:</strong> Shukly Store is an open-source testnet demonstration. Not a real commercial marketplace.</span>
-      </div>
-
-      <h2>What is Shukly Store?</h2>
-      <p>Shukly Store is a decentralized marketplace powered by <strong>Arc Network</strong> \u2014 Circle's stablecoin-native Layer 1 blockchain. It uses escrow smart contracts to protect every transaction: buyer funds are locked on-chain until delivery is confirmed, then automatically released to the seller.</p>
-
-      <h2>Technology Stack</h2>
-      <ul>
-        <li><strong>Blockchain:</strong> Arc Network Testnet (Chain ID: 5042002, EVM-compatible)</li>
-        <li><strong>Payments:</strong> USDC (native on Arc) and EURC (ERC-20)</li>
-        <li><strong>Escrow:</strong> ShuklyEscrow smart contract \u2014 deployed via /deploy-escrow page</li>
-        <li><strong>Wallet:</strong> Non-custodial, BIP39 seed phrase, client-side key generation (ethers.js)</li>
-        <li><strong>Frontend:</strong> Hono.js on Cloudflare Workers, Tailwind CSS</li>
-        <li><strong>Storage:</strong> IPFS for product images and shipment proofs</li>
-      </ul>
-
-      <h2>Security Principles</h2>
-      <ul>
-        <li>Private keys are generated client-side and never transmitted to any server</li>
-        <li>Wallet data stored locally in browser, encrypted with user password</li>
-        <li>Zero-custody architecture \u2014 we cannot access user funds</li>
-        <li>All transactions require explicit user confirmation before signing</li>
-        <li>No auto-connection or silent signature requests</li>
-      </ul>
-
-      <h2>Arc Network</h2>
-      <p>Arc is an Economic OS for the internet built by Circle, providing enterprise-grade infrastructure for on-chain payments. It uses USDC as its native gas token, offering sub-second finality and predictable fees.</p>
-
-      <h2>Open Source</h2>
-      <p>Shukly Store is open source. You can inspect, fork, and contribute to the codebase on GitHub:</p>
-      <p>
-        <a href="https://github.com/julenosinger/redhawk-store" target="_blank" class="inline-flex items-center gap-2 text-red-600 hover:underline font-medium">
-          <i class="fab fa-github"></i> github.com/julenosinger/redhawk-store
-        </a>
-      </p>
-
-      <h2>Smart Contracts (Arc Testnet)</h2>
-      <ul>
-        <li><strong>USDC:</strong> <code class="text-xs bg-slate-100 px-1 py-0.5 rounded font-mono">${ARC.contracts.USDC}</code></li>
-        <li><strong>EURC:</strong> <code class="text-xs bg-slate-100 px-1 py-0.5 rounded font-mono">${ARC.contracts.EURC}</code></li>
-        <li><strong>ShuklyEscrow:</strong> <code class="text-xs bg-slate-100 px-1 py-0.5 rounded font-mono" id="escrow-addr-docs">Deploy at /deploy-escrow</code></li>
-      </ul>
-
-      <h2>Useful Links</h2>
-      <ul>
-        <li><a href="https://docs.arc.network" target="_blank" class="text-red-600 hover:underline">Arc Network Documentation</a></li>
-        <li><a href="https://testnet.arcscan.app" target="_blank" class="text-red-600 hover:underline">Arc Testnet Explorer</a></li>
-        <li><a href="https://faucet.circle.com" target="_blank" class="text-red-600 hover:underline">Circle Testnet Faucet (free USDC/EURC)</a></li>
-        <li><a href="https://arc.network" target="_blank" class="text-red-600 hover:underline">arc.network</a></li>
-      </ul>
-
-      <div class="flex flex-wrap gap-3 mt-8">
-        <a href="https://github.com/julenosinger/redhawk-store" target="_blank" class="btn-primary text-sm"><i class="fab fa-github"></i> GitHub</a>
-        <a href="/terms" class="btn-secondary text-sm"><i class="fas fa-file-alt"></i> Terms</a>
-        <a href="/privacy" class="btn-secondary text-sm"><i class="fas fa-lock"></i> Privacy</a>
-        <a href="/disclaimer" class="btn-secondary text-sm"><i class="fas fa-exclamation-triangle"></i> Disclaimer</a>
-        <a href="/" class="btn-secondary text-sm"><i class="fas fa-home"></i> Home</a>
+      <!-- Trust badge strip -->
+      <div style="display:flex;flex-wrap:wrap;gap:10px;position:relative;">
+        <span style="display:inline-flex;align-items:center;gap:6px;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.25);color:#4ade80;border-radius:999px;padding:5px 14px;font-size:.75rem;font-weight:600;">
+          <i class="fas fa-flask"></i> Testnet Environment Only
+        </span>
+        <span style="display:inline-flex;align-items:center;gap:6px;background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.25);color:#60a5fa;border-radius:999px;padding:5px 14px;font-size:.75rem;font-weight:600;">
+          <i class="fas fa-shield-alt"></i> Security-Focused Development
+        </span>
+        <span style="display:inline-flex;align-items:center;gap:6px;background:rgba(168,85,247,.12);border:1px solid rgba(168,85,247,.25);color:#c084fc;border-radius:999px;padding:5px 14px;font-size:.75rem;font-weight:600;">
+          <i class="fas fa-wallet"></i> Non-Custodial
+        </span>
+        <span style="display:inline-flex;align-items:center;gap:6px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.25);color:#fbbf24;border-radius:999px;padding:5px 14px;font-size:.75rem;font-weight:600;">
+          <i class="fas fa-ban"></i> No Real Assets
+        </span>
       </div>
     </div>
+
+    <!-- \u2500\u2500 Important notice \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 -->
+    <div class="card p-5 mb-6" style="background:#fffbeb;border:1.5px solid #fde68a;">
+      <div class="flex items-start gap-3">
+        <i class="fas fa-exclamation-triangle text-amber-500 text-xl mt-0.5 shrink-0"></i>
+        <div>
+          <p class="font-bold text-amber-800 text-sm mb-1">Important Notice \u2014 Testnet Environment</p>
+          <p class="text-amber-700 text-sm leading-relaxed">
+            This platform operates exclusively within a <strong>testnet environment</strong> using Arc Network's test infrastructure.
+            <strong>No real funds</strong> are involved at any point. All balances, assets, and transactions are simulated or
+            testnet-based only. This is strictly an experimental and development platform.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- \u2500\u2500 Main grid \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 -->
+    <div style="display:grid;grid-template-columns:1fr;gap:24px;">
+
+      <!-- About the Platform -->
+      <section class="card p-6">
+        <div class="flex items-center gap-3 mb-4">
+          <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#dbeafe,#bfdbfe);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <i class="fas fa-info-circle text-blue-600"></i>
+          </div>
+          <h2 class="text-lg font-bold text-slate-800 m-0">About This Platform</h2>
+        </div>
+        <div style="space-y:12px">
+          <p class="text-slate-600 text-sm leading-relaxed mb-3">
+            Shukly Store was built by an <strong>independent developer</strong> using the <strong>Arc Network</strong> \u2014 Circle's
+            stablecoin-native Layer 1 blockchain. The purpose of this website is strictly for
+            <strong>testing and experimental use only</strong>.
+          </p>
+          <p class="text-slate-600 text-sm leading-relaxed mb-3">
+            The platform operates exclusively on the <strong>Arc Network testnet</strong> (Chain ID: 5042002).
+            No real funds are involved. No real financial transactions occur.
+            All balances, assets, and interactions are <strong>simulated or testnet-based only</strong>.
+          </p>
+          <p class="text-slate-600 text-sm leading-relaxed">
+            This website was developed using <strong>Genspark</strong>, with a strong focus on
+            <strong>performance and security</strong>. The platform includes protection against attacks,
+            exploits, and malicious activity.
+          </p>
+        </div>
+        <!-- Info chips -->
+        <div class="flex flex-wrap gap-2 mt-4">
+          <span class="tag"><i class="fas fa-network-wired mr-1"></i>Arc Testnet \xB7 Chain 5042002</span>
+          <span class="tag"><i class="fas fa-code mr-1"></i>Built with Genspark</span>
+          <span class="tag"><i class="fas fa-lock mr-1"></i>Non-custodial wallet</span>
+        </div>
+      </section>
+
+      <!-- Two-column grid for medium+ screens -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px;">
+
+        <!-- Security & Transparency -->
+        <section class="card p-6">
+          <div class="flex items-center gap-3 mb-4">
+            <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#dcfce7,#bbf7d0);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+              <i class="fas fa-shield-alt text-green-600"></i>
+            </div>
+            <h2 class="text-lg font-bold text-slate-800 m-0">Security &amp; Transparency</h2>
+          </div>
+          <ul class="space-y-3 text-sm text-slate-600" style="list-style:none;padding:0;margin:0;">
+            <li class="flex items-start gap-2.5">
+              <i class="fas fa-check-circle text-green-500 mt-0.5 shrink-0"></i>
+              <span><strong class="text-slate-700">No storage of sensitive user data</strong> \u2014 we do not collect, store, or transmit private keys or personal information.</span>
+            </li>
+            <li class="flex items-start gap-2.5">
+              <i class="fas fa-check-circle text-green-500 mt-0.5 shrink-0"></i>
+              <span><strong class="text-slate-700">No automatic wallet transactions</strong> \u2014 every on-chain action requires explicit user confirmation.</span>
+            </li>
+            <li class="flex items-start gap-2.5">
+              <i class="fas fa-check-circle text-green-500 mt-0.5 shrink-0"></i>
+              <span><strong class="text-slate-700">Users have full control of their wallets</strong> \u2014 private keys are generated client-side and never leave your device.</span>
+            </li>
+            <li class="flex items-start gap-2.5">
+              <i class="fas fa-check-circle text-green-500 mt-0.5 shrink-0"></i>
+              <span><strong class="text-slate-700">Platform is for testing and demo purposes only</strong> \u2014 not a commercial service.</span>
+            </li>
+            <li class="flex items-start gap-2.5">
+              <i class="fas fa-check-circle text-green-500 mt-0.5 shrink-0"></i>
+              <span><strong class="text-slate-700">Security-focused development</strong> \u2014 HTTP security headers, CSP, HSTS, and anti-abuse measures active.</span>
+            </li>
+            <li class="flex items-start gap-2.5">
+              <i class="fas fa-check-circle text-green-500 mt-0.5 shrink-0"></i>
+              <span><strong class="text-slate-700">Protection against attacks &amp; exploits</strong> \u2014 malicious activity is monitored and blocked.</span>
+            </li>
+          </ul>
+        </section>
+
+        <!-- Compliance & Trust -->
+        <section class="card p-6">
+          <div class="flex items-center gap-3 mb-4">
+            <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#fce7f3,#fbcfe8);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+              <i class="fas fa-certificate text-pink-600"></i>
+            </div>
+            <h2 class="text-lg font-bold text-slate-800 m-0">Compliance &amp; Trust</h2>
+          </div>
+          <div class="space-y-3 text-sm text-slate-600">
+            <div class="flex items-start gap-2.5">
+              <i class="fas fa-flask text-purple-500 mt-0.5 shrink-0"></i>
+              <div><strong class="text-slate-700">Testnet environment</strong><br/>Operates exclusively on Arc Network testnet. No mainnet activity occurs.</div>
+            </div>
+            <div class="flex items-start gap-2.5">
+              <i class="fas fa-ban text-red-500 mt-0.5 shrink-0"></i>
+              <div><strong class="text-slate-700">No real assets</strong><br/>All USDC/EURC balances are testnet tokens with no monetary value.</div>
+            </div>
+            <div class="flex items-start gap-2.5">
+              <i class="fas fa-user-shield text-blue-500 mt-0.5 shrink-0"></i>
+              <div><strong class="text-slate-700">Non-custodial architecture</strong><br/>We have zero access to user funds or private keys at any time.</div>
+            </div>
+            <div class="flex items-start gap-2.5">
+              <i class="fas fa-code-branch text-green-500 mt-0.5 shrink-0"></i>
+              <div><strong class="text-slate-700">Open source</strong><br/>Source code is publicly available for independent review and audit.</div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- Technology Stack -->
+      <section class="card p-6">
+        <div class="flex items-center gap-3 mb-5">
+          <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#e0e7ff,#c7d2fe);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <i class="fas fa-layer-group text-indigo-600"></i>
+          </div>
+          <h2 class="text-lg font-bold text-slate-800 m-0">Technology Stack</h2>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;">
+          ${[
+      { icon: "fas fa-network-wired", color: "#3b82f6", label: "Blockchain", value: "Arc Network Testnet (EVM)" },
+      { icon: "fas fa-coins", color: "#f59e0b", label: "Payments", value: "USDC & EURC (testnet)" },
+      { icon: "fas fa-file-contract", color: "#8b5cf6", label: "Escrow", value: "ShuklyEscrow Smart Contract" },
+      { icon: "fas fa-wallet", color: "#10b981", label: "Wallet", value: "Non-custodial \xB7 BIP39 \xB7 ethers.js" },
+      { icon: "fas fa-server", color: "#ef4444", label: "Backend", value: "Hono.js \xB7 Cloudflare Workers" },
+      { icon: "fas fa-shield-alt", color: "#ec4899", label: "Security", value: "CSP \xB7 HSTS \xB7 Permissions-Policy" }
+    ].map((t) => `
+            <div style="display:flex;align-items:flex-start;gap:10px;padding:12px;background:#f8fafc;border-radius:12px;border:1px solid #f1f5f9;">
+              <div style="width:32px;height:32px;border-radius:8px;background:${t.color}1a;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                <i class="${t.icon}" style="color:${t.color};font-size:.8rem;"></i>
+              </div>
+              <div>
+                <p style="font-size:.7rem;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin:0 0 2px;">${t.label}</p>
+                <p style="font-size:.8rem;color:#334155;font-weight:500;margin:0;">${t.value}</p>
+              </div>
+            </div>
+          `).join("")}
+        </div>
+      </section>
+
+      <!-- Smart Contracts -->
+      <section class="card p-6">
+        <div class="flex items-center gap-3 mb-4">
+          <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#f0fdf4,#dcfce7);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <i class="fas fa-file-code text-emerald-600"></i>
+          </div>
+          <h2 class="text-lg font-bold text-slate-800 m-0">Smart Contracts \u2014 Arc Testnet</h2>
+        </div>
+        <div class="space-y-2">
+          ${[
+      { label: "USDC (native)", addr: "${ARC.contracts.USDC}" },
+      { label: "EURC (ERC-20)", addr: "${ARC.contracts.EURC}" },
+      { label: "ShuklyEscrow", addr: "0x26f290dAe5A54f68b3191C79d710e2A8C2E5A511" }
+    ].map((c) => `
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;background:#f8fafc;border-radius:10px;border:1px solid #f1f5f9;flex-wrap:wrap;">
+              <span style="font-size:.8rem;font-weight:600;color:#475569;min-width:100px;">${c.label}</span>
+              <code style="font-size:.7rem;color:#64748b;font-family:monospace;word-break:break-all;">${c.addr}</code>
+              <a href="https://testnet.arcscan.app/address/${c.addr}" target="_blank"
+                 style="font-size:.7rem;color:#dc2626;text-decoration:none;white-space:nowrap;flex-shrink:0;">
+                <i class="fas fa-external-link-alt"></i> ArcScan
+              </a>
+            </div>
+          `).join("")}
+        </div>
+      </section>
+
+      <!-- Open Source & Links -->
+      <section class="card p-6">
+        <div class="flex items-center gap-3 mb-4">
+          <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#f1f5f9,#e2e8f0);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <i class="fab fa-github text-slate-700"></i>
+          </div>
+          <h2 class="text-lg font-bold text-slate-800 m-0">Open Source</h2>
+        </div>
+        <p class="text-slate-600 text-sm leading-relaxed mb-4">
+          The complete source code of Shukly Store is publicly available for inspection, audit, and contribution.
+          Transparency is a core principle of this project.
+        </p>
+        <div class="flex flex-wrap gap-3">
+          <a href="https://github.com/julenosinger/redhawk-store" target="_blank" class="btn-primary text-sm">
+            <i class="fab fa-github"></i> View on GitHub
+          </a>
+          <a href="https://testnet.arcscan.app" target="_blank" class="btn-secondary text-sm">
+            <i class="fas fa-search"></i> Arc Explorer
+          </a>
+          <a href="https://faucet.circle.com" target="_blank" class="btn-secondary text-sm">
+            <i class="fas fa-faucet"></i> Get Test USDC
+          </a>
+          <a href="/terms" class="btn-secondary text-sm">
+            <i class="fas fa-file-alt"></i> Terms
+          </a>
+          <a href="/privacy" class="btn-secondary text-sm">
+            <i class="fas fa-lock"></i> Privacy
+          </a>
+          <a href="/disclaimer" class="btn-secondary text-sm">
+            <i class="fas fa-exclamation-triangle"></i> Disclaimer
+          </a>
+        </div>
+      </section>
+
+    </div><!-- /main grid -->
   </div>
-  `);
+  `,
+    /* extraHead — JSON-LD + page-specific meta */
+    `<!-- About page: override meta description and inject JSON-LD -->
+  <meta name="description" content="Testnet-only platform built on Arc Network. No real funds, no financial risk. Designed for development and testing."/>
+  <meta name="robots" content="index,follow"/>
+  <meta name="keywords" content="testnet environment, no real assets, non-custodial, security-focused development, Arc Network, experimental platform, blockchain testing"/>
+  <meta property="og:title" content="About Us | Shukly Store"/>
+  <meta property="og:description" content="Testnet-only platform built on Arc Network. No real funds, no financial risk. Designed for development and testing."/>
+  <meta property="og:url" content="https://shukly-store.pages.dev/about"/>
+  <script type="application/ld+json">${jsonLd}</script>`
+  );
 }
 function deployEscrowPage() {
   return shell("Deploy ShuklyEscrow", `
