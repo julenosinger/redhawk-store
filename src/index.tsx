@@ -5,6 +5,50 @@ type Bindings = { DB?: D1Database; PRODUCTS_KV?: KVNamespace; CIRCLE_API_KEY?: s
 const app = new Hono<{ Bindings: Bindings }>()
 app.use('*', cors())
 
+// ─── Security Headers Middleware ─────────────────────────────────────────────
+// Applied at Worker level — works correctly on Cloudflare Pages with _worker.js
+app.use('*', async (c, next) => {
+  await next()
+
+  const url = new URL(c.req.url)
+  const path = url.pathname
+
+  // ── Base security headers (all routes) ──
+  c.res.headers.set('X-Frame-Options', 'DENY')
+  c.res.headers.set('X-Content-Type-Options', 'nosniff')
+  c.res.headers.set('X-XSS-Protection', '0')
+  c.res.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload')
+  c.res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
+  c.res.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), accelerometer=(), gyroscope=()')
+  c.res.headers.set('Cross-Origin-Opener-Policy', 'same-origin-allow-popups')
+  c.res.headers.set('Cross-Origin-Resource-Policy', 'cross-origin')
+
+  // ── Content-Security-Policy ──
+  const csp = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com",
+    "style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://fonts.googleapis.com",
+    "font-src 'self' data: https://cdn.jsdelivr.net https://fonts.gstatic.com",
+    "img-src 'self' data: blob: https: ipfs: https://ipfs.io https://cloudflare-ipfs.com https://gateway.pinata.cloud https://www.genspark.ai",
+    "connect-src 'self' https://rpc.testnet.arc.network https://rpc.blockdaemon.testnet.arc.network https://api.circle.com https://testnet.arcscan.app https://faucet.circle.com https://ipfs.io wss:",
+    "frame-src 'none'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "upgrade-insecure-requests"
+  ].join('; ')
+  c.res.headers.set('Content-Security-Policy', csp)
+
+  // ── Path-specific Cache-Control ──
+  if (path.startsWith('/static/') || path.startsWith('/images/')) {
+    const maxAge = path.startsWith('/images/') ? 604800 : 31536000
+    const immutable = path.startsWith('/static/') ? ', immutable' : ''
+    c.res.headers.set('Cache-Control', `public, max-age=${maxAge}${immutable}`)
+  } else if (path.startsWith('/api/')) {
+    c.res.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate')
+  }
+})
+
 // ─── Product type ────────────────────────────────────────────────────────────
 interface Product {
   id: string; title: string; description: string; price: number
