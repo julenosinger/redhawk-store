@@ -2619,9 +2619,26 @@ app.get("/api/products", async (c) => {
       seller: c.req.query("seller") || "",
       q: c.req.query("q") || ""
     });
-    return c.json({ products, total: products.length, source });
+    const slim = products.map(({ image: _img, ...rest }) => rest);
+    return c.json({ products: slim, total: slim.length, source });
   } catch (e) {
     return c.json({ products: [], total: 0, source: "error", error: e.message });
+  }
+});
+app.get("/api/products/images", async (c) => {
+  try {
+    const idsParam = c.req.query("ids") || "";
+    const ids = idsParam.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 50);
+    if (ids.length === 0) return c.json({ images: {} });
+    const { data: products } = await storageGet(c.env.PRODUCTS_KV);
+    const images = {};
+    for (const id of ids) {
+      const p = products.find((x) => x.id === id);
+      if (p && p.image) images[id] = p.image;
+    }
+    return c.json({ images });
+  } catch (e) {
+    return c.json({ images: {}, error: e.message });
   }
 });
 app.get("/api/products/:id", async (c) => {
@@ -4648,6 +4665,8 @@ function homePage() {
           + (data.products.length > 4
               ? \`<div style="text-align:center;margin-top:40px;"><a href="/marketplace" class="btn-secondary">View all \${data.products.length} products &nbsp;<i class="fas fa-arrow-right"></i></a></div>\`
               : '');
+        // Lazy-load images after rendering cards
+        lazyLoadHomeImages(latest);
       }
     } catch (e) {
       document.getElementById('home-products-container').innerHTML =
@@ -4662,9 +4681,10 @@ function homePage() {
     const price = parseFloat(p.price || 0).toFixed(2);
     const tok   = p.token || 'USDC';
     const cat   = p.category || 'Other';
+    // Image is NOT included in list response; lazy-load via /api/products/:id
     const imgEl = p.image
       ? '<img src="' + p.image + '" alt="' + name + '">'
-      : '<div class="home-product-placeholder"><i class="fas fa-image"></i></div>';
+      : '<div class="home-product-placeholder" id="img-' + p.id + '"><div class="loading-spinner" style="width:28px;height:28px;border-width:3px;"></div></div>';
     return \`
       <div class="home-product-card" onclick="location.href='/product/\${p.id}'">
         <div class="home-product-img">
@@ -4682,6 +4702,33 @@ function homePage() {
           </div>
         </div>
       </div>\`;
+  }
+
+  // Lazy-load images for home cards after initial render (single batch request)
+  async function lazyLoadHomeImages(products) {
+    if (!products.length) return;
+    try {
+      const ids = products.map(p => p.id).join(',');
+      const res = await fetch('/api/products/images?ids=' + ids);
+      const data = await res.json();
+      const images = data.images || {};
+      products.forEach(p => {
+        const container = document.getElementById('img-' + p.id);
+        if (!container) return;
+        if (images[p.id]) {
+          const img = document.createElement('img');
+          img.src = images[p.id];
+          img.alt = p.title || 'Product';
+          img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:inherit;';
+          container.innerHTML = '';
+          container.appendChild(img);
+        } else {
+          container.innerHTML = '<i class="fas fa-image"></i>';
+        }
+      });
+    } catch {
+      // silently fail \u2014 placeholders stay
+    }
   }
   </script>
   `);
@@ -4836,6 +4883,8 @@ function marketplacePage() {
       container.innerHTML = '<div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">'
         + list.map(p => renderMPCard(p)).join('') + '</div>'
         + \`<p class="text-xs text-slate-400 text-right mt-3">\${list.length} product\${list.length!==1?'s':''} found</p>\`;
+      // Lazy-load images after rendering
+      lazyLoadMPImages(list);
     }
   }
 
@@ -4845,10 +4894,11 @@ function marketplacePage() {
     const desc  = (p.description||'').replace(/</g,'&lt;').slice(0,80);
     const cat   = (p.category||'Other').replace(/</g,'&lt;');
     const tok   = p.token || 'USDC';
+    // Images are not included in list response; show spinner placeholder
     const imgEl = p.image
       ? '<img src="' + p.image + '" class="w-full h-48 object-cover" onerror="this.style.display=&quot;none&quot;;this.nextElementSibling.style.display=&quot;flex&quot;">'
         + '<div class="w-full h-48 bg-slate-100 items-center justify-center text-slate-300 hidden"><i class="fas fa-image text-4xl"></i></div>'
-      : '<div class="w-full h-48 bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center text-slate-300"><i class="fas fa-image text-4xl"></i></div>';
+      : '<div class="w-full h-48 bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center" id="mpimg-' + p.id + '"><div class="loading-spinner" style="width:28px;height:28px;border-width:3px;"></div></div>';
     const sellerShort = p.seller_id ? (p.seller_id.slice(0,6)+'\u2026'+p.seller_id.slice(-4)) : '\u2014';
     return '<div class="product-card">'
       + '<div class="relative overflow-hidden">' + imgEl
@@ -4866,6 +4916,29 @@ function marketplacePage() {
       + '<a href="/product/' + p.id + '" class="btn-primary flex-1 text-xs py-2 justify-center"><i class="fas fa-bolt mr-1"></i>Buy Now</a>'
       + '<a href="/product/' + p.id + '" class="btn-secondary text-xs py-2 px-3 justify-center"><i class="fas fa-eye"></i></a>'
       + '</div></div></div>';
+  }
+
+  // Lazy-load images for marketplace cards: single batch request for all visible products
+  async function lazyLoadMPImages(products) {
+    if (!products.length) return;
+    try {
+      const ids = products.map(p => p.id).join(',');
+      const res = await fetch('/api/products/images?ids=' + ids);
+      const data = await res.json();
+      const images = data.images || {};
+      products.forEach(p => {
+        const container = document.getElementById('mpimg-' + p.id);
+        if (!container) return;
+        if (images[p.id]) {
+          container.style.padding = '0';
+          container.innerHTML = '<img src="' + images[p.id] + '" class="w-full h-48 object-cover" alt="' + (p.title||'').replace(/"/g,'') + '">';
+        } else {
+          container.innerHTML = '<span class="text-slate-300"><i class="fas fa-image text-4xl"></i></span>';
+        }
+      });
+    } catch {
+      // silently fail \u2014 placeholders stay
+    }
   }
   </script>
   `);
