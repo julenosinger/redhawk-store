@@ -67,20 +67,113 @@ interface Product {
 // This prevents "Cannot read properties of undefined (reading 'prepare')" when
 // the D1 binding is not configured on the Cloudflare Pages project.
 
-// In-memory fallback (per-isolate, cleared on redeploy — only used when neither D1 nor KV is bound)
+// In-memory fallback (per-isolate, cleared on redeploy — only used when no KV is available)
 let _memProducts: Product[] = []
 
 function nowISO() { return new Date().toISOString() }
 
-// KV helpers — products stored as JSON array under key 'products_v1'
-async function kvGetAll(kv: KVNamespace): Promise<Product[]> {
+// ─── Cloudflare KV helpers ────────────────────────────────────────────────────
+async function kvGetAll(kv: any): Promise<Product[]> {
   try {
     const raw = await kv.get('products_v1')
     return raw ? JSON.parse(raw) : []
   } catch { return [] }
 }
-async function kvSaveAll(kv: KVNamespace, products: Product[]): Promise<void> {
+async function kvSaveAll(kv: any, products: Product[]): Promise<void> {
   await kv.put('products_v1', JSON.stringify(products))
+}
+
+// ─── Vercel KV (Upstash Redis) helpers — active when KV_REST_API_URL is set ──
+// Uses the Redis REST API directly (no SDK needed in the bundle)
+async function vercelKvGet(key: string): Promise<Product[] | null> {
+  const url  = process.env.KV_REST_API_URL
+  const token = process.env.KV_REST_API_TOKEN
+  if (!url || !token) return null
+  try {
+    const res = await fetch(`${url}/get/${key}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    const json: any = await res.json()
+    if (json.result == null) return []
+    return JSON.parse(json.result) as Product[]
+  } catch { return null }
+}
+async function vercelKvSet(key: string, value: Product[]): Promise<void> {
+  const url  = process.env.KV_REST_API_URL
+  const token = process.env.KV_REST_API_TOKEN
+  if (!url || !token) return
+  try {
+    await fetch(`${url}/set/${key}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(JSON.stringify(value))
+    })
+  } catch { /* silent */ }
+}
+
+// ─── Cloudflare KV REST API helpers — used by Vercel when CF creds are set ───
+// This lets Vercel read/write the same KV namespace as Cloudflare Pages,
+// keeping products in sync between both platforms.
+const CF_KV_NS  = 'e7c8a4b7a03c4cd9b0a577817b26f868'
+const CF_KV_URL = `https://api.cloudflare.com/client/v4/accounts`
+
+async function cfKvGet(key: string): Promise<Product[] | null> {
+  const token   = process.env.CF_API_TOKEN
+  const account = process.env.CF_ACCOUNT_ID
+  if (!token || !account) return null
+  try {
+    const res = await fetch(`${CF_KV_URL}/${account}/storage/kv/namespaces/${CF_KV_NS}/values/${key}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    if (res.status === 404) return []
+    const text = await res.text()
+    return JSON.parse(text) as Product[]
+  } catch { return null }
+}
+async function cfKvSet(key: string, value: Product[]): Promise<void> {
+  const token   = process.env.CF_API_TOKEN
+  const account = process.env.CF_ACCOUNT_ID
+  if (!token || !account) return
+  try {
+    const form = new FormData()
+    form.append('value', JSON.stringify(value))
+    form.append('metadata', '{}')
+    await fetch(`${CF_KV_URL}/${account}/storage/kv/namespaces/${CF_KV_NS}/values/${key}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form
+    })
+  } catch { /* silent */ }
+}
+
+// Helper: detect available storage backend
+function hasVercelKV(): boolean {
+  return !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN)
+}
+function hasCfKV(): boolean {
+  return !!(process.env.CF_API_TOKEN && process.env.CF_ACCOUNT_ID)
+}
+
+// Universal get/set — tries Vercel KV → CF KV REST → CF binding → memory
+async function storageGet(cfBinding?: any): Promise<{ data: Product[]; source: string }> {
+  if (hasVercelKV()) {
+    const d = await vercelKvGet('products_v1')
+    if (d !== null) return { data: d, source: 'vercel-kv' }
+  }
+  if (hasCfKV()) {
+    const d = await cfKvGet('products_v1')
+    if (d !== null) return { data: d, source: 'cf-kv-rest' }
+  }
+  if (cfBinding) {
+    return { data: await kvGetAll(cfBinding), source: 'KV' }
+  }
+  return { data: _memProducts, source: 'memory' }
+}
+async function storageSet(products: Product[], cfBinding?: any): Promise<void> {
+  if (hasVercelKV())      { await vercelKvSet('products_v1', products); return }
+  if (hasCfKV())          { await cfKvSet('products_v1', products); return }
+  if (cfBinding)          { await kvSaveAll(cfBinding, products); return }
+  _memProducts = products
 }
 
 // ─── Unified product store ────────────────────────────────────────────────────
@@ -102,8 +195,8 @@ const store = {
         console.error('D1 list error:', e.message)
       }
     }
-    // KV fallback
-    let all: Product[] = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts
+    // CF KV REST → Vercel KV → CF binding → memory
+    const { data: all, source } = await storageGet(env.PRODUCTS_KV)
     let filtered = all.filter(p => p.status === 'active')
     if (opts.category) filtered = filtered.filter(p => p.category === opts.category)
     if (opts.seller)   filtered = filtered.filter(p => p.seller_id === opts.seller)
@@ -113,7 +206,7 @@ const store = {
         p.title.toLowerCase().includes(qLow) || p.description.toLowerCase().includes(qLow))
     }
     filtered.sort((a,b) => b.created_at.localeCompare(a.created_at))
-    return { products: filtered, source: env.PRODUCTS_KV ? 'KV' : 'memory' }
+    return { products: filtered, source }
   },
 
   // Get single product by id
@@ -124,8 +217,8 @@ const store = {
         return (row as Product) || null
       } catch (e: any) { console.error('D1 get error:', e.message) }
     }
-    const all: Product[] = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts
-    return all.find(p => p.id === id && p.status === 'active') || null
+    const { data: all2 } = await storageGet(env.PRODUCTS_KV)
+    return all2.find(p => p.id === id && p.status === 'active') || null
   },
 
   // Get product by id (any status) — for seller operations
@@ -136,8 +229,8 @@ const store = {
         return (row as Product) || null
       } catch (e: any) { console.error('D1 getAny error:', e.message) }
     }
-    const all: Product[] = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts
-    return all.find(p => p.id === id) || null
+    const { data: allG } = await storageGet(env.PRODUCTS_KV)
+    return allG.find(p => p.id === id) || null
   },
 
   // List products for a seller (all statuses except deleted)
@@ -150,8 +243,8 @@ const store = {
         return results as Product[]
       } catch (e: any) { console.error('D1 listBySeller error:', e.message) }
     }
-    const all: Product[] = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts
-    return all.filter(p => p.seller_id === address && p.status !== 'deleted')
+    const { data: allS } = await storageGet(env.PRODUCTS_KV)
+    return allS.filter(p => p.seller_id === address && p.status !== 'deleted')
               .sort((a,b) => b.created_at.localeCompare(a.created_at))
   },
 
@@ -171,11 +264,9 @@ const store = {
         return (row as Product) || product
       } catch (e: any) { console.error('D1 create error:', e.message) }
     }
-    // KV / memory
-    const all: Product[] = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts
-    all.unshift(product)
-    if (env.PRODUCTS_KV) await kvSaveAll(env.PRODUCTS_KV, all)
-    else _memProducts = all
+    const { data: allC } = await storageGet(env.PRODUCTS_KV)
+    allC.unshift(product)
+    await storageSet(allC, env.PRODUCTS_KV)
     return product
   },
 
@@ -187,20 +278,19 @@ const store = {
         return true
       } catch (e: any) { console.error('D1 setStatus error:', e.message) }
     }
-    const all: Product[] = env.PRODUCTS_KV ? await kvGetAll(env.PRODUCTS_KV) : _memProducts
-    const idx = all.findIndex(p => p.id === id)
+    const { data: allSt } = await storageGet(env.PRODUCTS_KV)
+    const idx = allSt.findIndex(p => p.id === id)
     if (idx < 0) return false
-    all[idx].status = status
-    all[idx].updated_at = nowISO()
-    if (env.PRODUCTS_KV) await kvSaveAll(env.PRODUCTS_KV, all)
-    else _memProducts = all
+    allSt[idx].status = status
+    allSt[idx].updated_at = nowISO()
+    await storageSet(allSt, env.PRODUCTS_KV)
     return true
   }
 }
 
 // ─── DB init (only when D1 is bound) ─────────────────────────────────────────
 let _dbReady = false
-async function initDB(db?: D1Database) {
+async function initDB(db?: any) {
   if (!db || _dbReady) return
   try {
     await db.prepare(`CREATE TABLE IF NOT EXISTS products (
