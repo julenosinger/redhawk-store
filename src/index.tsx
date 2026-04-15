@@ -872,8 +872,10 @@ app.post('/api/payment/qr-checkout', async (c) => {
 //  Polls Arc Network for ERC-20 Transfer event:
 //    Transfer(from, to=escrowAddress, value>=amountWei) in tokenAddress contract
 //  Uses eth_getLogs with keccak256("Transfer(address,address,uint256)") topic
+//  Optional query param: ?from=0x...  — filters by sender address (topic1)
 app.get('/api/payment/poll/:sid', async (c) => {
-  const sid = c.req.param('sid')
+  const sid        = c.req.param('sid')
+  const fromParam  = (c.req.query('from') || '').trim().toLowerCase()
 
   // Load session
   let session: any = null
@@ -907,13 +909,18 @@ app.get('/api/payment/poll/:sid', async (c) => {
     // Look back at most 200 blocks (~10 min on Arc) — covers recent transfers
     const fromBlock = '0x' + Math.max(0, latest - 200).toString(16)
 
+    // Build topics array — if caller supplied a sender address, pin topic1 for precision
+    const fromTopic = (fromParam && /^0x[0-9a-f]{40}$/.test(fromParam))
+      ? '0x000000000000000000000000' + fromParam.replace('0x', '')
+      : null   // null = any sender
+
     const logs: any[] = await arcRpc('eth_getLogs', [{
       fromBlock,
       toBlock: 'latest',
       address: session.tokenAddress,           // USDC or EURC contract
       topics: [
         TRANSFER_TOPIC,
-        null,                                  // from: any address
+        fromTopic,                             // from: pinned address OR any
         escrowTopic                            // to: escrow address (padded)
       ]
     }])
@@ -932,10 +939,18 @@ app.get('/api/payment/poll/:sid', async (c) => {
       // Accept exact match OR within 0.001 token tolerance (dust)
       const diff = logValue > amountWei ? logValue - amountWei : amountWei - logValue
       const tolerance = BigInt(1000)  // 0.001 USDC/EURC (6 decimals)
-      if (diff <= tolerance) {
-        matchedTx = log.transactionHash
-        break
+      if (diff > tolerance) continue
+
+      // Extra validation when sender address was provided:
+      // topic1 = padded 'from' address — strip leading zeros and compare
+      if (fromParam && fromParam !== '') {
+        const topic1 = (log.topics?.[1] || '').toLowerCase()
+        const logFrom = '0x' + topic1.slice(-40)   // last 20 bytes = address
+        if (logFrom !== fromParam) continue        // sender mismatch — skip
       }
+
+      matchedTx = log.transactionHash
+      break
     }
 
     if (!matchedTx)
@@ -4627,6 +4642,38 @@ function checkoutPage() {
             </div>
           </div>
 
+          <!-- Sender wallet address (optional) -->
+          <div style="margin-bottom:12px;">
+            <label for="nwp-sender-addr"
+              style="display:block;font-size:.75rem;font-weight:600;color:#64748b;
+                     margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em;">
+              <i class="fas fa-paper-plane" style="color:#6366f1;"></i>
+              Sender Wallet Address
+              <span style="font-weight:400;color:#94a3b8;text-transform:none;letter-spacing:0;
+                           font-size:.7rem;"> (Optional)</span>
+            </label>
+            <input
+              type="text"
+              id="nwp-sender-addr"
+              placeholder="0x..."
+              oninput="nwpValidateSender(this)"
+              autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+              style="width:100%;border:1.5px solid #e2e8f0;border-radius:8px;
+                     padding:9px 12px;font-size:.8rem;font-family:monospace;
+                     outline:none;transition:border-color .2s;background:#fafafa;
+                     color:#1e293b;"
+            />
+            <p id="nwp-sender-err"
+              style="display:none;color:#dc2626;font-size:.7rem;margin:3px 0 0;
+                     font-weight:600;">
+              <i class="fas fa-times-circle"></i> Invalid wallet address
+            </p>
+            <p style="color:#94a3b8;font-size:.68rem;margin:4px 0 0;line-height:1.4;">
+              Optional: enter the wallet that will send the payment so the system can
+              identify your transaction faster.
+            </p>
+          </div>
+
           <!-- Generate button -->
           <button onclick="generateQRPayment()"
             id="nwp-gen-btn"
@@ -4867,6 +4914,21 @@ function checkoutPage() {
     }
   }
 
+  function nwpValidateSender(input) {
+    const errEl = document.getElementById('nwp-sender-err');
+    const val   = (input.value || '').trim();
+    if (val === '') {
+      // Empty is valid (optional field)
+      input.style.borderColor = '#e2e8f0';
+      if (errEl) errEl.style.display = 'none';
+      return true;
+    }
+    const isValid = /^0x[0-9a-fA-F]{40}$/.test(val);
+    input.style.borderColor = isValid ? '#16a34a' : '#dc2626';
+    if (errEl) errEl.style.display = isValid ? 'none' : 'block';
+    return isValid;
+  }
+
   function nwpUpdateExpiry() {
     if (!_qrSession) return;
     const el = document.getElementById('nwp-expiry-text');
@@ -4893,7 +4955,13 @@ function checkoutPage() {
       pollCount++;
       nwpUpdateExpiry();
       try {
-        const res  = await fetch('/api/payment/poll/' + _qrSession.sid);
+        // Append sender address as ?from= if user provided a valid one
+        const senderInput = document.getElementById('nwp-sender-addr');
+        const senderVal   = (senderInput ? senderInput.value.trim() : '');
+        const senderValid = senderVal !== '' && /^0x[0-9a-fA-F]{40}$/.test(senderVal);
+        const pollUrl     = '/api/payment/poll/' + _qrSession.sid
+          + (senderValid ? '?from=' + senderVal.toLowerCase() : '');
+        const res  = await fetch(pollUrl);
         const data = await res.json();
 
         if (data.status === 'confirmed') {
