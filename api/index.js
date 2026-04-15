@@ -2800,6 +2800,161 @@ app.post("/api/orders", async (c) => {
   };
   return c.json({ order, success: true });
 });
+var _qrSessions = /* @__PURE__ */ new Map();
+async function arcRpc(method, params) {
+  const res = await fetch(ARC.rpc, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    signal: AbortSignal.timeout(8e3)
+  });
+  if (!res.ok) throw new Error(`Arc RPC ${res.status}`);
+  const j = await res.json();
+  if (j.error) throw new Error(`Arc RPC error: ${j.error.message || JSON.stringify(j.error)}`);
+  return j.result;
+}
+app.post("/api/payment/qr-checkout", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { cart, token = "USDC", sellerAddress } = body;
+    if (!cart || !Array.isArray(cart) || cart.length === 0)
+      return c.json({ error: "cart is required and must not be empty" }, 400);
+    if (!["USDC", "EURC"].includes(token))
+      return c.json({ error: "token must be USDC or EURC" }, 400);
+    if (!sellerAddress || !sellerAddress.startsWith("0x"))
+      return c.json({ error: "sellerAddress is required" }, 400);
+    const total = cart.reduce((s, i) => s + (parseFloat(i.price) || 0) * (i.quantity || i.qty || 1), 0);
+    if (total <= 0) return c.json({ error: "total must be > 0" }, 400);
+    const fee = total * 0.015;
+    const grandTotal = parseFloat((total + fee).toFixed(6));
+    const tokenAddress = token === "EURC" ? ARC.contracts.EURC : ARC.contracts.USDC;
+    const escrowAddress = ARC.contracts.ShuklyEscrow;
+    const amountWei = BigInt(Math.round(grandTotal * 1e6)).toString();
+    const sid = "QR-" + Date.now() + "-" + Math.random().toString(36).slice(2, 9);
+    const orderId = "ORD-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7);
+    const session = {
+      sid,
+      orderId,
+      escrowAddress,
+      token,
+      tokenAddress,
+      sellerAddress,
+      cart,
+      amount: grandTotal,
+      amountWei,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 30 * 60 * 1e3,
+      // 30 min TTL
+      used: false,
+      confirmed: false,
+      txHash: null
+    };
+    try {
+      const env = c.env;
+      if (env?.KV) {
+        await env.KV.put(`qr_session:${sid}`, JSON.stringify(session), { expirationTtl: 1800 });
+      } else {
+        _qrSessions.set(sid, session);
+      }
+    } catch (_) {
+      _qrSessions.set(sid, session);
+    }
+    return c.json({
+      sid,
+      orderId,
+      escrowAddress,
+      token,
+      tokenAddress,
+      amount: grandTotal,
+      amountWei,
+      expiresAt: session.expiresAt,
+      // EIP-681 URI for QR code
+      paymentUri: `ethereum:${tokenAddress}/transfer?address=${escrowAddress}&uint256=${amountWei}`,
+      instructions: `Send exactly ${grandTotal} ${token} to the escrow address`
+    });
+  } catch (err) {
+    console.error("[qr-checkout]", err);
+    return c.json({ error: "Server error: " + (err.message || String(err)) }, 500);
+  }
+});
+app.get("/api/payment/poll/:sid", async (c) => {
+  const sid = c.req.param("sid");
+  let session = null;
+  try {
+    const env = c.env;
+    if (env?.KV) {
+      const raw2 = await env.KV.get(`qr_session:${sid}`);
+      if (raw2) session = JSON.parse(raw2);
+    }
+  } catch (_) {
+  }
+  if (!session) session = _qrSessions.get(sid);
+  if (!session) return c.json({ error: "Session not found or expired" }, 404);
+  if (session.expiresAt < Date.now())
+    return c.json({ status: "expired", error: "Payment window expired (30 min)" }, 410);
+  if (session.confirmed)
+    return c.json({ status: "confirmed", txHash: session.txHash, orderId: session.orderId });
+  try {
+    const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+    const escrowTopic = "0x000000000000000000000000" + session.escrowAddress.toLowerCase().replace("0x", "");
+    const latestHex = await arcRpc("eth_blockNumber", []);
+    const latest = parseInt(latestHex, 16);
+    const fromBlock = "0x" + Math.max(0, latest - 200).toString(16);
+    const logs = await arcRpc("eth_getLogs", [{
+      fromBlock,
+      toBlock: "latest",
+      address: session.tokenAddress,
+      // USDC or EURC contract
+      topics: [
+        TRANSFER_TOPIC,
+        null,
+        // from: any address
+        escrowTopic
+        // to: escrow address (padded)
+      ]
+    }]);
+    if (!Array.isArray(logs) || logs.length === 0)
+      return c.json({ status: "pending", message: "No transfer detected yet" });
+    const amountWei = BigInt(session.amountWei);
+    let matchedTx = null;
+    for (const log of logs) {
+      if (!log.data || log.data === "0x") continue;
+      const logValue = BigInt(log.data);
+      const diff = logValue > amountWei ? logValue - amountWei : amountWei - logValue;
+      const tolerance = BigInt(1e3);
+      if (diff <= tolerance) {
+        matchedTx = log.transactionHash;
+        break;
+      }
+    }
+    if (!matchedTx)
+      return c.json({ status: "pending", message: "Transfer found but amount mismatch" });
+    session.confirmed = true;
+    session.txHash = matchedTx;
+    session.used = true;
+    try {
+      const env = c.env;
+      if (env?.KV) {
+        await env.KV.put(`qr_session:${sid}`, JSON.stringify(session), { expirationTtl: 86400 });
+      } else {
+        _qrSessions.set(sid, session);
+      }
+    } catch (_) {
+      _qrSessions.set(sid, session);
+    }
+    return c.json({
+      status: "confirmed",
+      txHash: matchedTx,
+      orderId: session.orderId,
+      amount: session.amount,
+      token: session.token,
+      explorer: `${ARC.explorer}/tx/${matchedTx}`
+    });
+  } catch (err) {
+    console.error("[payment/poll]", err);
+    return c.json({ status: "error", message: err.message || "RPC error" }, 500);
+  }
+});
 app.get("/api/escrow/address", (c) => {
   const addr = c.env.SHUKLY_ESCROW_ADDRESS || ARC.contracts.ShuklyEscrow;
   return c.json({
@@ -5835,6 +5990,10 @@ function checkoutPage() {
         <div id="arc-payment-status" class="mt-3 p-3 rounded-lg border text-xs hidden">
           <!-- populated by initArcPaymentUI() -->
         </div>
+
+        <!-- \u2500\u2500 Pay without wallet \u2500\u2500 (rendered by renderNoWalletPayOption when no wallet) -->
+        <div id="co-no-wallet-section" class="hidden mt-4"></div>
+
       </div>
     </div>
   </div>
@@ -5879,6 +6038,11 @@ function checkoutPage() {
 
     // \u2500\u2500 Arc Commerce: show USDC balance panel (non-blocking) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     initArcPaymentUI(w);
+
+    // \u2500\u2500 Pay-without-wallet: only show section when NOT connected \u2500\u2500\u2500\u2500\u2500
+    if (!w) {
+      renderNoWalletPayOption(total, fee, mainCur);
+    }
   });
 
   // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
@@ -6297,6 +6461,449 @@ function checkoutPage() {
       '<span class="inline-flex items-center gap-1 bg-blue-700 text-white px-2 py-0.5 rounded-full text-xs font-semibold mr-2">'
       + '<i class="fas fa-circle text-blue-300" style="font-size:7px"></i> Arc Commerce</span>'
       + '<i class="' + icon + ' mr-1"></i>' + message;
+  }
+
+  // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+  //  PAY WITHOUT WALLET \u2014 QR Code + on-chain polling
+  //  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  //  \u2022 Only shown when user has NO wallet connected
+  //  \u2022 Does NOT alter any existing button or flow
+  //  \u2022 Generates EIP-681 URI \u2192 QR Code via qrcode.js CDN
+  //  \u2022 Polls /api/payment/poll/:sid every 5s
+  //  \u2022 On confirmation \u2192 saves order to localStorage \u2192 redirects
+  // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+
+  let _qrSession = null;       // current active session
+  let _qrPollTimer = null;     // setInterval handle
+  let _qrLibReady = false;     // QRCode.js loaded flag
+
+  // Load QRCode.js lazily (only when needed, no impact on normal flow)
+  function loadQRLib(cb) {
+    if (typeof QRCode !== 'undefined') { cb(); return; }
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js';
+    s.onload = () => { _qrLibReady = true; cb(); };
+    s.onerror = () => cb(); // fail silently
+    document.head.appendChild(s);
+  }
+
+  // Render the "Pay without wallet" section into #co-no-wallet-section
+  function renderNoWalletPayOption(subtotal, fee, currency) {
+    const section = document.getElementById('co-no-wallet-section');
+    if (!section) return;
+    section.classList.remove('hidden');
+    section.innerHTML = \`
+      <div style="border:2px dashed #e2e8f0;border-radius:14px;overflow:hidden;">
+        <!-- Header toggle -->
+        <button onclick="toggleNoWalletPanel()" id="nwp-toggle"
+          style="width:100%;background:#f8fafc;border:none;cursor:pointer;padding:14px 16px;
+                 display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div style="width:36px;height:36px;border-radius:10px;
+                        background:linear-gradient(135deg,#6366f1,#4f46e5);
+                        display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+              <i class="fas fa-qrcode" style="color:#fff;font-size:.85rem;"></i>
+            </div>
+            <div style="text-align:left;">
+              <p style="font-weight:700;color:#1e293b;font-size:.85rem;margin:0;">
+                Pay without wallet
+              </p>
+              <p style="color:#64748b;font-size:.72rem;margin:0;">
+                Scan QR code or copy address &amp; send manually
+              </p>
+            </div>
+          </div>
+          <i id="nwp-chevron" class="fas fa-chevron-down" style="color:#94a3b8;transition:transform .2s;"></i>
+        </button>
+
+        <!-- Collapsible body -->
+        <div id="nwp-body" style="display:none;padding:16px;background:#fff;">
+          <!-- Token selector (mirrors checkout radio group) -->
+          <div style="margin-bottom:12px;">
+            <p style="font-size:.75rem;font-weight:600;color:#64748b;margin:0 0 8px;
+                      text-transform:uppercase;letter-spacing:.05em;">Payment Token</p>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+              <label style="cursor:pointer;">
+                <input type="radio" name="nwp-token" value="USDC" checked class="sr-only" onchange="nwpTokenChanged()"/>
+                <div id="nwp-tok-usdc"
+                  style="padding:10px;border:2px solid #dc2626;border-radius:10px;
+                         background:#fff1f1;display:flex;align-items:center;gap:8px;">
+                  <div style="width:32px;height:32px;border-radius:50%;background:#dbeafe;
+                               display:flex;align-items:center;justify-content:center;">
+                    <span style="font-weight:800;color:#1d4ed8;font-size:.85rem;">$</span></div>
+                  <div><p style="font-weight:700;color:#1e293b;font-size:.8rem;margin:0;">USDC</p>
+                       <p style="color:#94a3b8;font-size:.65rem;margin:0;">Native on Arc</p></div>
+                </div>
+              </label>
+              <label style="cursor:pointer;">
+                <input type="radio" name="nwp-token" value="EURC" class="sr-only" onchange="nwpTokenChanged()"/>
+                <div id="nwp-tok-eurc"
+                  style="padding:10px;border:2px solid #e2e8f0;border-radius:10px;
+                         background:#fff;display:flex;align-items:center;gap:8px;">
+                  <div style="width:32px;height:32px;border-radius:50%;background:#e0e7ff;
+                               display:flex;align-items:center;justify-content:center;">
+                    <span style="font-weight:800;color:#4338ca;font-size:.85rem;">\u20AC</span></div>
+                  <div><p style="font-weight:700;color:#1e293b;font-size:.8rem;margin:0;">EURC</p>
+                       <p style="color:#94a3b8;font-size:.65rem;margin:0;">Euro stablecoin</p></div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <!-- Generate button -->
+          <button onclick="generateQRPayment()"
+            id="nwp-gen-btn"
+            style="width:100%;background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;
+                   border:none;padding:11px 16px;border-radius:9px;font-weight:700;
+                   font-size:.85rem;cursor:pointer;display:flex;align-items:center;
+                   justify-content:center;gap:8px;transition:opacity .2s;">
+            <i class="fas fa-qrcode"></i> Generate Payment QR Code
+          </button>
+
+          <!-- QR + payment info area (hidden until generated) -->
+          <div id="nwp-payment-area" style="display:none;margin-top:14px;">
+
+            <!-- Amount badge -->
+            <div id="nwp-amount-badge"
+              style="text-align:center;background:#f0fdf4;border:1px solid #86efac;
+                     border-radius:10px;padding:10px 14px;margin-bottom:12px;">
+              <p style="font-size:.7rem;color:#16a34a;font-weight:600;margin:0 0 2px;
+                        text-transform:uppercase;letter-spacing:.06em;">Exact amount to send</p>
+              <p id="nwp-amount-text"
+                style="font-size:1.5rem;font-weight:900;color:#15803d;margin:0;"></p>
+            </div>
+
+            <!-- QR Code canvas -->
+            <div style="display:flex;justify-content:center;margin-bottom:12px;">
+              <div id="nwp-qr-wrap"
+                style="padding:12px;background:#fff;border:1px solid #e2e8f0;
+                       border-radius:12px;display:inline-block;">
+                <canvas id="nwp-qr-canvas"></canvas>
+              </div>
+            </div>
+
+            <!-- Escrow address + copy -->
+            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;
+                        padding:10px 12px;margin-bottom:8px;">
+              <p style="font-size:.7rem;font-weight:600;color:#94a3b8;margin:0 0 4px;
+                        text-transform:uppercase;letter-spacing:.05em;">
+                <i class="fas fa-file-contract"></i> Escrow Contract (send here)
+              </p>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <code id="nwp-escrow-addr"
+                  style="font-size:.72rem;color:#1e293b;font-family:monospace;
+                         flex:1;word-break:break-all;"></code>
+                <button onclick="nwpCopyAddress()"
+                  id="nwp-copy-btn"
+                  style="background:#1e293b;color:#fff;border:none;padding:5px 12px;
+                         border-radius:7px;font-size:.72rem;font-weight:600;cursor:pointer;
+                         white-space:nowrap;flex-shrink:0;display:flex;align-items:center;gap:5px;">
+                  <i class="fas fa-copy"></i> Copy Address
+                </button>
+              </div>
+            </div>
+
+            <!-- Token contract address -->
+            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;
+                        padding:8px 12px;margin-bottom:12px;">
+              <p style="font-size:.7rem;font-weight:600;color:#94a3b8;margin:0 0 3px;
+                        text-transform:uppercase;letter-spacing:.05em;">
+                <i class="fas fa-coins"></i> Token Contract
+              </p>
+              <code id="nwp-token-addr"
+                style="font-size:.68rem;color:#475569;font-family:monospace;word-break:break-all;"></code>
+            </div>
+
+            <!-- Instructions -->
+            <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;
+                        padding:10px 12px;margin-bottom:12px;">
+              <p style="font-size:.78rem;font-weight:700;color:#92400e;margin:0 0 4px;">
+                <i class="fas fa-exclamation-triangle"></i> Instructions
+              </p>
+              <ol style="margin:0;padding-left:16px;color:#78350f;font-size:.72rem;line-height:1.7;">
+                <li>Open your wallet app (MetaMask, Trust Wallet, etc.)</li>
+                <li>Switch to <strong>Arc Testnet</strong> (Chain ID: 5042002)</li>
+                <li>Send <strong id="nwp-instr-amount"></strong> to the escrow address above</li>
+                <li>This page will detect the payment automatically</li>
+              </ol>
+            </div>
+
+            <!-- Polling status -->
+            <div id="nwp-poll-status"
+              style="border-radius:10px;padding:12px 14px;
+                     background:#eff6ff;border:1px solid #bfdbfe;
+                     display:flex;align-items:center;gap:10px;">
+              <div class="loading-spinner" style="flex-shrink:0;"></div>
+              <div>
+                <p style="font-weight:700;color:#1e40af;font-size:.8rem;margin:0;">
+                  Waiting for payment confirmation\u2026
+                </p>
+                <p id="nwp-poll-sub"
+                  style="color:#3b82f6;font-size:.7rem;margin:2px 0 0;">
+                  Checking Arc Network every 5 seconds
+                </p>
+              </div>
+            </div>
+
+            <!-- Expiry timer -->
+            <p id="nwp-expiry-text"
+              style="text-align:center;font-size:.68rem;color:#94a3b8;margin:8px 0 0;"></p>
+
+          </div><!-- /nwp-payment-area -->
+        </div><!-- /nwp-body -->
+      </div>
+    \`;
+    // store values for use in handlers
+    window._nwpSubtotal = subtotal;
+    window._nwpFee      = fee;
+    window._nwpCurrency = currency;
+  }
+
+  function toggleNoWalletPanel() {
+    const body    = document.getElementById('nwp-body');
+    const chevron = document.getElementById('nwp-chevron');
+    if (!body) return;
+    const open = body.style.display !== 'none';
+    body.style.display    = open ? 'none' : 'block';
+    if (chevron) chevron.style.transform = open ? '' : 'rotate(180deg)';
+  }
+
+  function nwpTokenChanged() {
+    const usdc = document.querySelector('input[name="nwp-token"][value="USDC"]');
+    const eurc = document.querySelector('input[name="nwp-token"][value="EURC"]');
+    const boxU = document.getElementById('nwp-tok-usdc');
+    const boxE = document.getElementById('nwp-tok-eurc');
+    if (!usdc || !eurc || !boxU || !boxE) return;
+    boxU.style.border    = usdc.checked ? '2px solid #dc2626' : '2px solid #e2e8f0';
+    boxU.style.background= usdc.checked ? '#fff1f1' : '#fff';
+    boxE.style.border    = eurc.checked ? '2px solid #dc2626' : '2px solid #e2e8f0';
+    boxE.style.background= eurc.checked ? '#fff1f1' : '#fff';
+    // Reset payment area so user must re-generate
+    const area = document.getElementById('nwp-payment-area');
+    if (area) area.style.display = 'none';
+    nwpStopPolling();
+    _qrSession = null;
+  }
+
+  async function generateQRPayment() {
+    const btn = document.getElementById('nwp-gen-btn');
+    if (btn) { btn.disabled=true; btn.innerHTML='<span class="loading-spinner inline-block mr-2" style="width:14px;height:14px;border-width:2px;"></span>Generating\u2026'; }
+
+    nwpStopPolling();
+    _qrSession = null;
+
+    const cart = getCart();
+    if (!cart.length) {
+      showToast('Cart is empty', 'error');
+      if (btn) { btn.disabled=false; btn.innerHTML='<i class="fas fa-qrcode"></i> Generate Payment QR Code'; }
+      return;
+    }
+
+    const tokenEl = document.querySelector('input[name="nwp-token"]:checked');
+    const token   = tokenEl ? tokenEl.value : 'USDC';
+
+    // Resolve seller from first cart item
+    let sellerAddress = null;
+    try {
+      const pid = cart[0]?.id;
+      if (pid) {
+        const r = await fetch('/api/products/' + pid);
+        const d = await r.json();
+        if (d.product?.seller_id && d.product.seller_id.startsWith('0x'))
+          sellerAddress = d.product.seller_id;
+      }
+    } catch(e) { console.warn('[nwp] seller fetch:', e); }
+
+    if (!sellerAddress) {
+      showToast('Could not resolve seller address', 'error');
+      if (btn) { btn.disabled=false; btn.innerHTML='<i class="fas fa-qrcode"></i> Generate Payment QR Code'; }
+      return;
+    }
+
+    try {
+      const res  = await fetch('/api/payment/qr-checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cart, token, sellerAddress })
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'API error');
+      _qrSession = data;
+    } catch(err) {
+      showToast('Failed to create payment session: ' + err.message, 'error');
+      if (btn) { btn.disabled=false; btn.innerHTML='<i class="fas fa-qrcode"></i> Generate Payment QR Code'; }
+      return;
+    }
+
+    // Populate UI
+    const amountText = _qrSession.amount.toFixed(2) + ' ' + token;
+    document.getElementById('nwp-amount-text').textContent  = amountText;
+    document.getElementById('nwp-instr-amount').textContent = amountText;
+    document.getElementById('nwp-escrow-addr').textContent  = _qrSession.escrowAddress;
+    document.getElementById('nwp-token-addr').textContent   = _qrSession.tokenAddress;
+
+    // Expiry countdown
+    nwpUpdateExpiry();
+
+    // Show payment area
+    document.getElementById('nwp-payment-area').style.display = 'block';
+
+    // Render QR
+    loadQRLib(() => {
+      const canvas = document.getElementById('nwp-qr-canvas');
+      if (!canvas || typeof QRCode === 'undefined') return;
+      try {
+        QRCode.toCanvas(canvas, _qrSession.paymentUri, {
+          width: 200, margin: 1,
+          color: { dark: '#1e293b', light: '#ffffff' }
+        }, err => { if (err) console.warn('[nwp] QR error:', err); });
+      } catch(e) { console.warn('[nwp] QR generate:', e); }
+    });
+
+    if (btn) { btn.disabled=false; btn.innerHTML='<i class="fas fa-sync-alt"></i> Regenerate'; }
+
+    // Start polling
+    nwpStartPolling();
+  }
+
+  function nwpCopyAddress() {
+    if (!_qrSession) return;
+    const addr = _qrSession.escrowAddress;
+    try {
+      navigator.clipboard.writeText(addr).then(() => {
+        const btn = document.getElementById('nwp-copy-btn');
+        if (btn) { btn.innerHTML='<i class="fas fa-check"></i> Copied!'; btn.style.background='#16a34a'; }
+        showToast('Escrow address copied!', 'success');
+        setTimeout(() => {
+          const b = document.getElementById('nwp-copy-btn');
+          if (b) { b.innerHTML='<i class="fas fa-copy"></i> Copy Address'; b.style.background='#1e293b'; }
+        }, 2500);
+      });
+    } catch(e) {
+      // Fallback for non-HTTPS or browser restrictions
+      const ta = document.createElement('textarea');
+      ta.value = addr; ta.style.position='fixed'; ta.style.opacity='0';
+      document.body.appendChild(ta); ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      showToast('Address copied!', 'success');
+    }
+  }
+
+  function nwpUpdateExpiry() {
+    if (!_qrSession) return;
+    const el = document.getElementById('nwp-expiry-text');
+    if (!el) return;
+    const left = Math.max(0, Math.floor((_qrSession.expiresAt - Date.now()) / 1000));
+    const min  = Math.floor(left / 60);
+    const sec  = left % 60;
+    el.textContent = left > 0
+      ? '\u23F1 Payment window: ' + min + 'm ' + (sec < 10 ? '0' : '') + sec + 's'
+      : '\u26A0 Session expired \u2014 please regenerate';
+    if (left <= 0) { nwpStopPolling(); }
+  }
+
+  function nwpStartPolling() {
+    nwpStopPolling();
+    let pollCount = 0;
+    _qrPollTimer = setInterval(async () => {
+      if (!_qrSession) { nwpStopPolling(); return; }
+      if (_qrSession.expiresAt < Date.now()) {
+        nwpStopPolling();
+        nwpSetPollStatus('expired', 'Session expired. Please generate a new QR code.', '#fee2e2', '#fca5a5', '#dc2626');
+        return;
+      }
+      pollCount++;
+      nwpUpdateExpiry();
+      try {
+        const res  = await fetch('/api/payment/poll/' + _qrSession.sid);
+        const data = await res.json();
+
+        if (data.status === 'confirmed') {
+          nwpStopPolling();
+          nwpOnPaymentConfirmed(data);
+          return;
+        }
+        if (data.status === 'expired') {
+          nwpStopPolling();
+          nwpSetPollStatus('expired', 'Session expired. Please generate a new QR code.', '#fee2e2', '#fca5a5', '#dc2626');
+          return;
+        }
+        // pending \u2014 update subtitle
+        const sub = document.getElementById('nwp-poll-sub');
+        if (sub) sub.textContent = 'Check #' + pollCount + ' \u2014 no payment yet. Retrying in 5s\u2026';
+      } catch(e) {
+        console.warn('[nwp] poll error:', e);
+      }
+    }, 5000);
+  }
+
+  function nwpStopPolling() {
+    if (_qrPollTimer) { clearInterval(_qrPollTimer); _qrPollTimer = null; }
+  }
+
+  function nwpSetPollStatus(state, msg, bg, border, color) {
+    const el = document.getElementById('nwp-poll-status');
+    if (!el) return;
+    const icons = { confirmed:'fas fa-check-circle', expired:'fas fa-times-circle', error:'fas fa-exclamation-circle' };
+    const icon  = icons[state] || 'fas fa-circle-notch fa-spin';
+    el.style.background = bg; el.style.borderColor = border;
+    el.innerHTML = '<i class="' + icon + '" style="font-size:1.3rem;color:' + color + ';flex-shrink:0;"></i>'
+      + '<div><p style="font-weight:700;color:' + color + ';font-size:.8rem;margin:0;">' + msg + '</p></div>';
+  }
+
+  function nwpOnPaymentConfirmed(data) {
+    // Update UI to "confirmed" state
+    nwpSetPollStatus('confirmed',
+      'Payment detected on Arc Network!',
+      '#f0fdf4', '#86efac', '#16a34a'
+    );
+
+    // Save order to localStorage (same structure as normal checkout)
+    const cart = getCart();
+    const tokenEl = document.querySelector('input[name="nwp-token"]:checked');
+    const token   = _qrSession?.token || (tokenEl ? tokenEl.value : 'USDC');
+    const orderId = _qrSession?.orderId || ('ORD-' + Date.now());
+
+    const order = {
+      id:             orderId,
+      txHash:         data.txHash,
+      fundTxHash:     data.txHash,
+      buyerAddress:   'MANUAL_TRANSFER',
+      sellerAddress:  _qrSession?.sellerAddress || '',
+      escrowContract: _qrSession?.escrowAddress || '',
+      amount:         _qrSession?.amount || 0,
+      token:          token,
+      productId:      cart[0]?.id || '',
+      items:          cart,
+      status:         'FUNDED',
+      paymentMethod:  'qr_no_wallet',
+      createdAt:      new Date().toISOString(),
+      explorerUrl:    (window.ARC?.explorer || 'https://testnet.arcscan.app') + '/tx/' + data.txHash
+    };
+
+    const saved = JSON.parse(localStorage.getItem('rh_orders') || '[]');
+    saved.unshift(order);
+    localStorage.setItem('rh_orders', JSON.stringify(saved));
+
+    // Best-effort backend save
+    try {
+      fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...order,
+          orderId32: null,
+          buyerAddress: order.buyerAddress
+        })
+      }).catch(() => {});
+    } catch(_) {}
+
+    localStorage.removeItem('cart');
+    try { CartStore._syncBadge([]); } catch(_) {}
+
+    showToast('\u2713 Payment confirmed! Redirecting\u2026', 'success');
+    setTimeout(() => { window.location.href = '/orders/' + orderId; }, 1500);
   }
   </script>
   `);
