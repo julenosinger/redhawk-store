@@ -2851,8 +2851,8 @@ app.post("/api/payment/qr-checkout", async (c) => {
     };
     try {
       const env = c.env;
-      if (env?.KV) {
-        await env.KV.put(`qr_session:${sid}`, JSON.stringify(session), { expirationTtl: 1800 });
+      if (env?.PRODUCTS_KV) {
+        await env?.PRODUCTS_KV.put(`qr_session:${sid}`, JSON.stringify(session), { expirationTtl: 1800 });
       } else {
         _qrSessions.set(sid, session);
       }
@@ -2883,8 +2883,8 @@ app.get("/api/payment/poll/:sid", async (c) => {
   let session = null;
   try {
     const env = c.env;
-    if (env?.KV) {
-      const raw2 = await env.KV.get(`qr_session:${sid}`);
+    if (env?.PRODUCTS_KV) {
+      const raw2 = await env?.PRODUCTS_KV.get(`qr_session:${sid}`);
       if (raw2) session = JSON.parse(raw2);
     }
   } catch (_) {
@@ -2940,8 +2940,8 @@ app.get("/api/payment/poll/:sid", async (c) => {
     session.used = true;
     try {
       const env = c.env;
-      if (env?.KV) {
-        await env.KV.put(`qr_session:${sid}`, JSON.stringify(session), { expirationTtl: 86400 });
+      if (env?.PRODUCTS_KV) {
+        await env?.PRODUCTS_KV.put(`qr_session:${sid}`, JSON.stringify(session), { expirationTtl: 86400 });
       } else {
         _qrSessions.set(sid, session);
       }

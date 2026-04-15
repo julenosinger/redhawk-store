@@ -845,8 +845,8 @@ app.post('/api/payment/qr-checkout', async (c) => {
     // Try KV storage first, fallback to in-memory
     try {
       const env = c.env as any
-      if (env?.KV) {
-        await env.KV.put(`qr_session:${sid}`, JSON.stringify(session), { expirationTtl: 1800 })
+      if (env?.PRODUCTS_KV) {
+        await env?.PRODUCTS_KV.put(`qr_session:${sid}`, JSON.stringify(session), { expirationTtl: 1800 })
       } else {
         _qrSessions.set(sid, session)
       }
@@ -881,8 +881,8 @@ app.get('/api/payment/poll/:sid', async (c) => {
   let session: any = null
   try {
     const env = c.env as any
-    if (env?.KV) {
-      const raw = await env.KV.get(`qr_session:${sid}`)
+    if (env?.PRODUCTS_KV) {
+      const raw = await env?.PRODUCTS_KV.get(`qr_session:${sid}`)
       if (raw) session = JSON.parse(raw)
     }
   } catch (_) {}
@@ -963,8 +963,8 @@ app.get('/api/payment/poll/:sid', async (c) => {
 
     try {
       const env = c.env as any
-      if (env?.KV) {
-        await env.KV.put(`qr_session:${sid}`, JSON.stringify(session), { expirationTtl: 86400 })
+      if (env?.PRODUCTS_KV) {
+        await env?.PRODUCTS_KV.put(`qr_session:${sid}`, JSON.stringify(session), { expirationTtl: 86400 })
       } else {
         _qrSessions.set(sid, session)
       }
