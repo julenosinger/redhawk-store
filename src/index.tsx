@@ -1260,6 +1260,8 @@ function shell(title: string, body: string, extraHead = '') {
   <script src="/static/arcPayments.js" defer></script>
   <!-- TxAlert — Rich transaction notification service (non-destructive, additive) -->
   <script src="/static/txAlerts.js" defer></script>
+  <!-- SellerNotify — Seller purchase alert service (non-destructive, additive) -->
+  <script src="/static/sellerNotify.js" defer></script>
 </head>
 <body>
   <!-- Testnet Banner -->
@@ -1930,7 +1932,7 @@ function navbar() {
         <i class="fas fa-wallet text-xs"></i>
         <span id="wallet-badge">Wallet</span>
       </a>
-      <a href="/notifications" class="relative p-2 rounded-lg text-slate-500 hover:bg-slate-100">
+      <a href="/notifications" id="bell-nav-btn" class="relative p-2 rounded-lg text-slate-500 hover:bg-slate-100" onclick="if(typeof SellerNotify!=='undefined')SellerNotify.markAllRead()">
         <i class="fas fa-bell"></i>
       </a>
       <a href="/cart" class="relative p-2 rounded-lg text-slate-500 hover:bg-slate-100">
@@ -4455,6 +4457,23 @@ function checkoutPage() {
       explorerUrl:    window.ARC.explorer + '/tx/' + fundTxHash
     });
     localStorage.setItem('rh_orders', JSON.stringify(savedOrders));
+
+    // ── SellerNotify: trigger seller purchase alert (additive, non-destructive) ──
+    // This notifies the SELLER that their product was purchased.
+    // If the current wallet == sellerAddress → shows footer alert immediately.
+    // If seller is offline → notification is stored and shown on next visit.
+    if (typeof SellerNotify !== 'undefined') {
+      SellerNotify.onPurchase({
+        orderId:      orderId,
+        productName:  cart[0]?.title || cart[0]?.name || 'Product',
+        amount:       total,
+        token:        token,
+        txHash:       fundTxHash,
+        buyerAddress: w.address,
+        sellerAddress: sellerAddress,
+        items:        cart,
+      });
+    }
 
     localStorage.removeItem('cart');
     try { CartStore._syncBadge([]); } catch (e) {}
@@ -7515,6 +7534,11 @@ function notificationsPage() {
       </h1>
       <button onclick="clearNotifs()" class="btn-secondary text-sm">Mark all read</button>
     </div>
+
+    <!-- Seller purchase notifications (injected by SellerNotify.renderList) -->
+    <div id="seller-notif-section"></div>
+
+    <!-- Buyer / order-status notifications -->
     <div id="notif-list">
       <div class="text-center py-8"><div class="loading-spinner-lg mx-auto mb-4"></div><p class="text-slate-400">Loading…</p></div>
     </div>
@@ -7523,9 +7547,17 @@ function notificationsPage() {
   document.addEventListener('DOMContentLoaded', () => {
     const w=getStoredWallet();
     const container=document.getElementById('notif-list');
+    const sellerSection=document.getElementById('seller-notif-section');
     const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
     const notifs=[];
 
+    // ── Seller purchase notifications (via SellerNotify module) ──────────────
+    if(typeof SellerNotify !== 'undefined') {
+      SellerNotify.markAllRead();   // opening the page marks all as read
+      SellerNotify.renderList(sellerSection, w ? w.address : null);
+    }
+
+    // ── Buyer order-status notifications (existing logic, unchanged) ──────────
     if(w){
       const myOrders=orders.filter(o=>o.buyerAddress&&o.buyerAddress.toLowerCase()===w.address.toLowerCase());
       myOrders.slice(-5).reverse().forEach(o=>{
@@ -7536,10 +7568,15 @@ function notificationsPage() {
       });
     }
 
-    if(!notifs.length){
+    // Check if we have seller notifs to decide on empty state
+    const hasSellerNotifs = sellerSection && sellerSection.children.length > 0;
+
+    if(!notifs.length && !hasSellerNotifs){
       container.innerHTML='<div class="card p-12 text-center"><div class="empty-state"><i class="fas fa-bell-slash"></i><h3 class="font-bold text-slate-600 mb-2">No Notifications</h3><p class="text-sm">Notifications are triggered by real Arc Network events — escrow creation, shipments, and releases.</p></div></div>';
       return;
     }
+    if(!notifs.length){ container.innerHTML=''; return; }
+
     container.innerHTML=notifs.map(n=>
       '<a href="'+(n.url||'#')+'" class="notification-item flex items-start gap-4 cursor-pointer hover:bg-red-50 transition-colors block">'
       +'<div class="w-10 h-10 rounded-full '+n.color+' flex items-center justify-center shrink-0"><i class="'+n.icon+' text-sm"></i></div>'
@@ -7549,7 +7586,12 @@ function notificationsPage() {
       +'<div class="w-2 h-2 rounded-full bg-red-500 mt-2 shrink-0"></div></a>'
     ).join('');
   });
-  function clearNotifs(){ showToast('All notifications marked as read','info'); document.querySelectorAll('.notification-item .rounded-full.bg-red-500').forEach(el=>el.remove()); }
+  function clearNotifs(){
+    showToast('All notifications marked as read','info');
+    document.querySelectorAll('.notification-item .rounded-full.bg-red-500').forEach(el=>el.remove());
+    document.querySelectorAll('.sn-ni-unread').forEach(el=>el.remove());
+    if(typeof SellerNotify!=='undefined') SellerNotify.markAllRead();
+  }
   </script>
   `)
 }
