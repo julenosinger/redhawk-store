@@ -1258,6 +1258,8 @@ function shell(title: string, body: string, extraHead = '') {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
   <!-- Arc Commerce — Circle USDC payment service layer (non-destructive extension) -->
   <script src="/static/arcPayments.js" defer></script>
+  <!-- TxAlert — Rich transaction notification service (non-destructive, additive) -->
+  <script src="/static/txAlerts.js" defer></script>
 </head>
 <body>
   <!-- Testnet Banner -->
@@ -4296,6 +4298,8 @@ function checkoutPage() {
     }
 
     // ══ STEP 1/3: ERC-20 approve ════════════════════════════════════
+    // TxAlert: info that approval step is starting
+    if (typeof TxAlert !== 'undefined') TxAlert.info('approve-' + orderId, { title: 'Step 1/3 — Token Approval', icon: '🔓', message: 'Checking allowance…', network: window.ARC?.networkName || 'Arc Testnet', autoDismiss: false });
     let approveTxHash = null;
     try {
       setBtn('Step 1/3 — Checking allowance…');
@@ -4310,10 +4314,12 @@ function checkoutPage() {
         console.log('[confirmOrder] approve tx:', approveTx.hash);
         setBtn('Step 1/3 — Waiting for approval confirmation…');
         showToast('Approval tx sent: ' + approveTx.hash.slice(0, 14) + '… Waiting…', 'info');
+        if (typeof TxAlert !== 'undefined') TxAlert.sent('approve-' + orderId, { hash: approveTx.hash, token, amount: total, network: window.ARC?.networkName || 'Arc Testnet' });
         const approveReceipt = await approveTx.wait(1);
         if (!approveReceipt || approveReceipt.status === 0) throw new Error('Approval tx reverted on-chain');
         approveTxHash = approveTx.hash;
         showToast('Token approved! ✓ Tx: ' + approveTx.hash.slice(0, 14) + '…', 'success');
+        if (typeof TxAlert !== 'undefined') TxAlert.confirmed('approve-' + orderId, { hash: approveTx.hash, token, amount: total, network: window.ARC?.networkName || 'Arc Testnet', message: 'Token spend approved ✓' });
       } else {
         showToast('Allowance sufficient ✓ — skipping approve', 'success');
       }
@@ -4322,6 +4328,7 @@ function checkoutPage() {
         ? 'Approval rejected by user'
         : 'Approval failed: ' + (err.shortMessage || err.reason || err.message || String(err));
       showToast(msg, 'error');
+      if (typeof TxAlert !== 'undefined') TxAlert.failed('approve-' + orderId, { token, amount: total, network: window.ARC?.networkName || 'Arc Testnet', reason: msg });
       console.error('[confirmOrder] approve error:', err);
       resetBtn(); return;
     }
@@ -4331,6 +4338,7 @@ function checkoutPage() {
     try {
       setBtn('Step 2/3 — Creating escrow slot (confirm in wallet)…');
       showToast('Step 2/3: createEscrow — confirm in wallet…', 'info');
+      if (typeof TxAlert !== 'undefined') TxAlert.info('create-' + orderId, { title: 'Step 2/3 — Create Escrow Slot', icon: '🔒', message: 'Confirm in wallet…', network: window.ARC?.networkName || 'Arc Testnet', autoDismiss: false });
       console.log('[confirmOrder] createEscrow args:', orderId32, sellerAddress, tokenAddress, amountWei.toString());
 
       // Arc Testnet eth_estimateGas can fail silently — pass explicit gasLimit to skip estimation
@@ -4338,11 +4346,13 @@ function checkoutPage() {
       console.log('[confirmOrder] createEscrow tx:', createTx.hash);
       setBtn('Step 2/3 — Waiting for createEscrow confirmation…');
       showToast('createEscrow sent: ' + createTx.hash.slice(0, 14) + '… Waiting…', 'info');
+      if (typeof TxAlert !== 'undefined') TxAlert.sent('create-' + orderId, { hash: createTx.hash, token, amount: total, network: window.ARC?.networkName || 'Arc Testnet' });
 
       const createReceipt = await createTx.wait(1);
       if (!createReceipt || createReceipt.status === 0) throw new Error('createEscrow tx reverted — check contract address and inputs');
       createTxHash = createTx.hash;
       showToast('Escrow slot created! ✓ Tx: ' + createTx.hash.slice(0, 14) + '…', 'success');
+      if (typeof TxAlert !== 'undefined') TxAlert.confirmed('create-' + orderId, { hash: createTx.hash, token, amount: total, network: window.ARC?.networkName || 'Arc Testnet', message: 'Escrow slot created ✓' });
     } catch (err) {
       // Decode revert reason: Arc Testnet often returns no revert data
       let msg;
@@ -4363,6 +4373,7 @@ function checkoutPage() {
         msg = 'createEscrow falhou: ' + (err.shortMessage || err.reason || err.message || String(err));
       }
       showToast(msg, 'error');
+      if (typeof TxAlert !== 'undefined') TxAlert.failed('create-' + orderId, { token, amount: total, network: window.ARC?.networkName || 'Arc Testnet', reason: msg });
       console.error('[confirmOrder] createEscrow error:', err);
       console.error('[confirmOrder] Full error object:', JSON.stringify(err, null, 2));
       resetBtn(); return;
@@ -4373,6 +4384,7 @@ function checkoutPage() {
     try {
       setBtn('Step 3/3 — Locking funds in escrow (confirm in wallet)…');
       showToast('Step 3/3: fundEscrow — confirm in wallet…', 'info');
+      if (typeof TxAlert !== 'undefined') TxAlert.info('fund-' + orderId, { title: 'Step 3/3 — Fund Escrow', icon: '💰', message: 'Confirm in wallet…', network: window.ARC?.networkName || 'Arc Testnet', autoDismiss: false });
       console.log('[confirmOrder] fundEscrow orderId32:', orderId32);
 
       // Arc Testnet eth_estimateGas can fail silently — pass explicit gasLimit
@@ -4380,11 +4392,13 @@ function checkoutPage() {
       console.log('[confirmOrder] fundEscrow tx:', fundTx.hash);
       setBtn('Step 3/3 — Waiting for fundEscrow confirmation…');
       showToast('fundEscrow sent: ' + fundTx.hash.slice(0, 14) + '… Waiting…', 'info');
+      if (typeof TxAlert !== 'undefined') TxAlert.pending('fund-' + orderId, { hash: fundTx.hash, token, amount: total, network: window.ARC?.networkName || 'Arc Testnet' });
 
       const fundReceipt = await fundTx.wait(1);
       if (!fundReceipt || fundReceipt.status === 0) throw new Error('fundEscrow tx reverted — check token allowance and escrow state');
       fundTxHash = fundTx.hash;
       showToast('Funds locked in escrow! ✓ Tx: ' + fundTx.hash.slice(0, 14) + '…', 'success');
+      if (typeof TxAlert !== 'undefined') TxAlert.confirmed('fund-' + orderId, { hash: fundTx.hash, token, amount: total, network: window.ARC?.networkName || 'Arc Testnet', blockTimestamp: Date.now() / 1000, message: 'Funds locked in escrow ✓' });
     } catch (err) {
       let msg;
       if (err.code === 'ACTION_REJECTED' || err.code === 4001) {
@@ -4395,6 +4409,7 @@ function checkoutPage() {
         msg = 'fundEscrow falhou: ' + (err.shortMessage || err.reason || err.message || String(err));
       }
       showToast(msg, 'error');
+      if (typeof TxAlert !== 'undefined') TxAlert.failed('fund-' + orderId, { token, amount: total, network: window.ARC?.networkName || 'Arc Testnet', reason: msg });
       console.error('[confirmOrder] fundEscrow error:', err);
       resetBtn(); return;
     }
@@ -4446,6 +4461,16 @@ function checkoutPage() {
 
     setBtn('Funds locked! Redirecting…');
     showToast('✓ Funds locked in escrow! Order ' + orderId, 'success');
+    // TxAlert: final purchase confirmed summary (persists until redirect)
+    if (typeof TxAlert !== 'undefined') {
+      TxAlert.confirmed('purchase-' + orderId, {
+        hash: fundTxHash,
+        token, amount: total,
+        network: window.ARC?.networkName || 'Arc Testnet',
+        blockTimestamp: Date.now() / 1000,
+        message: 'Purchase complete! Redirecting to order page…'
+      });
+    }
     setTimeout(() => { window.location.href = '/orders/' + orderId; }, 1200);
   }
 
