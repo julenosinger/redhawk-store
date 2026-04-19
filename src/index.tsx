@@ -2064,68 +2064,81 @@ async function sendChatMessage(overrideText) {
 
 // ─── Footer ───────────────────────────────────────────────────────────
 function footer() {
-  return `<footer style="background:#0f172a;border-top:1px solid #1e293b;padding:32px 0 0;">
+  return `<footer style="background:#0f172a;border-top:1px solid #1e293b;padding:48px 0 0;">
     <div class="max-w-7xl mx-auto px-4">
 
-      <!-- Main grid: brand + 3 link columns -->
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-6 pb-6 border-b border-slate-800">
+      <!-- Main grid: brand + 4 link columns -->
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-6 pb-8 border-b border-slate-800">
 
-        <!-- Brand -->
+        <!-- Brand + testnet notice -->
         <div class="col-span-2 md:col-span-1">
-          <div class="flex items-center gap-2 mb-2">
+          <div class="flex items-center gap-2 mb-3">
             <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-red-500 to-red-800 flex items-center justify-center shrink-0">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="white"/></svg>
             </div>
             <span class="font-bold text-white text-sm">Shukly<span class="text-amber-400"> Store</span></span>
           </div>
-          <p class="text-xs text-slate-500 leading-relaxed mb-3 max-w-xs">Decentralized marketplace on Arc Network — Circle's stablecoin-native L1.</p>
-          <div class="flex items-center gap-3 text-xs">
-            <span class="flex items-center gap-1.5 text-green-400"><span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse inline-block"></span>Arc Testnet</span>
-            <span class="text-slate-600">·</span>
-            <span class="text-slate-500">Chain 5042002</span>
+          <p class="text-xs text-slate-500 leading-relaxed mb-3 max-w-xs">Decentralized marketplace on Arc Network — Circle's stablecoin-native L1. For testing and demonstration only.</p>
+          <!-- Testnet badge in footer -->
+          <div class="flex flex-col gap-2 text-xs">
+            <span class="flex items-center gap-1.5 text-yellow-400 font-semibold"><i class="fas fa-exclamation-triangle" style="font-size:10px;"></i>TESTNET — No real funds</span>
+            <span class="flex items-center gap-1.5 text-green-400"><span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse inline-block"></span>Arc Testnet · Chain 5042002</span>
           </div>
         </div>
 
         <!-- Marketplace -->
         <div>
           <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Marketplace</p>
-          <ul class="space-y-1.5">
+          <ul class="space-y-2">
             ${['Browse:/marketplace','Sell:/sell','Dashboard:/dashboard','My Orders:/orders','Disputes:/disputes'].map(t=>{const[l,u]=t.split(':');return`<li><a href="${u}" class="text-xs text-slate-500 hover:text-red-400 transition-colors">${l}</a></li>`}).join('')}
           </ul>
         </div>
 
-        <!-- Wallet -->
+        <!-- Wallet + Legal -->
         <div>
-          <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Wallet</p>
-          <ul class="space-y-1.5">
-            ${['My Wallet:/wallet','Profile:/profile'].map(t=>{const[l,u]=t.split(':');return`<li><a href="${u}" class="text-xs text-slate-500 hover:text-red-400 transition-colors">${l}</a></li>`}).join('')}
+          <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Account</p>
+          <ul class="space-y-2">
+            ${['My Wallet:/wallet','Profile:/profile','About Us:/about','Terms:/terms','Privacy:/privacy','Disclaimer:/disclaimer'].map(t=>{const[l,u]=t.split(':');return`<li><a href="${u}" class="text-xs text-slate-500 hover:text-red-400 transition-colors">${l}</a></li>`}).join('')}
           </ul>
         </div>
 
         <!-- Arc Network -->
         <div>
           <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Arc Network</p>
-          <ul class="space-y-1.5">
+          <ul class="space-y-2">
             <li><a href="https://docs.arc.network" target="_blank" class="text-xs text-slate-500 hover:text-red-400 transition-colors">Docs</a></li>
             <li><a href="https://testnet.arcscan.app" target="_blank" class="text-xs text-slate-500 hover:text-red-400 transition-colors">Explorer</a></li>
             <li><a href="https://faucet.circle.com" target="_blank" class="text-xs text-slate-500 hover:text-green-400 transition-colors">Get Test USDC</a></li>
             <li><a href="https://arc.network" target="_blank" class="text-xs text-slate-500 hover:text-red-400 transition-colors">arc.network</a></li>
           </ul>
         </div>
+
+        <!-- Contact / Community -->
+        <div>
+          <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Community</p>
+          <ul class="space-y-2">
+            <li><a href="https://t.me/Julenno" target="_blank" rel="noopener" class="text-xs text-slate-500 hover:text-blue-400 transition-colors flex items-center gap-1.5"><i class="fab fa-telegram-plane" style="font-size:11px;"></i> Telegram @Julenno</a></li>
+            <li><a href="https://twitter.com/juleno14" target="_blank" rel="noopener" class="text-xs text-slate-500 hover:text-slate-300 transition-colors flex items-center gap-1.5"><i class="fab fa-x-twitter" style="font-size:11px;"></i> X @juleno14</a></li>
+            <li><a href="mailto:julenosinnger@gmail.com" class="text-xs text-slate-500 hover:text-red-400 transition-colors flex items-center gap-1.5"><i class="fas fa-envelope" style="font-size:11px;"></i> Email</a></li>
+            <li><a href="https://github.com/julenosinger/redhawk-store" target="_blank" rel="noopener" class="text-xs text-slate-500 hover:text-white transition-colors flex items-center gap-1.5"><i class="fab fa-github" style="font-size:11px;"></i> GitHub Source</a></li>
+          </ul>
+        </div>
+
       </div>
 
-      <!-- Notices row — compact alert strip -->
-      <div class="py-3 border-b border-slate-800">
-        <div class="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-500">
-          <span><i class="fas fa-exclamation-circle text-yellow-500 mr-1"></i><strong class="text-slate-400">Testnet:</strong> No real funds. Testing only.</span>
-          <span><i class="fas fa-info-circle text-blue-400 mr-1"></i><strong class="text-slate-400">Demo:</strong> Illustrative products only.</span>
-          <span><i class="fas fa-shield-alt text-green-400 mr-1"></i><strong class="text-slate-400">Security:</strong> Keys never leave your device.</span>
+      <!-- Disclaimer row — prominent testnet notice -->
+      <div class="py-4 border-b border-slate-800">
+        <div class="flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-500">
+          <span><i class="fas fa-exclamation-triangle text-yellow-500 mr-1"></i><strong class="text-yellow-400">Testnet only:</strong> No real funds. No real assets. For testing &amp; demonstration only.</span>
+          <span><i class="fas fa-info-circle text-blue-400 mr-1"></i><strong class="text-slate-400">Demo:</strong> Products may not be real. No financial risk involved.</span>
+          <span><i class="fas fa-shield-alt text-green-400 mr-1"></i><strong class="text-slate-400">Non-custodial:</strong> Keys never leave your device.</span>
+          <span><i class="fas fa-file-contract text-purple-400 mr-1"></i><strong class="text-slate-400">Open source:</strong> Smart contracts fully auditable on-chain.</span>
         </div>
       </div>
 
       <!-- Bottom bar -->
-      <div class="py-3 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-600">
-        <span>© 2024 Shukly Store · Built on Arc Network (Circle)</span>
+      <div class="py-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-600">
+        <span>© 2024 Shukly Store · Built on Arc Network (Circle) · Testnet Environment</span>
         <div class="flex items-center gap-3 flex-wrap justify-center">
           <a href="https://github.com/julenosinger/redhawk-store" target="_blank" class="flex items-center gap-1 hover:text-white transition-colors"><i class="fab fa-github"></i> GitHub</a>
           <span class="text-slate-700">·</span>
@@ -2202,6 +2215,25 @@ function homePage() {
           <span>CHAIN ID 5042002</span>
         </div>
 
+        <!-- What is Shukly Store — clear explanation ABOVE headline -->
+        <div class="home-hero-explainer">
+          <p class="home-hero-explainer-label">What is Shukly Store?</p>
+          <p class="home-hero-explainer-text">
+            Shukly Store is a <strong>decentralized marketplace</strong> built on Arc Network
+            using <strong>escrow smart contracts</strong> to enable secure peer-to-peer transactions.
+          </p>
+        </div>
+
+        <!-- Testnet warning — highly visible, cannot be ignored -->
+        <div class="home-hero-testnet-warn" role="alert">
+          <i class="fas fa-exclamation-triangle home-hero-warn-icon"></i>
+          <div>
+            <strong>TESTNET APPLICATION</strong> &mdash; No real funds are used.
+            All transactions are for <strong>demonstration purposes only</strong>.
+            No financial risk. No real assets.
+          </div>
+        </div>
+
         <!-- Headline -->
         <h1 class="home-hero-h1">
           Shop the
@@ -2217,12 +2249,12 @@ function homePage() {
           stablecoin-native L1 blockchain.
         </p>
 
-        <!-- CTA buttons -->
+        <!-- CTA buttons: primary = Marketplace, secondary = Wallet -->
         <div class="home-hero-ctas">
           <a href="/marketplace" class="home-btn-primary">
             <i class="fas fa-store"></i> Browse Marketplace
           </a>
-          <a href="/wallet" class="home-btn-ghost">
+          <a href="/wallet" class="home-btn-secondary">
             <i class="fas fa-wallet"></i> Connect Wallet
           </a>
         </div>
@@ -2482,6 +2514,152 @@ function homePage() {
         </div>
       </div>
 
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════
+       SECURITY — Escrow + non-custodial deep-dive
+  ══════════════════════════════════════════════════ -->
+  <section class="home-section home-security-section">
+    <div class="home-security-card">
+      <div class="home-security-header">
+        <div class="home-security-icon-wrap">
+          <i class="fas fa-shield-alt"></i>
+        </div>
+        <div>
+          <p class="home-section-eyebrow" style="margin-bottom:4px;">SECURITY</p>
+          <h2 class="home-section-title" style="font-size:1.75rem;">How Your Funds Stay Safe</h2>
+          <p class="home-security-sub">Smart contract escrow means no one—not even us—can touch your money until both parties agree.</p>
+        </div>
+      </div>
+      <div class="home-security-grid">
+        <div class="home-security-item home-security-item--green">
+          <div class="home-security-item-icon" style="background:#d1fae5;">
+            <i class="fas fa-lock" style="color:#059669;font-size:18px;"></i>
+          </div>
+          <h3 class="home-security-item-title">Escrow Smart Contract</h3>
+          <p class="home-security-item-desc">Funds are locked in an immutable on-chain escrow contract at the moment of purchase. They can only be released to the seller once the buyer confirms delivery, or refunded if a dispute is resolved in the buyer's favour.</p>
+        </div>
+        <div class="home-security-item home-security-item--blue">
+          <div class="home-security-item-icon" style="background:#dbeafe;">
+            <i class="fas fa-key" style="color:#2563eb;font-size:18px;"></i>
+          </div>
+          <h3 class="home-security-item-title">Non-Custodial Wallet</h3>
+          <p class="home-security-item-desc">Your private keys are generated entirely inside your browser using BIP39 standards. They are optionally AES-encrypted and stored in your own device's localStorage. We never transmit, store, or have access to your keys.</p>
+        </div>
+        <div class="home-security-item home-security-item--purple">
+          <div class="home-security-item-icon" style="background:#ede9fe;">
+            <i class="fas fa-file-contract" style="color:#7c3aed;font-size:18px;"></i>
+          </div>
+          <h3 class="home-security-item-title">Open-Source Contracts</h3>
+          <p class="home-security-item-desc">All escrow contracts are open source and verifiable on the Arc Network block explorer. Anyone can inspect the code, audit the logic, and confirm that funds flow exactly as described — no hidden back-doors.</p>
+        </div>
+        <div class="home-security-item home-security-item--amber">
+          <div class="home-security-item-icon" style="background:#fef3c7;">
+            <i class="fas fa-coins" style="color:#d97706;font-size:18px;"></i>
+          </div>
+          <h3 class="home-security-item-title">Stablecoin-Only Payments</h3>
+          <p class="home-security-item-desc">Only USDC and EURC are accepted — Circle's regulated stablecoins native to Arc Network. No price volatility, no speculative tokens. The value you lock in escrow is the value you receive.</p>
+        </div>
+      </div>
+      <div class="home-security-notice">
+        <i class="fas fa-flask" style="color:#d97706;flex-shrink:0;"></i>
+        <span><strong>Testnet reminder:</strong> This application runs on Arc Network Testnet (Chain ID 5042002).
+        All escrow contracts operate with <strong>test tokens only</strong> — no real financial value.</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════
+       CONTACT / COMMUNITY
+  ══════════════════════════════════════════════════ -->
+  <section class="home-contact-section">
+    <div class="home-section" style="padding-top:0;">
+      <div class="home-contact-card">
+        <div class="home-contact-header">
+          <div class="home-contact-icon-wrap"><i class="fas fa-users"></i></div>
+          <div>
+            <p class="home-section-eyebrow" style="margin-bottom:4px;">COMMUNITY</p>
+            <h2 class="home-section-title" style="font-size:1.6rem;">Contact &amp; Community</h2>
+            <p class="home-contact-sub">Built by an independent developer. Reach out for feedback, questions, or collaboration.</p>
+          </div>
+        </div>
+        <div class="home-contact-links">
+          <a href="https://t.me/Julenno" target="_blank" rel="noopener" class="home-contact-link home-contact-telegram">
+            <div class="home-contact-link-icon"><i class="fab fa-telegram-plane"></i></div>
+            <div>
+              <p class="home-contact-link-name">Telegram</p>
+              <p class="home-contact-link-val">@Julenno</p>
+            </div>
+            <i class="fas fa-external-link-alt home-contact-ext"></i>
+          </a>
+          <a href="https://twitter.com/juleno14" target="_blank" rel="noopener" class="home-contact-link home-contact-twitter">
+            <div class="home-contact-link-icon"><i class="fab fa-x-twitter"></i></div>
+            <div>
+              <p class="home-contact-link-name">X (Twitter)</p>
+              <p class="home-contact-link-val">@juleno14</p>
+            </div>
+            <i class="fas fa-external-link-alt home-contact-ext"></i>
+          </a>
+          <a href="mailto:julenosinnger@gmail.com" class="home-contact-link home-contact-email">
+            <div class="home-contact-link-icon"><i class="fas fa-envelope"></i></div>
+            <div>
+              <p class="home-contact-link-name">Email</p>
+              <p class="home-contact-link-val">julenosinnger@gmail.com</p>
+            </div>
+            <i class="fas fa-chevron-right home-contact-ext"></i>
+          </a>
+          <a href="https://github.com/julenosinger/redhawk-store" target="_blank" rel="noopener" class="home-contact-link home-contact-github">
+            <div class="home-contact-link-icon"><i class="fab fa-github"></i></div>
+            <div>
+              <p class="home-contact-link-name">GitHub</p>
+              <p class="home-contact-link-val">Open Source Code</p>
+            </div>
+            <i class="fas fa-external-link-alt home-contact-ext"></i>
+          </a>
+        </div>
+        <div class="home-contact-disclaimer">
+          <i class="fas fa-info-circle" style="color:#3b82f6;flex-shrink:0;"></i>
+          <span>This platform is built for <strong>testing and demonstration purposes only</strong>.
+          No real products, no real funds, no financial risk. Runs on Arc Network testnet.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════
+       DEMO ACTIVITY / SOCIAL PROOF
+  ══════════════════════════════════════════════════ -->
+  <section class="home-activity-section">
+    <div class="home-section" style="padding-top:0;padding-bottom:60px;">
+      <div class="home-activity-card">
+        <div class="home-activity-label">
+          <span class="home-activity-dot"></span>
+          DEMO ACTIVITY &mdash; TESTNET DATA ONLY
+        </div>
+        <div class="home-activity-stats">
+          ${[
+            ['fas fa-exchange-alt','#6366f1','Test Transactions','Completed on testnet'],
+            ['fas fa-shield-alt',  '#22c55e','Escrow Operations', 'Smart contract secured'],
+            ['fas fa-store',       '#f59e0b','Demo Products',     'Illustrative listings'],
+            ['fas fa-users',       '#3b82f6','Test Users',        'Developer accounts'],
+          ].map(([icon,col,title,sub]) => `
+            <div class="home-activity-stat">
+              <div class="home-activity-stat-icon" style="background:${col}18;">
+                <i class="${icon}" style="color:${col};"></i>
+              </div>
+              <div>
+                <p class="home-activity-stat-title">${title}</p>
+                <p class="home-activity-stat-sub">${sub}</p>
+              </div>
+            </div>`).join('')}
+        </div>
+        <p class="home-activity-disclaimer">
+          <i class="fas fa-flask" style="color:#d97706;"></i>
+          All activity shown is <strong>testnet / demo data</strong>. No real monetary value.
+          Products may not be real. For testing &amp; demonstration only.
+        </p>
+      </div>
     </div>
   </section>
 
@@ -2907,6 +3085,196 @@ function homePage() {
     transition:all .2s;
   }
   .home-shop-btn:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(220,38,38,.45);}
+
+  /* ─── Hero explainer (What is Shukly Store?) ─── */
+  .home-hero-explainer {
+    background:rgba(255,255,255,.04);
+    border:1px solid rgba(255,255,255,.09);
+    border-radius:14px;
+    padding:16px 20px;
+    margin-bottom:28px;
+    backdrop-filter:blur(8px);
+  }
+  .home-hero-explainer-label {
+    font-size:11px;font-weight:800;color:#f59e0b;
+    text-transform:uppercase;letter-spacing:.1em;margin:0 0 6px;
+  }
+  .home-hero-explainer-text {
+    font-size:14px;color:#94a3b8;line-height:1.65;margin:0;
+  }
+  .home-hero-explainer-text strong{color:#cbd5e1;font-weight:600;}
+
+  /* ─── Testnet warning banner (hero inline) ─── */
+  .home-hero-testnet-warn {
+    display:flex;align-items:flex-start;gap:12px;
+    background:rgba(245,158,11,.1);
+    border:1.5px solid rgba(245,158,11,.35);
+    border-radius:14px;padding:14px 18px;
+    font-size:13px;color:#fcd34d;
+    line-height:1.6;margin-bottom:32px;
+    backdrop-filter:blur(4px);
+  }
+  .home-hero-testnet-warn strong{color:#fef08a;}
+  .home-hero-warn-icon{font-size:16px;flex-shrink:0;margin-top:2px;color:#f59e0b;}
+
+  /* ─── Secondary CTA button (less visual emphasis) ─── */
+  .home-btn-secondary {
+    display:inline-flex;align-items:center;gap:9px;
+    background:transparent;color:#94a3b8;
+    padding:15px 28px;border-radius:14px;font-weight:600;font-size:14px;
+    text-decoration:none;border:1.5px solid rgba(255,255,255,.15);
+    transition:all .25s;letter-spacing:.01em;
+  }
+  .home-btn-secondary:hover{
+    background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.25);color:#e2e8f0;
+  }
+
+  /* ─── Contact section ─── */
+  .home-contact-section{background:#f8fafc;border-top:1px solid #e2e8f0;padding-bottom:0;}
+  .home-contact-card {
+    background:#fff;border-radius:24px;border:1px solid #e2e8f0;
+    box-shadow:0 4px 24px rgba(0,0,0,.05);padding:48px;
+  }
+  @media(max-width:640px){.home-contact-card{padding:28px 20px;}}
+  .home-contact-header{
+    display:flex;align-items:flex-start;gap:20px;
+    margin-bottom:36px;flex-wrap:wrap;
+  }
+  .home-contact-icon-wrap {
+    width:52px;height:52px;border-radius:16px;flex-shrink:0;
+    background:linear-gradient(135deg,#dc2626,#b91c1c);
+    display:flex;align-items:center;justify-content:center;
+    color:#fff;font-size:20px;
+    box-shadow:0 6px 16px rgba(220,38,38,.3);
+  }
+  .home-contact-sub{font-size:13px;color:#64748b;margin-top:4px;max-width:480px;line-height:1.6;}
+  .home-contact-links {
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(200px,1fr));
+    gap:14px;margin-bottom:24px;
+  }
+  .home-contact-link {
+    display:flex;align-items:center;gap:14px;
+    padding:16px 18px;border-radius:16px;
+    text-decoration:none;border:1.5px solid #e2e8f0;
+    background:#fafbfc;transition:all .2s;
+  }
+  .home-contact-link:hover{transform:translateY(-3px);box-shadow:0 8px 24px rgba(0,0,0,.09);}
+  .home-contact-link-icon {
+    width:40px;height:40px;border-radius:12px;
+    display:flex;align-items:center;justify-content:center;
+    font-size:18px;flex-shrink:0;
+  }
+  .home-contact-telegram .home-contact-link-icon{background:#e8f4fd;color:#0088cc;}
+  .home-contact-telegram:hover{border-color:#0088cc;background:#f0f9ff;}
+  .home-contact-twitter .home-contact-link-icon{background:#f0f0f0;color:#1d1d1d;}
+  .home-contact-twitter:hover{border-color:#1d1d1d;background:#f9f9f9;}
+  .home-contact-email .home-contact-link-icon{background:#fef2f2;color:#dc2626;}
+  .home-contact-email:hover{border-color:#dc2626;background:#fff5f5;}
+  .home-contact-github .home-contact-link-icon{background:#f0f0f0;color:#1e293b;}
+  .home-contact-github:hover{border-color:#1e293b;background:#f9f9f9;}
+  .home-contact-link-name{font-weight:700;color:#1e293b;font-size:13px;margin:0;}
+  .home-contact-link-val{font-size:12px;color:#64748b;margin:2px 0 0;}
+  .home-contact-ext{margin-left:auto;font-size:11px;color:#cbd5e1;flex-shrink:0;}
+  .home-contact-disclaimer{
+    display:flex;align-items:flex-start;gap:10px;
+    background:#eff6ff;border:1px solid #bfdbfe;
+    border-radius:12px;padding:14px 18px;
+    font-size:13px;color:#1e40af;line-height:1.6;
+  }
+  .home-contact-disclaimer strong{color:#1d4ed8;}
+
+  /* ─── Activity / social proof section ─── */
+  .home-activity-section{background:#f8fafc;border-top:1px solid #e2e8f0;}
+  .home-activity-card {
+    background:#fff;
+    border:1.5px solid #e2e8f0;
+    border-radius:20px;
+    padding:32px 36px;
+    box-shadow:0 2px 12px rgba(0,0,0,.04);
+  }
+  @media(max-width:640px){.home-activity-card{padding:22px 18px;}}
+  .home-activity-label {
+    display:inline-flex;align-items:center;gap:8px;
+    font-size:11px;font-weight:800;color:#94a3b8;
+    letter-spacing:.12em;text-transform:uppercase;
+    margin-bottom:24px;
+  }
+  .home-activity-dot {
+    width:8px;height:8px;border-radius:50%;
+    background:#f59e0b;animation:home-pulse 1.8s infinite;
+    flex-shrink:0;
+  }
+  .home-activity-stats {
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(180px,1fr));
+    gap:16px;margin-bottom:20px;
+  }
+  .home-activity-stat{
+    display:flex;align-items:center;gap:12px;
+    padding:14px 16px;border-radius:14px;
+    border:1px solid #f0f4f8;background:#fafbfc;
+  }
+  .home-activity-stat-icon{
+    width:36px;height:36px;border-radius:10px;
+    display:flex;align-items:center;justify-content:center;
+    font-size:15px;flex-shrink:0;
+  }
+  .home-activity-stat-title{font-weight:700;color:#1e293b;font-size:13px;margin:0;}
+  .home-activity-stat-sub{font-size:11px;color:#94a3b8;margin:2px 0 0;}
+  .home-activity-disclaimer {
+    display:flex;align-items:center;gap:8px;
+    font-size:12px;color:#92400e;
+    background:#fffbeb;border:1px solid #fde68a;
+    border-radius:10px;padding:10px 16px;line-height:1.5;
+  }
+  .home-activity-disclaimer strong{color:#92400e;}
+
+  /* ─── Security section ─── */
+  .home-security-section{background:#fff;border-top:1px solid #f1f5f9;}
+  .home-security-card {
+    background:#fff;border-radius:24px;border:1px solid #e2e8f0;
+    box-shadow:0 4px 24px rgba(0,0,0,.05);padding:48px;
+  }
+  @media(max-width:640px){.home-security-card{padding:28px 20px;}}
+  .home-security-header {
+    display:flex;align-items:flex-start;gap:20px;
+    margin-bottom:40px;flex-wrap:wrap;
+  }
+  .home-security-icon-wrap {
+    width:52px;height:52px;border-radius:16px;flex-shrink:0;
+    background:linear-gradient(135deg,#22c55e,#16a34a);
+    display:flex;align-items:center;justify-content:center;
+    color:#fff;font-size:20px;
+    box-shadow:0 6px 16px rgba(34,197,94,.3);
+  }
+  .home-security-sub{font-size:13px;color:#64748b;margin-top:4px;max-width:520px;line-height:1.6;}
+  .home-security-grid {
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(240px,1fr));
+    gap:20px;margin-bottom:28px;
+  }
+  .home-security-item {
+    border-radius:18px;padding:24px 22px;border:1.5px solid transparent;
+  }
+  .home-security-item--green{background:#f0fdf4;border-color:#bbf7d0;}
+  .home-security-item--blue{background:#eff6ff;border-color:#bfdbfe;}
+  .home-security-item--purple{background:#f5f3ff;border-color:#ddd6fe;}
+  .home-security-item--amber{background:#fffbeb;border-color:#fde68a;}
+  .home-security-item-icon {
+    width:40px;height:40px;border-radius:12px;
+    display:flex;align-items:center;justify-content:center;
+    margin-bottom:14px;
+  }
+  .home-security-item-title{font-weight:800;color:#1e293b;font-size:14px;margin:0 0 8px;letter-spacing:-.01em;}
+  .home-security-item-desc{font-size:13px;color:#475569;line-height:1.65;margin:0;}
+  .home-security-notice {
+    display:flex;align-items:flex-start;gap:10px;
+    background:#fffbeb;border:1px solid #fde68a;
+    border-radius:12px;padding:14px 18px;
+    font-size:13px;color:#92400e;line-height:1.6;
+  }
+  .home-security-notice strong{color:#78350f;}
   </style>
 
   <script>
