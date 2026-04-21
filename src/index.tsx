@@ -2249,13 +2249,10 @@ function homePage() {
           stablecoin-native L1 blockchain.
         </p>
 
-        <!-- CTA buttons: primary = Marketplace, secondary = Wallet -->
+        <!-- CTA buttons: primary = Marketplace -->
         <div class="home-hero-ctas">
           <a href="/marketplace" class="home-btn-primary">
             <i class="fas fa-store"></i> Browse Marketplace
-          </a>
-          <a href="/wallet" class="home-btn-secondary">
-            <i class="fas fa-wallet"></i> Connect Wallet
           </a>
         </div>
 
@@ -2323,7 +2320,7 @@ function homePage() {
           </div>
 
           <a href="/sell" class="home-glass-cta">
-            <i class="fas fa-plus-circle"></i> Start Selling — Earn USDC
+            <i class="fas fa-plus-circle"></i> Start Selling
           </a>
         </div>
 
@@ -2420,41 +2417,6 @@ function homePage() {
   </section>
 
   <!-- ══════════════════════════════════════════════════
-       HOW IT WORKS — Dark premium section
-  ══════════════════════════════════════════════════ -->
-  <section class="home-how">
-    <div class="home-how-grid-bg"></div>
-    <div class="home-how-inner">
-      <div class="home-how-header">
-        <p class="home-section-eyebrow" style="color:#ef4444;">PROCESS</p>
-        <h2 class="home-section-title" style="color:#fff;">How Shukly Store Works</h2>
-        <p style="color:#64748b;font-size:15px;max-width:520px;margin:0 auto;line-height:1.7;">
-          A trustless escrow marketplace powered by Arc Network smart contracts.
-          No intermediaries. No custodians. Just code.
-        </p>
-      </div>
-      <div class="home-how-steps">
-        ${[
-          ['01','fas fa-search',      '#ef4444','Find Products',     'Browse real listings from verified sellers on Arc Network'],
-          ['02','fas fa-wallet',      '#3b82f6','Connect Wallet',    'Use MetaMask or our internal wallet on Arc Testnet (Chain 5042002)'],
-          ['03','fas fa-lock',        '#8b5cf6','Escrow Lock',       'USDC/EURC locked in smart contract — fully trustless and transparent'],
-          ['04','fas fa-check-circle','#22c55e','Confirm & Release', 'Confirm delivery → funds automatically released on-chain'],
-        ].map(([n,icon,col,title,desc]) => `
-          <div class="home-how-step">
-            <div class="home-how-step-num">${n}</div>
-            <div class="home-how-step-icon" style="background:${col}22;border:1px solid ${col}33;">
-              <i class="${icon}" style="color:${col};font-size:20px;"></i>
-            </div>
-            <h3 class="home-how-step-title">${title}</h3>
-            <p class="home-how-step-desc">${desc}</p>
-          </div>`).join('')}
-      </div>
-      <!-- Connector line (desktop) -->
-      <div class="home-how-connector"></div>
-    </div>
-  </section>
-
-  <!-- ══════════════════════════════════════════════════
        ABOUT + TRUST SIGNALS — Two-column card
   ══════════════════════════════════════════════════ -->
   <section class="home-section home-about-section">
@@ -2518,147 +2480,20 @@ function homePage() {
   </section>
 
   <!-- ══════════════════════════════════════════════════
-       SECURITY — Escrow + non-custodial deep-dive
+       RECENT SALES
   ══════════════════════════════════════════════════ -->
-  <section class="home-section home-security-section">
-    <div class="home-security-card">
-      <div class="home-security-header">
-        <div class="home-security-icon-wrap">
-          <i class="fas fa-shield-alt"></i>
-        </div>
-        <div>
-          <p class="home-section-eyebrow" style="margin-bottom:4px;">SECURITY</p>
-          <h2 class="home-section-title" style="font-size:1.75rem;">How Your Funds Stay Safe</h2>
-          <p class="home-security-sub">Smart contract escrow means no one—not even us—can touch your money until both parties agree.</p>
-        </div>
+  <section class="home-section home-recent-sales-section">
+    <div class="home-section-header">
+      <div>
+        <p class="home-section-eyebrow">ON-CHAIN</p>
+        <h2 class="home-section-title">Recent Sales</h2>
       </div>
-      <div class="home-security-grid">
-        <div class="home-security-item home-security-item--green">
-          <div class="home-security-item-icon" style="background:#d1fae5;">
-            <i class="fas fa-lock" style="color:#059669;font-size:18px;"></i>
-          </div>
-          <h3 class="home-security-item-title">Escrow Smart Contract</h3>
-          <p class="home-security-item-desc">Funds are locked in an immutable on-chain escrow contract at the moment of purchase. They can only be released to the seller once the buyer confirms delivery, or refunded if a dispute is resolved in the buyer's favour.</p>
-        </div>
-        <div class="home-security-item home-security-item--blue">
-          <div class="home-security-item-icon" style="background:#dbeafe;">
-            <i class="fas fa-key" style="color:#2563eb;font-size:18px;"></i>
-          </div>
-          <h3 class="home-security-item-title">Non-Custodial Wallet</h3>
-          <p class="home-security-item-desc">Your private keys are generated entirely inside your browser using BIP39 standards. They are optionally AES-encrypted and stored in your own device's localStorage. We never transmit, store, or have access to your keys.</p>
-        </div>
-        <div class="home-security-item home-security-item--purple">
-          <div class="home-security-item-icon" style="background:#ede9fe;">
-            <i class="fas fa-file-contract" style="color:#7c3aed;font-size:18px;"></i>
-          </div>
-          <h3 class="home-security-item-title">Open-Source Contracts</h3>
-          <p class="home-security-item-desc">All escrow contracts are open source and verifiable on the Arc Network block explorer. Anyone can inspect the code, audit the logic, and confirm that funds flow exactly as described — no hidden back-doors.</p>
-        </div>
-        <div class="home-security-item home-security-item--amber">
-          <div class="home-security-item-icon" style="background:#fef3c7;">
-            <i class="fas fa-coins" style="color:#d97706;font-size:18px;"></i>
-          </div>
-          <h3 class="home-security-item-title">Stablecoin-Only Payments</h3>
-          <p class="home-security-item-desc">Only USDC and EURC are accepted — Circle's regulated stablecoins native to Arc Network. No price volatility, no speculative tokens. The value you lock in escrow is the value you receive.</p>
-        </div>
-      </div>
-      <div class="home-security-notice">
-        <i class="fas fa-flask" style="color:#d97706;flex-shrink:0;"></i>
-        <span><strong>Testnet reminder:</strong> This application runs on Arc Network Testnet (Chain ID 5042002).
-        All escrow contracts operate with <strong>test tokens only</strong> — no real financial value.</span>
-      </div>
+      <a href="/orders" class="home-view-all">View all <i class="fas fa-arrow-right" style="font-size:11px;"></i></a>
     </div>
-  </section>
-
-  <!-- ══════════════════════════════════════════════════
-       CONTACT / COMMUNITY
-  ══════════════════════════════════════════════════ -->
-  <section class="home-contact-section">
-    <div class="home-section" style="padding-top:0;">
-      <div class="home-contact-card">
-        <div class="home-contact-header">
-          <div class="home-contact-icon-wrap"><i class="fas fa-users"></i></div>
-          <div>
-            <p class="home-section-eyebrow" style="margin-bottom:4px;">COMMUNITY</p>
-            <h2 class="home-section-title" style="font-size:1.6rem;">Contact &amp; Community</h2>
-            <p class="home-contact-sub">Built by an independent developer. Reach out for feedback, questions, or collaboration.</p>
-          </div>
-        </div>
-        <div class="home-contact-links">
-          <a href="https://t.me/Julenno" target="_blank" rel="noopener" class="home-contact-link home-contact-telegram">
-            <div class="home-contact-link-icon"><i class="fab fa-telegram-plane"></i></div>
-            <div>
-              <p class="home-contact-link-name">Telegram</p>
-              <p class="home-contact-link-val">@Julenno</p>
-            </div>
-            <i class="fas fa-external-link-alt home-contact-ext"></i>
-          </a>
-          <a href="https://twitter.com/juleno14" target="_blank" rel="noopener" class="home-contact-link home-contact-twitter">
-            <div class="home-contact-link-icon"><i class="fab fa-x-twitter"></i></div>
-            <div>
-              <p class="home-contact-link-name">X (Twitter)</p>
-              <p class="home-contact-link-val">@juleno14</p>
-            </div>
-            <i class="fas fa-external-link-alt home-contact-ext"></i>
-          </a>
-          <a href="mailto:julenosinnger@gmail.com" class="home-contact-link home-contact-email">
-            <div class="home-contact-link-icon"><i class="fas fa-envelope"></i></div>
-            <div>
-              <p class="home-contact-link-name">Email</p>
-              <p class="home-contact-link-val">julenosinnger@gmail.com</p>
-            </div>
-            <i class="fas fa-chevron-right home-contact-ext"></i>
-          </a>
-          <a href="https://github.com/julenosinger/redhawk-store" target="_blank" rel="noopener" class="home-contact-link home-contact-github">
-            <div class="home-contact-link-icon"><i class="fab fa-github"></i></div>
-            <div>
-              <p class="home-contact-link-name">GitHub</p>
-              <p class="home-contact-link-val">Open Source Code</p>
-            </div>
-            <i class="fas fa-external-link-alt home-contact-ext"></i>
-          </a>
-        </div>
-        <div class="home-contact-disclaimer">
-          <i class="fas fa-info-circle" style="color:#3b82f6;flex-shrink:0;"></i>
-          <span>This platform is built for <strong>testing and demonstration purposes only</strong>.
-          No real products, no real funds, no financial risk. Runs on Arc Network testnet.</span>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ══════════════════════════════════════════════════
-       DEMO ACTIVITY / SOCIAL PROOF
-  ══════════════════════════════════════════════════ -->
-  <section class="home-activity-section">
-    <div class="home-section" style="padding-top:0;padding-bottom:60px;">
-      <div class="home-activity-card">
-        <div class="home-activity-label">
-          <span class="home-activity-dot"></span>
-          DEMO ACTIVITY &mdash; TESTNET DATA ONLY
-        </div>
-        <div class="home-activity-stats">
-          ${[
-            ['fas fa-exchange-alt','#6366f1','Test Transactions','Completed on testnet'],
-            ['fas fa-shield-alt',  '#22c55e','Escrow Operations', 'Smart contract secured'],
-            ['fas fa-store',       '#f59e0b','Demo Products',     'Illustrative listings'],
-            ['fas fa-users',       '#3b82f6','Test Users',        'Developer accounts'],
-          ].map(([icon,col,title,sub]) => `
-            <div class="home-activity-stat">
-              <div class="home-activity-stat-icon" style="background:${col}18;">
-                <i class="${icon}" style="color:${col};"></i>
-              </div>
-              <div>
-                <p class="home-activity-stat-title">${title}</p>
-                <p class="home-activity-stat-sub">${sub}</p>
-              </div>
-            </div>`).join('')}
-        </div>
-        <p class="home-activity-disclaimer">
-          <i class="fas fa-flask" style="color:#d97706;"></i>
-          All activity shown is <strong>testnet / demo data</strong>. No real monetary value.
-          Products may not be real. For testing &amp; demonstration only.
-        </p>
+    <div id="home-recent-sales-container">
+      <div class="home-loading">
+        <div class="loading-spinner-lg"></div>
+        <p>Loading recent sales…</p>
       </div>
     </div>
   </section>
@@ -3275,6 +3110,63 @@ function homePage() {
     font-size:13px;color:#92400e;line-height:1.6;
   }
   .home-security-notice strong{color:#78350f;}
+
+  /* ─── Recent Sales section ─── */
+  .home-recent-sales-section{padding-bottom:100px;}
+  .home-rs-grid {
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
+    gap:20px;
+  }
+  @media(max-width:480px){.home-rs-grid{grid-template-columns:1fr;}}
+  .home-rs-card {
+    background:#fff;border-radius:20px;border:1.5px solid #f0f4f8;
+    padding:20px 22px;box-shadow:0 2px 12px rgba(0,0,0,.04);
+    display:flex;flex-direction:column;gap:12px;
+    transition:box-shadow .2s,transform .2s;
+  }
+  .home-rs-card:hover{box-shadow:0 8px 28px rgba(0,0,0,.08);transform:translateY(-2px);}
+  .home-rs-card-top{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+  .home-rs-product {
+    font-weight:800;color:#1e293b;font-size:14px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px;
+  }
+  .home-rs-status {
+    display:inline-flex;align-items:center;gap:5px;
+    background:#d1fae5;color:#065f46;
+    font-size:11px;font-weight:700;
+    padding:3px 10px;border-radius:999px;white-space:nowrap;
+  }
+  .home-rs-status-dot{width:6px;height:6px;border-radius:50%;background:#10b981;flex-shrink:0;}
+  .home-rs-amount {
+    font-size:1.25rem;font-weight:900;color:#1e293b;
+    letter-spacing:-.025em;
+  }
+  .home-rs-token{font-size:13px;font-weight:600;color:#64748b;margin-left:3px;}
+  .home-rs-meta {
+    display:flex;flex-direction:column;gap:5px;
+    border-top:1px solid #f1f5f9;padding-top:12px;
+  }
+  .home-rs-meta-row{display:flex;align-items:center;gap:8px;font-size:12px;color:#64748b;}
+  .home-rs-meta-icon{width:22px;height:22px;border-radius:6px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;font-size:10px;color:#64748b;flex-shrink:0;}
+  .home-rs-hash{
+    font-family:'SF Mono','Fira Mono','Courier New',monospace;
+    font-size:11px;color:#3b82f6;text-decoration:none;
+  }
+  .home-rs-hash:hover{text-decoration:underline;}
+  .home-rs-addr{font-family:'SF Mono','Fira Mono','Courier New',monospace;font-size:11px;color:#94a3b8;}
+  .home-rs-empty {
+    grid-column:1/-1;
+    background:#fff;border-radius:20px;border:1.5px solid #f0f4f8;
+    padding:72px 24px;text-align:center;
+    box-shadow:0 2px 12px rgba(0,0,0,.04);
+  }
+  .home-rs-empty-icon{
+    width:72px;height:72px;border-radius:20px;
+    background:linear-gradient(135deg,#f1f5f9,#e2e8f0);
+    display:flex;align-items:center;justify-content:center;
+    margin:0 auto 20px;font-size:28px;color:#94a3b8;
+  }
   </style>
 
   <script>
@@ -3317,6 +3209,9 @@ function homePage() {
         +'<i class="fas fa-exclamation-circle" style="font-size:36px;margin-bottom:16px;display:block;opacity:.6;"></i>'
         +'<p style="font-size:14px;color:#64748b;">Failed to load products. Check your connection.</p></div>';
     }
+
+    /* ── Recent Sales ── */
+    renderRecentSales();
   });
 
   function renderHomeProductCard(p) {
@@ -3372,6 +3267,123 @@ function homePage() {
     } catch {
       // silently fail — placeholders stay
     }
+  }
+
+  /* ─── Recent Sales renderer ───────────────────────────────────────────
+     Reads real orders from localStorage key 'rh_orders' (saved by confirmOrder
+     after on-chain escrow funding). Falls back gracefully when empty.
+  ─────────────────────────────────────────────────────────────────────── */
+  function renderRecentSales() {
+    const el = document.getElementById('home-recent-sales-container');
+    if (!el) return;
+
+    let orders = [];
+    try {
+      const raw = localStorage.getItem('rh_orders');
+      if (raw) orders = JSON.parse(raw);
+    } catch { orders = []; }
+
+    // Sort newest first, cap at 6
+    orders = (Array.isArray(orders) ? orders : [])
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+      .slice(0, 6);
+
+    if (!orders.length) {
+      el.innerHTML = \`
+        <div class="home-rs-grid">
+          <div class="home-rs-empty">
+            <div class="home-rs-empty-icon"><i class="fas fa-receipt"></i></div>
+            <h3 style="font-size:1.1rem;font-weight:800;color:#1e293b;margin:0 0 8px;">No Sales Yet</h3>
+            <p style="font-size:13px;color:#94a3b8;max-width:300px;margin:0 auto 24px;line-height:1.7;">
+              Completed purchases will appear here in real time once escrow transactions are confirmed on Arc Network.
+            </p>
+            <a href="/marketplace" class="btn-secondary" style="font-size:13px;padding:9px 20px;display:inline-flex;">
+              <i class="fas fa-store"></i> Browse Marketplace
+            </a>
+          </div>
+        </div>\`;
+      return;
+    }
+
+    function shortAddr(addr) {
+      if (!addr) return '—';
+      const s = String(addr);
+      return s.length > 10 ? s.slice(0, 6) + '…' + s.slice(-4) : s;
+    }
+    function shortHash(hash) {
+      if (!hash) return '—';
+      const s = String(hash);
+      return s.length > 10 ? s.slice(0, 8) + '…' + s.slice(-6) : s;
+    }
+    function fmtDate(iso) {
+      if (!iso) return '';
+      try {
+        const d = new Date(iso);
+        return d.toLocaleDateString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+      } catch { return ''; }
+    }
+    function explorerUrl(hash) {
+      return 'https://testnet.arcscan.app/tx/' + (hash || '');
+    }
+
+    const explorer = (window.ARC && window.ARC.explorer) || 'https://testnet.arcscan.app';
+
+    const cards = orders.map(o => {
+      const product   = ((o.items && o.items[0] && o.items[0].name) || o.productId || 'Unknown Product');
+      const amount    = parseFloat(o.amount || 0).toFixed(2);
+      const token     = o.token || 'USDC';
+      const buyer     = shortAddr(o.buyerAddress);
+      const seller    = shortAddr(o.sellerAddress);
+      const txHash    = o.fundTxHash || o.txHash || '';
+      const shortTx   = shortHash(txHash);
+      const txLink    = txHash ? (explorer + '/tx/' + txHash) : '#';
+      const date      = fmtDate(o.createdAt);
+      const statusMap = {
+        escrow_locked:      'Escrow Locked',
+        delivered:          'Delivered',
+        completed:          'Completed',
+        funds_released:     'Completed',
+        escrow_funded:      'Escrow Funded',
+      };
+      const statusLabel = statusMap[o.status] || 'Escrow Locked';
+
+      return \`
+        <div class="home-rs-card">
+          <div class="home-rs-card-top">
+            <span class="home-rs-product" title="\${product}">\${product}</span>
+            <span class="home-rs-status"><span class="home-rs-status-dot"></span>\${statusLabel}</span>
+          </div>
+          <div>
+            <span class="home-rs-amount">\${amount}</span>
+            <span class="home-rs-token">\${token}</span>
+          </div>
+          <div class="home-rs-meta">
+            <div class="home-rs-meta-row">
+              <span class="home-rs-meta-icon"><i class="fas fa-user"></i></span>
+              <span>Buyer:</span>
+              <span class="home-rs-addr">\${buyer}</span>
+            </div>
+            <div class="home-rs-meta-row">
+              <span class="home-rs-meta-icon"><i class="fas fa-store"></i></span>
+              <span>Seller:</span>
+              <span class="home-rs-addr">\${seller}</span>
+            </div>
+            \${txHash ? \`
+            <div class="home-rs-meta-row">
+              <span class="home-rs-meta-icon"><i class="fas fa-link"></i></span>
+              <span>Tx:</span>
+              <a href="\${txLink}" target="_blank" rel="noopener" class="home-rs-hash">\${shortTx}</a>
+            </div>\` : ''}
+            \${date ? \`
+            <div class="home-rs-meta-row">
+              <span class="home-rs-meta-icon"><i class="fas fa-clock"></i></span>
+              <span>\${date}</span>
+            </div>\` : ''}
+          </div>
+        </div>\`;
+    }).join('');
+
+    el.innerHTML = '<div class="home-rs-grid">' + cards + '</div>';
   }
   </script>
   `)
