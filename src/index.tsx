@@ -2276,21 +2276,11 @@ function homePage() {
         </div>
       </div>
 
-      <!-- RIGHT column — glass card -->
+      <!-- RIGHT column — structured panel -->
       <div class="home-hero-right">
-        <!-- Floating green badge -->
-        <div class="home-float-badge home-float-badge-top">
-          <div class="home-float-badge-icon" style="background:#d1fae5;">
-            <i class="fas fa-shield-alt" style="color:#059669;"></i>
-          </div>
-          <div>
-            <p class="home-float-title">Escrow Protected</p>
-            <p class="home-float-sub">Every transaction</p>
-          </div>
-        </div>
-
-        <!-- Main glass card -->
         <div class="home-glass-card">
+
+          <!-- ── Card header ── -->
           <div class="home-glass-header">
             <div class="home-glass-logo">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="white" opacity=".95"/></svg>
@@ -2305,34 +2295,66 @@ function homePage() {
             </div>
           </div>
 
-          <div class="home-glass-grid">
-            ${[
-              ['fas fa-coins',         'USDC / EURC', 'Native Stablecoin','#fbbf24'],
-              ['fas fa-shield-alt',    'Escrow',       'Smart Contract',   '#60a5fa'],
-              ['fas fa-network-wired', 'Arc L1',       'Chain 5042002',    '#818cf8'],
-              ['fas fa-lock',          'Trustless',    'Non-Custodial',    '#4ade80'],
-            ].map(([icon,title,sub,col]) => `
-              <div class="home-glass-stat">
-                <i class="${icon}" style="color:${col};font-size:15px;margin-bottom:8px;display:block;"></i>
-                <p class="home-glass-stat-title">${title}</p>
-                <p class="home-glass-stat-sub">${sub}</p>
-              </div>`).join('')}
+          <!-- ── STATS ROW — 3 equal columns, 8px gap system ── -->
+          <div class="hgc-stats-row">
+            <div class="hgc-stat">
+              <div class="hgc-stat-icon" style="background:rgba(251,191,36,.12);">
+                <i class="fas fa-coins" style="color:#fbbf24;"></i>
+              </div>
+              <p class="hgc-stat-label">Payment</p>
+              <p class="hgc-stat-val">USDC / EURC</p>
+            </div>
+            <div class="hgc-stat hgc-stat--mid">
+              <div class="hgc-stat-icon" style="background:rgba(96,165,250,.12);">
+                <i class="fas fa-shield-alt" style="color:#60a5fa;"></i>
+              </div>
+              <p class="hgc-stat-label">Protection</p>
+              <p class="hgc-stat-val">Escrow</p>
+            </div>
+            <div class="hgc-stat">
+              <div class="hgc-stat-icon" style="background:rgba(74,222,128,.12);">
+                <i class="fas fa-lock" style="color:#4ade80;"></i>
+              </div>
+              <p class="hgc-stat-label">Custody</p>
+              <p class="hgc-stat-val">Non-Custodial</p>
+            </div>
           </div>
 
+          <!-- ── NETWORK ROW ── -->
+          <div class="hgc-network-row">
+            <div class="hgc-network-left">
+              <div class="hgc-net-icon">
+                <i class="fas fa-network-wired" style="color:#818cf8;font-size:13px;"></i>
+              </div>
+              <div>
+                <p class="hgc-net-name">Arc Network L1</p>
+                <p class="hgc-net-chain">Chain ID 5042002</p>
+              </div>
+            </div>
+            <div id="hgc-net-status" class="hgc-net-pill hgc-net-pill--checking">
+              <span class="hgc-net-dot"></span><span>Checking…</span>
+            </div>
+          </div>
+
+          <!-- ── LIVE ACTIVITY — real orders from localStorage ── -->
+          <div class="hgc-activity-section">
+            <p class="hgc-activity-label">
+              <span class="hgc-activity-dot"></span>Live Activity
+            </p>
+            <div id="hgc-activity-list" class="hgc-activity-list">
+              <!-- Populated by JS -->
+              <div class="hgc-activity-empty">
+                <i class="fas fa-receipt" style="color:#334155;"></i>
+                <span>No activity yet</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── CTA ── -->
           <a href="/sell" class="home-glass-cta">
             <i class="fas fa-plus-circle"></i> Start Selling
           </a>
-        </div>
 
-        <!-- Floating yellow badge -->
-        <div class="home-float-badge home-float-badge-bot">
-          <div class="home-float-badge-icon" style="background:#fef3c7;">
-            <i class="fas fa-bolt" style="color:#d97706;"></i>
-          </div>
-          <div>
-            <p class="home-float-title">Instant Transfers</p>
-            <p class="home-float-sub">USDC &amp; EURC</p>
-          </div>
         </div>
       </div>
     </div>
@@ -2370,22 +2392,30 @@ function homePage() {
   </section>
 
   <!-- ══════════════════════════════════════════════════
-       CATEGORIES — Large premium cards
+       STICKY CATEGORY NAV — full-width, below header
   ══════════════════════════════════════════════════ -->
-  <section class="home-section">
-    <div class="home-section-header">
-      <div>
-        <p class="home-section-eyebrow">EXPLORE</p>
-        <h2 class="home-section-title">Browse Categories</h2>
+  <div id="home-cat-nav" class="home-cat-nav">
+    <div class="home-cat-nav-inner">
+      <button class="home-cat-nav-arrow home-cat-nav-arrow--left" id="catnav-left" aria-label="Scroll left">
+        <i class="fas fa-chevron-left"></i>
+      </button>
+      <div class="home-cat-nav-track" id="catnav-track">
+        ${categories.map((c,i) => `
+          <a href="/marketplace?cat=${encodeURIComponent(c.name)}"
+             class="home-cat-nav-item${i===0?' home-cat-nav-item--active':''}"
+             data-cat="${encodeURIComponent(c.name)}"
+             style="--cnav-accent:${c.accent};">
+            <span class="home-cat-nav-icon" style="background:${c.bg};">
+              <i class="${c.icon}" style="color:${c.accent};"></i>
+            </span>
+            <span class="home-cat-nav-label">${c.name}</span>
+          </a>`).join('')}
       </div>
-      <a href="/marketplace" class="home-view-all">
-        View all <i class="fas fa-arrow-right" style="font-size:11px;"></i>
-      </a>
+      <button class="home-cat-nav-arrow home-cat-nav-arrow--right" id="catnav-right" aria-label="Scroll right">
+        <i class="fas fa-chevron-right"></i>
+      </button>
     </div>
-    <div class="home-cat-grid">
-      ${catCards}
-    </div>
-  </section>
+  </div>
 
   <!-- ══════════════════════════════════════════════════
        DEMO NOTICE
@@ -2625,19 +2655,12 @@ function homePage() {
   }
   .home-trust-chip i{font-size:12px;}
 
-  /* Network status */
+  /* Network status (hero left) */
   .home-network-status{font-size:12px;color:#334155;display:flex;align-items:center;gap:8px;}
   .home-network-dot{width:8px;height:8px;border-radius:50%;background:#334155;display:inline-block;flex-shrink:0;}
 
-  /* Glass card */
-  .home-glass-card {
-    background:rgba(255,255,255,.04);backdrop-filter:blur(24px);
-    border:1px solid rgba(255,255,255,.09);border-radius:28px;
-    padding:32px;width:100%;max-width:400px;
-    box-shadow:0 40px 80px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.07);
-    animation:home-float 6s ease-in-out infinite;
-  }
-  .home-glass-header{display:flex;align-items:center;gap:12px;margin-bottom:24px;}
+  /* Glass card shared header elements */
+  .home-glass-header{display:flex;align-items:center;gap:12px;margin-bottom:16px;}
   .home-glass-logo {
     width:42px;height:42px;border-radius:13px;flex-shrink:0;
     background:linear-gradient(135deg,#dc2626,#7c3aed);
@@ -2659,6 +2682,120 @@ function homePage() {
   }
   .home-glass-stat-title{font-weight:700;color:#f1f5f9;font-size:13px;margin:0 0 3px;}
   .home-glass-stat-sub{font-size:11px;color:#475569;margin:0;}
+
+  /* ── Glass card restructured inner components ── */
+  /* Stats row: 3 equal columns, 8px gap */
+  .hgc-stats-row {
+    display:grid;grid-template-columns:repeat(3,1fr);gap:8px;
+    margin-bottom:8px;
+  }
+  .hgc-stat {
+    background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06);
+    border-radius:14px;padding:16px 12px;
+    display:flex;flex-direction:column;align-items:flex-start;gap:8px;
+  }
+  .hgc-stat--mid {
+    border-color:rgba(255,255,255,.1);
+    background:rgba(255,255,255,.06);
+  }
+  .hgc-stat-icon {
+    width:32px;height:32px;border-radius:9px;
+    display:flex;align-items:center;justify-content:center;
+    font-size:13px;flex-shrink:0;
+  }
+  .hgc-stat-label {
+    font-size:10px;font-weight:700;color:#475569;
+    text-transform:uppercase;letter-spacing:.08em;margin:0;
+  }
+  .hgc-stat-val {
+    font-size:12px;font-weight:800;color:#f1f5f9;
+    margin:0;line-height:1.2;
+  }
+
+  /* Network row */
+  .hgc-network-row {
+    display:flex;align-items:center;justify-content:space-between;
+    background:rgba(129,140,248,.08);border:1px solid rgba(129,140,248,.15);
+    border-radius:14px;padding:12px 16px;margin-bottom:8px;gap:8px;
+  }
+  .hgc-network-left {
+    display:flex;align-items:center;gap:10px;
+  }
+  .hgc-net-icon {
+    width:32px;height:32px;border-radius:9px;
+    background:rgba(129,140,248,.15);
+    display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  }
+  .hgc-net-name {font-size:12px;font-weight:700;color:#e2e8f0;margin:0;}
+  .hgc-net-chain {font-size:10px;color:#475569;margin:0;}
+  .hgc-net-pill {
+    display:inline-flex;align-items:center;gap:5px;
+    padding:4px 10px;border-radius:999px;font-size:10px;font-weight:700;
+    white-space:nowrap;flex-shrink:0;
+  }
+  .hgc-net-pill--checking {background:rgba(100,116,139,.15);color:#64748b;border:1px solid rgba(100,116,139,.2);}
+  .hgc-net-pill--online  {background:rgba(34,197,94,.12);color:#4ade80;border:1px solid rgba(34,197,94,.2);}
+  .hgc-net-pill--offline {background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.2);}
+  .hgc-net-dot {
+    width:6px;height:6px;border-radius:50%;background:currentColor;
+    display:inline-block;animation:home-pulse 2s infinite;flex-shrink:0;
+  }
+
+  /* Live activity */
+  .hgc-activity-section {margin-bottom:8px;}
+  .hgc-activity-label {
+    display:flex;align-items:center;gap:6px;
+    font-size:10px;font-weight:800;color:#475569;
+    text-transform:uppercase;letter-spacing:.1em;
+    margin-bottom:8px;
+  }
+  .hgc-activity-dot {
+    width:6px;height:6px;border-radius:50%;background:#4ade80;
+    display:inline-block;animation:home-pulse 1.8s infinite;flex-shrink:0;
+  }
+  .hgc-activity-list {
+    display:flex;flex-direction:column;gap:6px;
+    max-height:148px;overflow:hidden;
+  }
+  /* Each activity row: icon | product + addr | amount | time */
+  .hgc-activity-row {
+    display:grid;
+    grid-template-columns:32px 1fr auto auto;
+    align-items:center;gap:8px;
+    background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.05);
+    border-radius:10px;padding:8px 10px;
+  }
+  .hgc-activity-icon {
+    width:32px;height:32px;border-radius:9px;
+    background:rgba(34,197,94,.1);
+    display:flex;align-items:center;justify-content:center;
+    font-size:12px;color:#4ade80;flex-shrink:0;
+  }
+  .hgc-activity-text {min-width:0;}
+  .hgc-activity-product {
+    font-size:11px;font-weight:700;color:#f1f5f9;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0;
+  }
+  .hgc-activity-addr {
+    font-size:10px;color:#475569;
+    font-family:'SF Mono','Fira Mono','Courier New',monospace;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0;
+  }
+  .hgc-activity-amount {
+    font-size:12px;font-weight:800;color:#4ade80;
+    white-space:nowrap;text-align:right;
+  }
+  .hgc-activity-time {
+    font-size:9px;color:#334155;
+    white-space:nowrap;text-align:right;
+    font-variant-numeric:tabular-nums;
+  }
+  .hgc-activity-empty {
+    display:flex;align-items:center;gap:8px;
+    padding:16px;font-size:12px;color:#334155;
+    background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.04);
+    border-radius:10px;
+  }
   .home-glass-cta {
     display:flex;align-items:center;justify-content:center;gap:8px;
     background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;
@@ -2670,20 +2807,12 @@ function homePage() {
 
   /* Hero right column */
   .home-hero-right{display:flex;justify-content:center;align-items:center;position:relative;}
-
-  /* Floating badges */
-  .home-float-badge {
-    position:absolute;background:#fff;border-radius:16px;padding:12px 16px;
-    box-shadow:0 12px 32px rgba(0,0,0,.18);
-    display:flex;align-items:center;gap:10px;
-    animation:home-float 5s ease-in-out infinite;
-    z-index:2;
+  .home-glass-card {
+    background:rgba(255,255,255,.04);backdrop-filter:blur(24px);
+    border:1px solid rgba(255,255,255,.09);border-radius:28px;
+    padding:24px;width:100%;max-width:420px;
+    box-shadow:0 40px 80px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.07);
   }
-  .home-float-badge-top{top:-20px;right:-16px;animation-delay:.5s;}
-  .home-float-badge-bot{bottom:-18px;left:-16px;animation-delay:1.2s;}
-  .home-float-badge-icon{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
-  .home-float-title{font-size:12px;font-weight:700;color:#1e293b;margin:0;}
-  .home-float-sub{font-size:11px;color:#64748b;margin:0;}
 
   /* Scroll cue */
   .home-scroll-cue {
@@ -2744,49 +2873,77 @@ function homePage() {
   }
   .home-view-all:hover{background:#fef2f2;border-color:#ef4444;}
 
-  /* ─── Category cards ─── */
-  .home-cat-grid{
-    display:grid;
-    grid-template-columns:repeat(auto-fill,minmax(140px,1fr));
-    gap:16px;
+  /* ─── Sticky Category Nav ─── */
+  .home-cat-nav {
+    width:100%;background:#fff;border-bottom:1px solid #f0f4f8;
+    position:relative;z-index:40;
+    transition:box-shadow .25s,background .25s,backdrop-filter .25s;
   }
-  @media(max-width:600px){.home-cat-grid{grid-template-columns:repeat(2,1fr);}}
-  .home-cat-card {
-    background:#fff;border-radius:20px;border:1.5px solid #f0f4f8;
-    padding:24px 16px 20px;
-    display:flex;flex-direction:column;align-items:center;gap:14px;
-    text-decoration:none;transition:all .28s cubic-bezier(.34,1.56,.64,1);
-    cursor:pointer;text-align:center;
-    box-shadow:0 1px 4px rgba(0,0,0,.04);
-    position:relative;overflow:hidden;
+  .home-cat-nav.is-sticky {
+    position:sticky;top:64px;  /* below navbar (h-16 = 64px) */
+    background:rgba(255,255,255,.92);
+    backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+    box-shadow:0 4px 20px rgba(0,0,0,.08);
+    border-bottom-color:transparent;
   }
-  .home-cat-card::before {
-    content:'';position:absolute;inset:0;opacity:0;
-    background:linear-gradient(135deg,var(--cat-bg),transparent);
-    transition:opacity .28s;
+  .home-cat-nav-inner {
+    max-width:1320px;margin:0 auto;padding:0 24px;
+    display:flex;align-items:center;gap:0;position:relative;
   }
-  .home-cat-card:hover{
-    transform:translateY(-6px) scale(1.02);
-    box-shadow:0 20px 44px rgba(0,0,0,.1);
-    border-color:var(--cat-accent,#ef4444);
-  }
-  .home-cat-card:hover::before{opacity:1;}
-  .home-cat-icon {
-    width:60px;height:60px;border-radius:18px;
+  .home-cat-nav-arrow {
+    flex-shrink:0;width:32px;height:32px;border-radius:50%;
+    background:#fff;border:1.5px solid #e2e8f0;
     display:flex;align-items:center;justify-content:center;
-    font-size:24px;transition:transform .28s;
-    flex-shrink:0;position:relative;z-index:1;
+    cursor:pointer;font-size:11px;color:#64748b;
+    transition:all .2s;z-index:2;
+    box-shadow:0 2px 8px rgba(0,0,0,.08);
   }
-  .home-cat-card:hover .home-cat-icon{transform:scale(1.1) rotate(-4deg);}
-  .home-cat-label {
-    font-weight:700;color:#1e293b;font-size:12px;line-height:1.35;
-    position:relative;z-index:1;
+  .home-cat-nav-arrow:hover{background:#f8fafc;border-color:#cbd5e1;color:#1e293b;transform:scale(1.08);}
+  .home-cat-nav-arrow--left{margin-right:8px;}
+  .home-cat-nav-arrow--right{margin-left:8px;}
+  .home-cat-nav-track {
+    display:flex;align-items:center;gap:4px;
+    overflow-x:auto;scroll-behavior:smooth;
+    padding:12px 0;flex:1;
+    /* hide scrollbar */
+    scrollbar-width:none;-ms-overflow-style:none;
   }
-  .home-cat-arrow{
-    font-size:10px;opacity:0;transform:translateX(-4px);
-    transition:all .2s;position:relative;z-index:1;
+  .home-cat-nav-track::-webkit-scrollbar{display:none;}
+  .home-cat-nav-item {
+    display:inline-flex;align-items:center;gap:8px;
+    padding:7px 14px;border-radius:999px;
+    text-decoration:none;white-space:nowrap;
+    border:1.5px solid transparent;
+    font-size:13px;font-weight:600;color:#475569;
+    background:#f8fafc;
+    transition:all .2s;flex-shrink:0;
   }
-  .home-cat-card:hover .home-cat-arrow{opacity:1;transform:translateX(0);}
+  .home-cat-nav-item:hover {
+    background:color-mix(in srgb, var(--cnav-accent) 10%, white);
+    border-color:var(--cnav-accent);
+    color:var(--cnav-accent);
+    transform:translateY(-1px);
+    box-shadow:0 4px 12px rgba(0,0,0,.08);
+  }
+  .home-cat-nav-item--active {
+    background:color-mix(in srgb, var(--cnav-accent) 12%, white);
+    border-color:var(--cnav-accent);
+    color:var(--cnav-accent);
+    box-shadow:0 2px 8px rgba(0,0,0,.06);
+  }
+  .home-cat-nav-icon {
+    width:26px;height:26px;border-radius:8px;
+    display:flex;align-items:center;justify-content:center;
+    font-size:12px;flex-shrink:0;
+  }
+  .home-cat-nav-label{line-height:1;}
+  @media(max-width:960px){
+    .home-cat-nav-inner{padding:0 16px;}
+    .home-cat-nav-arrow{display:none;}
+    .home-cat-nav-track{gap:6px;padding:10px 0;}
+    .home-cat-nav-item{font-size:12px;padding:6px 12px;}
+    .home-cat-nav-icon{width:22px;height:22px;font-size:11px;}
+  }
 
   /* ─── Loading state ─── */
   .home-loading{text-align:center;padding:72px 0;}
@@ -3212,6 +3369,15 @@ function homePage() {
 
     /* ── Recent Sales ── */
     renderRecentSales();
+
+    /* ── Glass card: live activity ── */
+    renderGlassActivity();
+
+    /* ── Glass card: network status pill ── */
+    updateGlassNetStatus();
+
+    /* ── Sticky category nav ── */
+    initCatNav();
   });
 
   function renderHomeProductCard(p) {
@@ -3384,6 +3550,122 @@ function homePage() {
     }).join('');
 
     el.innerHTML = '<div class="home-rs-grid">' + cards + '</div>';
+  }
+
+  /* ─── Glass card: Live Activity ───────────────────────────────────────
+     Reads rh_orders from localStorage, renders up to 3 rows in the
+     hero right-column card. Grid: [icon][text][amount][time]
+  ─────────────────────────────────────────────────────────────────────── */
+  function renderGlassActivity() {
+    const el = document.getElementById('hgc-activity-list');
+    if (!el) return;
+
+    let orders = [];
+    try { const r = localStorage.getItem('rh_orders'); if (r) orders = JSON.parse(r); } catch {}
+    orders = (Array.isArray(orders) ? orders : [])
+      .sort((a,b) => new Date(b.createdAt||0) - new Date(a.createdAt||0))
+      .slice(0,3);
+
+    if (!orders.length) {
+      el.innerHTML = '<div class="hgc-activity-empty"><i class="fas fa-receipt"></i><span>No activity yet — buy or sell to see live updates</span></div>';
+      return;
+    }
+
+    function relTime(iso) {
+      if (!iso) return '';
+      const diff = Date.now() - new Date(iso).getTime();
+      const m = Math.floor(diff/60000);
+      if (m < 1) return 'just now';
+      if (m < 60) return m + 'm ago';
+      const h = Math.floor(m/60);
+      if (h < 24) return h + 'h ago';
+      return Math.floor(h/24) + 'd ago';
+    }
+    function shortAddr(a) {
+      if (!a) return '—';
+      const s = String(a);
+      return s.length > 10 ? s.slice(0,6)+'…'+s.slice(-4) : s;
+    }
+
+    el.innerHTML = orders.map(o => {
+      const prod   = ((o.items&&o.items[0]&&o.items[0].name)||o.productId||'Purchase').replace(/</g,'&lt;');
+      const amount = parseFloat(o.amount||0).toFixed(2);
+      const tok    = o.token||'USDC';
+      const buyer  = shortAddr(o.buyerAddress);
+      const time   = relTime(o.createdAt);
+      return \`
+        <div class="hgc-activity-row">
+          <div class="hgc-activity-icon"><i class="fas fa-check-circle"></i></div>
+          <div class="hgc-activity-text">
+            <p class="hgc-activity-product">\${prod}</p>
+            <p class="hgc-activity-addr">\${buyer}</p>
+          </div>
+          <span class="hgc-activity-amount">+\${amount} <small style="font-size:9px;font-weight:600;opacity:.7;">\${tok}</small></span>
+          <span class="hgc-activity-time">\${time}</span>
+        </div>\`;
+    }).join('');
+  }
+
+  /* ─── Glass card: Network status pill ─────────────────────────────── */
+  async function updateGlassNetStatus() {
+    const pill = document.getElementById('hgc-net-status');
+    if (!pill) return;
+    try {
+      const rpc = (window.ARC && window.ARC.rpc) || 'https://rpc.arc.testnet.circle.com';
+      const res = await fetch(rpc, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({jsonrpc:'2.0',method:'eth_blockNumber',params:[],id:1}),
+        signal:AbortSignal.timeout(6000)
+      });
+      const data = await res.json();
+      if (data.result) {
+        pill.className = 'hgc-net-pill hgc-net-pill--online';
+        pill.innerHTML = '<span class="hgc-net-dot"></span><span>Online</span>';
+      } else { throw new Error('no result'); }
+    } catch {
+      pill.className = 'hgc-net-pill hgc-net-pill--offline';
+      pill.innerHTML = '<span class="hgc-net-dot"></span><span>Offline</span>';
+    }
+  }
+
+  /* ─── Sticky Category Nav ──────────────────────────────────────────── */
+  function initCatNav() {
+    const nav   = document.getElementById('home-cat-nav');
+    const track = document.getElementById('catnav-track');
+    const btnL  = document.getElementById('catnav-left');
+    const btnR  = document.getElementById('catnav-right');
+    if (!nav || !track) return;
+
+    /* Sticky behaviour */
+    const sentinel = document.createElement('div');
+    sentinel.style.cssText = 'height:1px;pointer-events:none;';
+    nav.parentNode.insertBefore(sentinel, nav);
+    const obs = new IntersectionObserver(([e]) => {
+      nav.classList.toggle('is-sticky', !e.isIntersecting);
+    }, { threshold:0, rootMargin:'0px' });
+    obs.observe(sentinel);
+
+    /* Scroll arrows */
+    const STEP = 220;
+    if (btnL) btnL.addEventListener('click', () => track.scrollBy({left:-STEP, behavior:'smooth'}));
+    if (btnR) btnR.addEventListener('click', () => track.scrollBy({left: STEP, behavior:'smooth'}));
+
+    /* Active item by URL param */
+    const urlCat = new URLSearchParams(location.search).get('cat');
+    if (urlCat) {
+      track.querySelectorAll('.home-cat-nav-item').forEach(a => {
+        a.classList.toggle('home-cat-nav-item--active',
+          decodeURIComponent(a.dataset.cat||'') === urlCat);
+      });
+    }
+
+    /* Drag-to-scroll on desktop */
+    let isDown = false, startX = 0, scrollL = 0;
+    track.addEventListener('mousedown',  e => { isDown=true; startX=e.pageX-track.offsetLeft; scrollL=track.scrollLeft; track.style.cursor='grabbing'; });
+    track.addEventListener('mouseleave', () => { isDown=false; track.style.cursor=''; });
+    track.addEventListener('mouseup',    () => { isDown=false; track.style.cursor=''; });
+    track.addEventListener('mousemove',  e => { if(!isDown) return; e.preventDefault(); const x=e.pageX-track.offsetLeft; track.scrollLeft=scrollL-(x-startX); });
   }
   </script>
   `)
