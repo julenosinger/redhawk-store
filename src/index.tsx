@@ -732,6 +732,127 @@ app.get('/api/orders', (c) => {
   })
 })
 
+// ─── GET /api/orders/on-chain — fetch real escrow events from Arc Network ──────
+// Queries EscrowFunded events via eth_getLogs (last ~5000 blocks ≈ ~4 hours).
+// Optional query params:
+//   ?buyer=0x...   — filter by buyer address (topic2, case-insensitive)
+//   ?limit=N       — max results (default 20, max 50)
+// Returns: { orders: [...], source: 'on_chain', blockRange: [...], total: N }
+app.get('/api/orders/on-chain', async (c) => {
+  try {
+    const buyerParam = (c.req.query('buyer') || '').trim().toLowerCase()
+    const limitParam = Math.min(parseInt(c.req.query('limit') || '20'), 50)
+
+    // EscrowFunded(bytes32 indexed orderId, address indexed buyer, uint256 amount)
+    // topic0 = keccak256("EscrowFunded(bytes32,address,uint256)")
+    const ESCROW_FUNDED_TOPIC = '0x98566ec8f6eb0fe52b22bf89e56b38a1c78a779bed8e49e9e1e76f88c5b33975'
+
+    const escrowAddress = ARC.contracts.ShuklyEscrow
+
+    // Get latest block
+    const latestHex: string = await arcRpc('eth_blockNumber', [])
+    const latest = parseInt(latestHex, 16)
+    // Look back ~5000 blocks (~4 hours on Arc testnet ≈ 3s blocks)
+    const fromBlock = '0x' + Math.max(0, latest - 5000).toString(16)
+
+    // Build topics filter
+    let buyerTopic: string | null = null
+    if (buyerParam && /^0x[0-9a-f]{40}$/i.test(buyerParam)) {
+      buyerTopic = '0x000000000000000000000000' + buyerParam.replace('0x', '').toLowerCase()
+    }
+
+    const topics: (string | null)[] = [ESCROW_FUNDED_TOPIC, null, buyerTopic]
+
+    const logs: any[] = await arcRpc('eth_getLogs', [{
+      fromBlock,
+      toBlock: 'latest',
+      address: escrowAddress,
+      topics
+    }])
+
+    if (!Array.isArray(logs) || logs.length === 0) {
+      return c.json({
+        orders: [],
+        source: 'on_chain',
+        blockRange: [parseInt(fromBlock, 16), latest],
+        total: 0,
+        message: 'No EscrowFunded events found in recent blocks'
+      })
+    }
+
+    // Parse logs → order objects
+    const orders: any[] = []
+    for (const log of logs.slice(-limitParam)) {
+      try {
+        const orderId32  = log.topics?.[1] || ''  // bytes32 orderId
+        const buyerAddr  = '0x' + (log.topics?.[2] || '').slice(-40)  // address buyer
+        // data = uint256 amount (32 bytes)
+        const amountRaw  = log.data && log.data !== '0x' ? BigInt(log.data) : BigInt(0)
+        // Determine token from escrow state (try getEscrow view call)
+        let token = 'USDC'
+        let tokenRaw = ''
+        let sellerAddr = ''
+        let escrowState = 1  // 1 = FUNDED
+        try {
+          // getEscrow(bytes32 orderId) returns (buyer, seller, token, amount, state, createdAt)
+          const callData = '0x' +
+            'c1f8b5d1' +  // getEscrow selector — keccak256("getEscrow(bytes32)")[:4]
+            orderId32.replace('0x','').padStart(64,'0')
+          const result: string = await arcRpc('eth_call', [{
+            to: escrowAddress,
+            data: callData
+          }, 'latest'])
+          if (result && result !== '0x' && result.length >= 2 + 6*64) {
+            const r = result.replace('0x','')
+            sellerAddr = '0x' + r.slice(64, 128).slice(-40)
+            tokenRaw   = '0x' + r.slice(128, 192).slice(-40)
+            escrowState = parseInt(r.slice(256, 320), 16)
+            // Identify token by address
+            if (tokenRaw.toLowerCase() === ARC.contracts.EURC.toLowerCase()) token = 'EURC'
+            else token = 'USDC'
+          }
+        } catch { /* fallback — leave defaults */ }
+
+        const amountHuman = (Number(amountRaw) / 1e6).toFixed(2)
+        const statusMap: Record<number,string> = {
+          0:'escrow_pending', 1:'escrow_locked', 2:'delivery_confirmed',
+          3:'funds_released', 4:'refunded', 5:'disputed'
+        }
+
+        orders.push({
+          id:            orderId32,
+          orderId32,
+          txHash:        log.transactionHash || '',
+          fundTxHash:    log.transactionHash || '',
+          buyerAddress:  buyerAddr,
+          sellerAddress: sellerAddr,
+          amount:        amountHuman,
+          token,
+          status:        statusMap[escrowState] || 'escrow_locked',
+          escrowState,
+          blockNumber:   parseInt(log.blockNumber || '0x0', 16),
+          explorerUrl:   ARC.explorer + '/tx/' + (log.transactionHash || ''),
+          source:        'on_chain'
+        })
+      } catch { /* skip malformed log */ }
+    }
+
+    return c.json({
+      orders: orders.reverse(),  // newest first
+      source: 'on_chain',
+      blockRange: [parseInt(fromBlock, 16), latest],
+      total: orders.length
+    })
+  } catch (err: any) {
+    console.error('[orders/on-chain]', err)
+    return c.json({
+      orders: [],
+      error: err.message || 'Failed to fetch on-chain orders',
+      source: 'on_chain'
+    }, 500)
+  }
+})
+
 // Stats: fetched from blockchain in real-time (frontend calls RPC)
 app.get('/api/stats', (c) => {
   return c.json({
@@ -1139,7 +1260,7 @@ const ARC_CLIENT_CONFIG = JSON.stringify({
 })
 
 // ─── HTML Shell ───────────────────────────────────────────────────────
-function shell(title: string, body: string, extraHead = '') {
+function shell(title: string, body: string, extraHead = '', catNav = '') {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1220,6 +1341,21 @@ function shell(title: string, body: string, extraHead = '') {
     #testnet-banner .banner-close:hover{background:#fca5a5;color:#450a0a}
     nav{background:#fff;border-bottom:1px solid #f1f5f9;position:sticky;top:36px;z-index:100;box-shadow:0 1px 4px rgba(0,0,0,.06)}
     body.banner-hidden nav{top:0}
+    /* ─── Category secondary nav (home page only — injected via shell catNav) ─── */
+    .home-cat-nav{width:100%;background:#fff;border-bottom:1px solid #f0f4f8;position:sticky;top:100px;z-index:90;box-shadow:0 2px 12px rgba(0,0,0,.06);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);}
+    body.banner-hidden .home-cat-nav{top:64px;}
+    .home-cat-nav-inner{max-width:1320px;margin:0 auto;padding:0 24px;display:flex;align-items:center;gap:0;position:relative;}
+    .home-cat-nav-arrow{flex-shrink:0;width:32px;height:32px;border-radius:50%;background:#fff;border:1.5px solid #e2e8f0;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:11px;color:#64748b;transition:all .2s;z-index:2;box-shadow:0 2px 8px rgba(0,0,0,.08);}
+    .home-cat-nav-arrow:hover{background:#f8fafc;border-color:#cbd5e1;color:#1e293b;transform:scale(1.08);}
+    .home-cat-nav-arrow--left{margin-right:8px;} .home-cat-nav-arrow--right{margin-left:8px;}
+    .home-cat-nav-track{display:flex;align-items:center;gap:4px;overflow-x:auto;scroll-behavior:smooth;padding:10px 0;flex:1;scrollbar-width:none;-ms-overflow-style:none;}
+    .home-cat-nav-track::-webkit-scrollbar{display:none;}
+    .home-cat-nav-item{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border-radius:999px;text-decoration:none;white-space:nowrap;border:1.5px solid transparent;font-size:13px;font-weight:600;color:#475569;background:#f8fafc;transition:all .2s;flex-shrink:0;}
+    .home-cat-nav-item:hover{background:color-mix(in srgb,var(--cnav-accent) 10%,white);border-color:var(--cnav-accent);color:var(--cnav-accent);transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.08);}
+    .home-cat-nav-item--active{background:color-mix(in srgb,var(--cnav-accent) 12%,white);border-color:var(--cnav-accent);color:var(--cnav-accent);box-shadow:0 2px 8px rgba(0,0,0,.06);}
+    .home-cat-nav-icon{width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;}
+    .home-cat-nav-label{line-height:1;}
+    @media(max-width:960px){.home-cat-nav-inner{padding:0 12px;} .home-cat-nav-arrow{display:none;} .home-cat-nav-track{gap:6px;padding:8px 0;} .home-cat-nav-item{font-size:12px;padding:6px 11px;} .home-cat-nav-icon{width:22px;height:22px;font-size:11px;}}
     footer{background:#1e293b;color:#94a3b8;padding:48px 0 24px}
     .hero-gradient{background:linear-gradient(135deg,#fff1f1 0%,#fef2f2 30%,#fff 60%,#f8fafc 100%)}
     .loading-spinner{display:inline-block;width:20px;height:20px;border:2px solid #f3f3f3;border-top:2px solid #dc2626;border-radius:50%;animation:spin 1s linear infinite}
@@ -1287,6 +1423,7 @@ function shell(title: string, body: string, extraHead = '') {
   </script>
 
   ${navbar()}
+  ${catNav}
   ${body}
   ${chatWidget()}
   ${toastContainer()}
@@ -2162,18 +2299,51 @@ function footer() {
   </footer>`
 }
 
+// ─── Shared category list (used by both shell catNav and homePage cards) ───────
+const HOME_CATEGORIES = [
+  { name:'Electronics',            icon:'fas fa-laptop',       accent:'#3b82f6', bg:'#eff6ff' },
+  { name:'Gaming',                 icon:'fas fa-gamepad',       accent:'#8b5cf6', bg:'#f5f3ff' },
+  { name:'Audio',                  icon:'fas fa-headphones',    accent:'#10b981', bg:'#ecfdf5' },
+  { name:'Photography',            icon:'fas fa-camera',        accent:'#f59e0b', bg:'#fffbeb' },
+  { name:'Pet Shop',               icon:'fas fa-paw',           accent:'#f97316', bg:'#fff7ed' },
+  { name:'Baby & Kids',            icon:'fas fa-baby',          accent:'#0ea5e9', bg:'#f0f9ff' },
+  { name:'Beauty & Personal Care', icon:'fas fa-spa',           accent:'#fb7185', bg:'#fff1f2' },
+  { name:'Fashion & Accessories',  icon:'fas fa-tshirt',        accent:'#7c3aed', bg:'#f5f3ff' },
+]
+
+// ─── Category nav HTML (injected into shell() as secondary navbar) ────────────
+function catNavHTML() {
+  return `
+  <!-- ══════════════════════════════════════════════════
+       CATEGORY NAV — secondary bar, directly below main header
+  ══════════════════════════════════════════════════ -->
+  <div id="home-cat-nav" class="home-cat-nav" role="navigation" aria-label="Product categories">
+    <div class="home-cat-nav-inner">
+      <button class="home-cat-nav-arrow home-cat-nav-arrow--left" id="catnav-left" aria-label="Scroll left">
+        <i class="fas fa-chevron-left"></i>
+      </button>
+      <div class="home-cat-nav-track" id="catnav-track">
+        ${HOME_CATEGORIES.map((c,i) => `
+          <a href="/marketplace?cat=${encodeURIComponent(c.name)}"
+             class="home-cat-nav-item${i===0?' home-cat-nav-item--active':''}"
+             data-cat="${encodeURIComponent(c.name)}"
+             style="--cnav-accent:${c.accent};">
+            <span class="home-cat-nav-icon" style="background:${c.bg};">
+              <i class="${c.icon}" style="color:${c.accent};"></i>
+            </span>
+            <span class="home-cat-nav-label">${c.name}</span>
+          </a>`).join('')}
+      </div>
+      <button class="home-cat-nav-arrow home-cat-nav-arrow--right" id="catnav-right" aria-label="Scroll right">
+        <i class="fas fa-chevron-right"></i>
+      </button>
+    </div>
+  </div>`
+}
+
 // ─── PAGE: HOME ────────────────────────────────────────────────────────
 function homePage() {
-  const categories = [
-    { name:'Electronics',            icon:'fas fa-laptop',       accent:'#3b82f6', bg:'#eff6ff' },
-    { name:'Gaming',                 icon:'fas fa-gamepad',       accent:'#8b5cf6', bg:'#f5f3ff' },
-    { name:'Audio',                  icon:'fas fa-headphones',    accent:'#10b981', bg:'#ecfdf5' },
-    { name:'Photography',            icon:'fas fa-camera',        accent:'#f59e0b', bg:'#fffbeb' },
-    { name:'Pet Shop',               icon:'fas fa-paw',           accent:'#f97316', bg:'#fff7ed' },
-    { name:'Baby & Kids',            icon:'fas fa-baby',          accent:'#0ea5e9', bg:'#f0f9ff' },
-    { name:'Beauty & Personal Care', icon:'fas fa-spa',           accent:'#fb7185', bg:'#fff1f2' },
-    { name:'Fashion & Accessories',  icon:'fas fa-tshirt',        accent:'#7c3aed', bg:'#f5f3ff' },
-  ]
+  const categories = HOME_CATEGORIES
 
   const catCards = categories.map(c => `
     <a href="/marketplace?cat=${encodeURIComponent(c.name)}" class="home-cat-card"
@@ -2390,32 +2560,6 @@ function homePage() {
         </div>`).join('')}
     </div>
   </section>
-
-  <!-- ══════════════════════════════════════════════════
-       STICKY CATEGORY NAV — full-width, below header
-  ══════════════════════════════════════════════════ -->
-  <div id="home-cat-nav" class="home-cat-nav">
-    <div class="home-cat-nav-inner">
-      <button class="home-cat-nav-arrow home-cat-nav-arrow--left" id="catnav-left" aria-label="Scroll left">
-        <i class="fas fa-chevron-left"></i>
-      </button>
-      <div class="home-cat-nav-track" id="catnav-track">
-        ${categories.map((c,i) => `
-          <a href="/marketplace?cat=${encodeURIComponent(c.name)}"
-             class="home-cat-nav-item${i===0?' home-cat-nav-item--active':''}"
-             data-cat="${encodeURIComponent(c.name)}"
-             style="--cnav-accent:${c.accent};">
-            <span class="home-cat-nav-icon" style="background:${c.bg};">
-              <i class="${c.icon}" style="color:${c.accent};"></i>
-            </span>
-            <span class="home-cat-nav-label">${c.name}</span>
-          </a>`).join('')}
-      </div>
-      <button class="home-cat-nav-arrow home-cat-nav-arrow--right" id="catnav-right" aria-label="Scroll right">
-        <i class="fas fa-chevron-right"></i>
-      </button>
-    </div>
-  </div>
 
   <!-- ══════════════════════════════════════════════════
        DEMO NOTICE
@@ -2873,78 +3017,6 @@ function homePage() {
   }
   .home-view-all:hover{background:#fef2f2;border-color:#ef4444;}
 
-  /* ─── Sticky Category Nav ─── */
-  .home-cat-nav {
-    width:100%;background:#fff;border-bottom:1px solid #f0f4f8;
-    position:relative;z-index:40;
-    transition:box-shadow .25s,background .25s,backdrop-filter .25s;
-  }
-  .home-cat-nav.is-sticky {
-    position:sticky;top:64px;  /* below navbar (h-16 = 64px) */
-    background:rgba(255,255,255,.92);
-    backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
-    box-shadow:0 4px 20px rgba(0,0,0,.08);
-    border-bottom-color:transparent;
-  }
-  .home-cat-nav-inner {
-    max-width:1320px;margin:0 auto;padding:0 24px;
-    display:flex;align-items:center;gap:0;position:relative;
-  }
-  .home-cat-nav-arrow {
-    flex-shrink:0;width:32px;height:32px;border-radius:50%;
-    background:#fff;border:1.5px solid #e2e8f0;
-    display:flex;align-items:center;justify-content:center;
-    cursor:pointer;font-size:11px;color:#64748b;
-    transition:all .2s;z-index:2;
-    box-shadow:0 2px 8px rgba(0,0,0,.08);
-  }
-  .home-cat-nav-arrow:hover{background:#f8fafc;border-color:#cbd5e1;color:#1e293b;transform:scale(1.08);}
-  .home-cat-nav-arrow--left{margin-right:8px;}
-  .home-cat-nav-arrow--right{margin-left:8px;}
-  .home-cat-nav-track {
-    display:flex;align-items:center;gap:4px;
-    overflow-x:auto;scroll-behavior:smooth;
-    padding:12px 0;flex:1;
-    /* hide scrollbar */
-    scrollbar-width:none;-ms-overflow-style:none;
-  }
-  .home-cat-nav-track::-webkit-scrollbar{display:none;}
-  .home-cat-nav-item {
-    display:inline-flex;align-items:center;gap:8px;
-    padding:7px 14px;border-radius:999px;
-    text-decoration:none;white-space:nowrap;
-    border:1.5px solid transparent;
-    font-size:13px;font-weight:600;color:#475569;
-    background:#f8fafc;
-    transition:all .2s;flex-shrink:0;
-  }
-  .home-cat-nav-item:hover {
-    background:color-mix(in srgb, var(--cnav-accent) 10%, white);
-    border-color:var(--cnav-accent);
-    color:var(--cnav-accent);
-    transform:translateY(-1px);
-    box-shadow:0 4px 12px rgba(0,0,0,.08);
-  }
-  .home-cat-nav-item--active {
-    background:color-mix(in srgb, var(--cnav-accent) 12%, white);
-    border-color:var(--cnav-accent);
-    color:var(--cnav-accent);
-    box-shadow:0 2px 8px rgba(0,0,0,.06);
-  }
-  .home-cat-nav-icon {
-    width:26px;height:26px;border-radius:8px;
-    display:flex;align-items:center;justify-content:center;
-    font-size:12px;flex-shrink:0;
-  }
-  .home-cat-nav-label{line-height:1;}
-  @media(max-width:960px){
-    .home-cat-nav-inner{padding:0 16px;}
-    .home-cat-nav-arrow{display:none;}
-    .home-cat-nav-track{gap:6px;padding:10px 0;}
-    .home-cat-nav-item{font-size:12px;padding:6px 12px;}
-    .home-cat-nav-icon{width:22px;height:22px;font-size:11px;}
-  }
-
   /* ─── Loading state ─── */
   .home-loading{text-align:center;padding:72px 0;}
   .home-loading .loading-spinner-lg{margin:0 auto 20px;}
@@ -3367,16 +3439,16 @@ function homePage() {
         +'<p style="font-size:14px;color:#64748b;">Failed to load products. Check your connection.</p></div>';
     }
 
-    /* ── Recent Sales ── */
-    renderRecentSales();
+    /* ── Recent Sales (on-chain first, localStorage fallback) ── */
+    renderRecentSales();   // async — fires immediately, no await needed (self-updating)
 
-    /* ── Glass card: live activity ── */
-    renderGlassActivity();
+    /* ── Glass card: live activity (on-chain first, localStorage fallback) ── */
+    renderGlassActivity(); // async — fires immediately
 
     /* ── Glass card: network status pill ── */
     updateGlassNetStatus();
 
-    /* ── Sticky category nav ── */
+    /* ── Category nav interactions ── */
     initCatNav();
   });
 
@@ -3436,22 +3508,52 @@ function homePage() {
   }
 
   /* ─── Recent Sales renderer ───────────────────────────────────────────
-     Reads real orders from localStorage key 'rh_orders' (saved by confirmOrder
-     after on-chain escrow funding). Falls back gracefully when empty.
+     Priority: 1) /api/orders/on-chain  2) localStorage rh_orders (cache)
+     Merges both sources, deduplicates by txHash/orderId32, shows newest 6.
   ─────────────────────────────────────────────────────────────────────── */
-  function renderRecentSales() {
+  async function renderRecentSales() {
     const el = document.getElementById('home-recent-sales-container');
     if (!el) return;
 
+    // Show loading spinner immediately
+    el.innerHTML = \`<div class="home-loading"><div class="loading-spinner-lg"></div><p>Loading on-chain sales…</p></div>\`;
+
+    /* 1. Try on-chain first (works across all browsers — no localStorage dependency) */
     let orders = [];
     try {
-      const raw = localStorage.getItem('rh_orders');
-      if (raw) orders = JSON.parse(raw);
-    } catch { orders = []; }
+      const res = await fetch('/api/orders/on-chain?limit=20', { signal: AbortSignal.timeout(12000) });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.orders)) orders = data.orders;
+      }
+    } catch { /* network timeout — fall through to localStorage */ }
+
+    /* 2. Merge localStorage orders (same-browser cache, for product name enrichment) */
+    let localOrders = [];
+    try { const r = localStorage.getItem('rh_orders'); if (r) localOrders = JSON.parse(r); } catch {}
+    if (Array.isArray(localOrders) && localOrders.length) {
+      // Merge: on-chain orders take precedence; local adds product name if on-chain lacks it
+      const onChainIds = new Set(orders.map(o => (o.fundTxHash || o.txHash || '').toLowerCase()));
+      for (const lo of localOrders) {
+        const id = (lo.fundTxHash || lo.txHash || '').toLowerCase();
+        if (!id || onChainIds.has(id)) {
+          // enrich existing on-chain entry with product name from local
+          const match = orders.find(o => (o.fundTxHash||o.txHash||'').toLowerCase() === id);
+          if (match && !match.items && lo.items) match.items = lo.items;
+          if (match && !match.productId && lo.productId) match.productId = lo.productId;
+          continue;
+        }
+        orders.push(lo);
+      }
+    }
 
     // Sort newest first, cap at 6
-    orders = (Array.isArray(orders) ? orders : [])
-      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+    orders = orders
+      .sort((a, b) => {
+        const ta = b.blockNumber ? b.blockNumber : (new Date(b.createdAt||0).getTime()/1000);
+        const tb = a.blockNumber ? a.blockNumber : (new Date(a.createdAt||0).getTime()/1000);
+        return ta - tb;
+      })
       .slice(0, 6);
 
     if (!orders.length) {
@@ -3488,14 +3590,11 @@ function homePage() {
         return d.toLocaleDateString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
       } catch { return ''; }
     }
-    function explorerUrl(hash) {
-      return 'https://testnet.arcscan.app/tx/' + (hash || '');
-    }
 
     const explorer = (window.ARC && window.ARC.explorer) || 'https://testnet.arcscan.app';
 
     const cards = orders.map(o => {
-      const product   = ((o.items && o.items[0] && o.items[0].name) || o.productId || 'Unknown Product');
+      const product   = ((o.items && o.items[0] && o.items[0].name) || o.productId || 'On-chain Escrow');
       const amount    = parseFloat(o.amount || 0).toFixed(2);
       const token     = o.token || 'USDC';
       const buyer     = shortAddr(o.buyerAddress);
@@ -3506,10 +3605,13 @@ function homePage() {
       const date      = fmtDate(o.createdAt);
       const statusMap = {
         escrow_locked:      'Escrow Locked',
+        escrow_pending:     'Pending',
+        delivery_confirmed: 'Delivery Confirmed',
+        funds_released:     'Completed',
+        refunded:           'Refunded',
+        disputed:           'Disputed',
         delivered:          'Delivered',
         completed:          'Completed',
-        funds_released:     'Completed',
-        escrow_funded:      'Escrow Funded',
       };
       const statusLabel = statusMap[o.status] || 'Escrow Locked';
 
@@ -3529,11 +3631,12 @@ function homePage() {
               <span>Buyer:</span>
               <span class="home-rs-addr">\${buyer}</span>
             </div>
+            \${seller ? \`
             <div class="home-rs-meta-row">
               <span class="home-rs-meta-icon"><i class="fas fa-store"></i></span>
               <span>Seller:</span>
               <span class="home-rs-addr">\${seller}</span>
-            </div>
+            </div>\` : ''}
             \${txHash ? \`
             <div class="home-rs-meta-row">
               <span class="home-rs-meta-icon"><i class="fas fa-link"></i></span>
@@ -3553,17 +3656,36 @@ function homePage() {
   }
 
   /* ─── Glass card: Live Activity ───────────────────────────────────────
-     Reads rh_orders from localStorage, renders up to 3 rows in the
-     hero right-column card. Grid: [icon][text][amount][time]
+     Priority: 1) /api/orders/on-chain  2) localStorage rh_orders (cache)
+     Renders up to 3 rows in the hero right-column card.
   ─────────────────────────────────────────────────────────────────────── */
-  function renderGlassActivity() {
+  async function renderGlassActivity() {
     const el = document.getElementById('hgc-activity-list');
     if (!el) return;
 
+    /* 1. Try on-chain */
     let orders = [];
-    try { const r = localStorage.getItem('rh_orders'); if (r) orders = JSON.parse(r); } catch {}
-    orders = (Array.isArray(orders) ? orders : [])
-      .sort((a,b) => new Date(b.createdAt||0) - new Date(a.createdAt||0))
+    try {
+      const res = await fetch('/api/orders/on-chain?limit=10', { signal: AbortSignal.timeout(8000) });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.orders)) orders = data.orders;
+      }
+    } catch { /* fall through */ }
+
+    /* 2. Merge localStorage */
+    let localOrders = [];
+    try { const r = localStorage.getItem('rh_orders'); if (r) localOrders = JSON.parse(r); } catch {}
+    if (Array.isArray(localOrders) && localOrders.length && !orders.length) {
+      orders = localOrders;
+    }
+
+    orders = orders
+      .sort((a,b) => {
+        const ta = b.blockNumber || (new Date(b.createdAt||0).getTime()/1000);
+        const tb = a.blockNumber || (new Date(a.createdAt||0).getTime()/1000);
+        return ta - tb;
+      })
       .slice(0,3);
 
     if (!orders.length) {
@@ -3588,7 +3710,7 @@ function homePage() {
     }
 
     el.innerHTML = orders.map(o => {
-      const prod   = ((o.items&&o.items[0]&&o.items[0].name)||o.productId||'Purchase').replace(/</g,'&lt;');
+      const prod   = ((o.items&&o.items[0]&&o.items[0].name)||o.productId||'On-chain Escrow').replace(/</g,'&lt;');
       const amount = parseFloat(o.amount||0).toFixed(2);
       const tok    = o.token||'USDC';
       const buyer  = shortAddr(o.buyerAddress);
@@ -3629,22 +3751,12 @@ function homePage() {
     }
   }
 
-  /* ─── Sticky Category Nav ──────────────────────────────────────────── */
+  /* ─── Category Nav interactions ─────────────────────────────────────── */
   function initCatNav() {
-    const nav   = document.getElementById('home-cat-nav');
     const track = document.getElementById('catnav-track');
     const btnL  = document.getElementById('catnav-left');
     const btnR  = document.getElementById('catnav-right');
-    if (!nav || !track) return;
-
-    /* Sticky behaviour */
-    const sentinel = document.createElement('div');
-    sentinel.style.cssText = 'height:1px;pointer-events:none;';
-    nav.parentNode.insertBefore(sentinel, nav);
-    const obs = new IntersectionObserver(([e]) => {
-      nav.classList.toggle('is-sticky', !e.isIntersecting);
-    }, { threshold:0, rootMargin:'0px' });
-    obs.observe(sentinel);
+    if (!track) return;
 
     /* Scroll arrows */
     const STEP = 220;
@@ -3655,20 +3767,21 @@ function homePage() {
     const urlCat = new URLSearchParams(location.search).get('cat');
     if (urlCat) {
       track.querySelectorAll('.home-cat-nav-item').forEach(a => {
-        a.classList.toggle('home-cat-nav-item--active',
-          decodeURIComponent(a.dataset.cat||'') === urlCat);
+        const el = a as HTMLElement;
+        el.classList.toggle('home-cat-nav-item--active',
+          decodeURIComponent(el.dataset['cat']||'') === urlCat);
       });
     }
 
     /* Drag-to-scroll on desktop */
     let isDown = false, startX = 0, scrollL = 0;
-    track.addEventListener('mousedown',  e => { isDown=true; startX=e.pageX-track.offsetLeft; scrollL=track.scrollLeft; track.style.cursor='grabbing'; });
-    track.addEventListener('mouseleave', () => { isDown=false; track.style.cursor=''; });
-    track.addEventListener('mouseup',    () => { isDown=false; track.style.cursor=''; });
-    track.addEventListener('mousemove',  e => { if(!isDown) return; e.preventDefault(); const x=e.pageX-track.offsetLeft; track.scrollLeft=scrollL-(x-startX); });
+    track.addEventListener('mousedown',  (e:MouseEvent) => { isDown=true; startX=e.pageX-track.offsetLeft; scrollL=track.scrollLeft; (track as HTMLElement).style.cursor='grabbing'; });
+    track.addEventListener('mouseleave', () => { isDown=false; (track as HTMLElement).style.cursor=''; });
+    track.addEventListener('mouseup',    () => { isDown=false; (track as HTMLElement).style.cursor=''; });
+    track.addEventListener('mousemove',  (e:MouseEvent) => { if(!isDown) return; e.preventDefault(); const x=e.pageX-track.offsetLeft; track.scrollLeft=scrollL-(x-startX); });
   }
   </script>
-  `)
+  `, '', catNavHTML())
 }
 
 
