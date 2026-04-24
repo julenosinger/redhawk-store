@@ -345,6 +345,42 @@ const store = {
     allSt[idx].updated_at = nowISO()
     await storageSet(allSt, env.PRODUCTS_KV)
     return true
+  },
+
+  // Update product fields (seller only — name, description, price, image)
+  async update(env: Bindings, id: string, fields: Partial<Pick<Product,'title'|'description'|'price'|'image'|'token'|'stock'|'category'>>): Promise<Product | null> {
+    if (env.DB) {
+      try {
+        const sets: string[] = []
+        const vals: any[]   = []
+        if (fields.title       !== undefined) { sets.push('title=?');       vals.push(fields.title) }
+        if (fields.description !== undefined) { sets.push('description=?'); vals.push(fields.description) }
+        if (fields.price       !== undefined) { sets.push('price=?');       vals.push(fields.price) }
+        if (fields.image       !== undefined) { sets.push('image=?');       vals.push(fields.image) }
+        if (fields.token       !== undefined) { sets.push('token=?');       vals.push(fields.token) }
+        if (fields.stock       !== undefined) { sets.push('stock=?');       vals.push(fields.stock) }
+        if (fields.category    !== undefined) { sets.push('category=?');    vals.push(fields.category) }
+        if (!sets.length) return null
+        sets.push("updated_at=datetime('now')")
+        vals.push(id)
+        await env.DB.prepare(`UPDATE products SET ${sets.join(',')} WHERE id = ?`).bind(...vals).run()
+        const row = await env.DB.prepare(`SELECT * FROM products WHERE id = ?`).bind(id).first()
+        return (row as Product) || null
+      } catch (e: any) { console.error('D1 update error:', e.message) }
+    }
+    const { data: allU } = await storageGet(env.PRODUCTS_KV)
+    const idx = allU.findIndex(p => p.id === id)
+    if (idx < 0) return null
+    if (fields.title       !== undefined) allU[idx].title       = fields.title
+    if (fields.description !== undefined) allU[idx].description = fields.description
+    if (fields.price       !== undefined) allU[idx].price       = fields.price
+    if (fields.image       !== undefined) allU[idx].image       = fields.image
+    if (fields.token       !== undefined) allU[idx].token       = fields.token
+    if (fields.stock       !== undefined) allU[idx].stock       = fields.stock
+    if (fields.category    !== undefined) allU[idx].category    = fields.category
+    allU[idx].updated_at = nowISO()
+    await storageSet(allU, env.PRODUCTS_KV)
+    return allU[idx]
   }
 }
 
@@ -719,6 +755,35 @@ app.get('/api/seller/:address/products', async (c) => {
     return c.json({ products, total: products.length })
   } catch (e: any) {
     return c.json({ products: [], total: 0, error: e.message })
+  }
+})
+
+// PATCH /api/products/:id — update product fields (seller only: title, description, price, image)
+app.patch('/api/products/:id', async (c) => {
+  try {
+    await initDB(c.env.DB)
+    const body = await c.req.json() as any
+    const { seller_id, title, description, price, image, token, stock, category } = body
+    if (!seller_id) return c.json({ error: 'Missing seller_id' }, 400)
+    const row = await store.getAny(c.env, c.req.param('id'))
+    if (!row) return c.json({ error: 'Product not found' }, 404)
+    if (row.seller_id !== seller_id) return c.json({ error: 'Unauthorized' }, 403)
+    if (price !== undefined && Number(price) <= 0)
+      return c.json({ error: 'Price must be greater than 0' }, 400)
+    if (token !== undefined && !['USDC','EURC'].includes(token))
+      return c.json({ error: 'Token must be USDC or EURC' }, 400)
+    const fields: any = {}
+    if (title       !== undefined) fields.title       = String(title).trim()
+    if (description !== undefined) fields.description = String(description).trim()
+    if (price       !== undefined) fields.price       = Number(price)
+    if (image       !== undefined) fields.image       = String(image)
+    if (token       !== undefined) fields.token       = String(token)
+    if (stock       !== undefined) fields.stock       = Number(stock)
+    if (category    !== undefined) fields.category    = String(category)
+    const updated = await store.update(c.env, c.req.param('id'), fields)
+    return c.json({ product: updated, success: true })
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500)
   }
 })
 
@@ -1232,7 +1297,7 @@ app.get('/wallet/import', (c) => c.redirect('/wallet'))
 app.get('/orders', (c) => c.html(ordersPage()))
 app.get('/orders/:id', (c) => c.html(orderDetailPage(c.req.param('id'))))
 app.get('/sell', (c) => c.html(sellPage()))
-app.get('/dashboard', (c) => c.html(sellerDashboardPage()))
+app.get('/dashboard', (c) => c.redirect('/profile?tab=products', 301))
 app.get('/profile', (c) => c.html(profilePage()))
 app.get('/register', (c) => c.html(registerPage()))
 app.get('/login', (c) => c.html(loginPage()))
@@ -2059,8 +2124,8 @@ function navbar() {
       <a href="/sell" class="hidden sm:flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-colors">
         <i class="fas fa-plus-circle text-xs"></i> Sell
       </a>
-      <a href="/dashboard" class="hidden sm:flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-colors">
-        <i class="fas fa-chart-line text-xs"></i> Dashboard
+      <a href="/profile?tab=products" class="hidden sm:flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-colors">
+        <i class="fas fa-boxes text-xs"></i> My Products
       </a>
       <a href="/about" class="hidden sm:flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-colors">
         <i class="fas fa-info-circle text-xs"></i> About Us
@@ -2227,7 +2292,7 @@ function footer() {
         <div>
           <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Marketplace</p>
           <ul class="space-y-2">
-            ${['Browse:/marketplace','Sell:/sell','Dashboard:/dashboard','My Orders:/orders','Disputes:/disputes'].map(t=>{const[l,u]=t.split(':');return`<li><a href="${u}" class="text-xs text-slate-500 hover:text-red-400 transition-colors">${l}</a></li>`}).join('')}
+            ${['Browse:/marketplace','Sell:/sell','My Products:/profile?tab=products','My Orders:/orders','Disputes:/disputes'].map(t=>{const[l,u]=t.split(':');return`<li><a href="${u}" class="text-xs text-slate-500 hover:text-red-400 transition-colors">${l}</a></li>`}).join('')}
           </ul>
         </div>
 
@@ -3399,45 +3464,67 @@ function homePage() {
   </style>
 
   <script>
-  document.addEventListener('DOMContentLoaded', async () => {
-    /* Network status */
-    await checkNetworkStatus(document.getElementById('home-network-status'));
+  document.addEventListener('DOMContentLoaded', () => {
+    /* Network status — fire-and-forget, NEVER block product loading */
+    checkNetworkStatus(document.getElementById('home-network-status'));
 
-    /* Products */
-    try {
-      const res  = await fetch('/api/products');
-      const data = await res.json();
-      const el   = document.getElementById('home-products-container');
-      if (!data.products || data.products.length === 0) {
-        el.innerHTML = \`
-          <div style="background:#fff;border-radius:24px;border:1.5px solid #f0f4f8;padding:80px 24px;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,.05);">
-            <div style="width:80px;height:80px;border-radius:24px;background:linear-gradient(135deg,#fef2f2,#fee2e2);display:flex;align-items:center;justify-content:center;margin:0 auto 24px;font-size:32px;color:#fca5a5;box-shadow:0 4px 20px rgba(220,38,38,.1);">
-              <i class="fas fa-store"></i>
-            </div>
-            <h3 style="font-size:1.3rem;font-weight:900;color:#1e293b;margin:0 0 10px;letter-spacing:-.01em;">No Products Listed Yet</h3>
-            <p style="color:#94a3b8;font-size:14px;max-width:380px;margin:0 auto 32px;line-height:1.7;">Be the first seller — list your product and start earning USDC or EURC through smart contract escrow.</p>
-            <a href="/sell" class="btn-primary" style="display:inline-flex;margin:0 auto;">
-              <i class="fas fa-plus-circle"></i> List the First Product
-            </a>
-          </div>\`;
-      } else {
-        const latest = data.products.slice(0, 4);
+    /* Products — 8 s timeout, always resolves (never leaves spinner forever) */
+    (async () => {
+      const el = document.getElementById('home-products-container');
+      if (!el) return;
+      let timer;
+      const TIMEOUT_MS = 8000;
+      const timeoutEl = () => {
         el.innerHTML =
-          '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:28px;">'
-          + latest.map(renderHomeProductCard).join('')
-          + '</div>'
-          + (data.products.length > 4
-              ? \`<div style="text-align:center;margin-top:40px;"><a href="/marketplace" class="btn-secondary">View all \${data.products.length} products &nbsp;<i class="fas fa-arrow-right"></i></a></div>\`
-              : '');
-        // Lazy-load images after rendering cards
-        lazyLoadHomeImages(latest);
+          '<div style="text-align:center;padding:56px 24px;">'
+          +'<i class="fas fa-clock" style="font-size:36px;margin-bottom:16px;display:block;color:#f59e0b;opacity:.7;"></i>'
+          +'<p style="font-size:15px;font-weight:700;color:#1e293b;margin-bottom:8px;">Products are taking longer than expected</p>'
+          +'<p style="font-size:13px;color:#64748b;margin-bottom:20px;">Arc Network may be slow right now. <a href="/marketplace" style="color:#dc2626;">Try the Marketplace →</a></p>'
+          +'<button onclick="location.reload()" style="display:inline-flex;align-items:center;gap:6px;padding:8px 18px;background:#dc2626;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;"><i class="fas fa-redo"></i> Retry</button>'
+          +'</div>';
+      };
+      try {
+        const controller = new AbortController();
+        timer = setTimeout(() => { controller.abort(); timeoutEl(); }, TIMEOUT_MS);
+        const res  = await fetch('/api/products', { signal: controller.signal });
+        clearTimeout(timer);
+        const data = await res.json();
+        if (!data.products || data.products.length === 0) {
+          el.innerHTML = \`
+            <div style="background:#fff;border-radius:24px;border:1.5px solid #f0f4f8;padding:80px 24px;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,.05);">
+              <div style="width:80px;height:80px;border-radius:24px;background:linear-gradient(135deg,#fef2f2,#fee2e2);display:flex;align-items:center;justify-content:center;margin:0 auto 24px;font-size:32px;color:#fca5a5;box-shadow:0 4px 20px rgba(220,38,38,.1);">
+                <i class="fas fa-store"></i>
+              </div>
+              <h3 style="font-size:1.3rem;font-weight:900;color:#1e293b;margin:0 0 10px;letter-spacing:-.01em;">No Products Listed Yet</h3>
+              <p style="color:#94a3b8;font-size:14px;max-width:380px;margin:0 auto 32px;line-height:1.7;">Be the first seller — list your product and start earning USDC or EURC through smart contract escrow.</p>
+              <a href="/sell" class="btn-primary" style="display:inline-flex;margin:0 auto;">
+                <i class="fas fa-plus-circle"></i> List the First Product
+              </a>
+            </div>\`;
+        } else {
+          const latest = data.products.slice(0, 4);
+          el.innerHTML =
+            '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:28px;">'
+            + latest.map(renderHomeProductCard).join('')
+            + '</div>'
+            + (data.products.length > 4
+                ? \`<div style="text-align:center;margin-top:40px;"><a href="/marketplace" class="btn-secondary">View all \${data.products.length} products &nbsp;<i class="fas fa-arrow-right"></i></a></div>\`
+                : '');
+          // Lazy-load images after rendering cards
+          lazyLoadHomeImages(latest);
+        }
+      } catch (e) {
+        clearTimeout(timer);
+        if (e && e.name === 'AbortError') return; // timeout already handled
+        el.innerHTML =
+          '<div style="text-align:center;padding:56px 24px;">'
+          +'<i class="fas fa-exclamation-circle" style="font-size:36px;margin-bottom:16px;display:block;color:#ef4444;opacity:.6;"></i>'
+          +'<p style="font-size:14px;font-weight:600;color:#1e293b;margin-bottom:6px;">Failed to load products</p>'
+          +'<p style="font-size:13px;color:#64748b;margin-bottom:20px;">Check your connection and try again.</p>'
+          +'<button onclick="location.reload()" style="display:inline-flex;align-items:center;gap:6px;padding:8px 18px;background:#dc2626;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;"><i class="fas fa-redo"></i> Retry</button>'
+          +'</div>';
       }
-    } catch (e) {
-      document.getElementById('home-products-container').innerHTML =
-        '<div style="text-align:center;padding:56px 24px;color:#ef4444;">'
-        +'<i class="fas fa-exclamation-circle" style="font-size:36px;margin-bottom:16px;display:block;opacity:.6;"></i>'
-        +'<p style="font-size:14px;color:#64748b;">Failed to load products. Check your connection.</p></div>';
-    }
+    })();
 
     /* ── Recent Sales (on-chain first, localStorage fallback) ── */
     renderRecentSales();   // async — fires immediately, no await needed (self-updating)
@@ -3510,6 +3597,7 @@ function homePage() {
   /* ─── Recent Sales renderer ───────────────────────────────────────────
      Priority: 1) /api/orders/on-chain  2) localStorage rh_orders (cache)
      Merges both sources, deduplicates by txHash/orderId32, shows newest 6.
+     Hard 10 s master timeout so spinner never stays forever.
   ─────────────────────────────────────────────────────────────────────── */
   async function renderRecentSales() {
     const el = document.getElementById('home-recent-sales-container');
@@ -3518,10 +3606,28 @@ function homePage() {
     // Show loading spinner immediately
     el.innerHTML = \`<div class="home-loading"><div class="loading-spinner-lg"></div><p>Loading on-chain sales…</p></div>\`;
 
+    // Master timeout — if everything takes > 10 s, show fallback
+    let masterDone = false;
+    const masterTimer = setTimeout(() => {
+      if (masterDone) return;
+      masterDone = true;
+      el.innerHTML = \`
+        <div class="home-rs-grid">
+          <div class="home-rs-empty" style="grid-column:1/-1;text-align:center;padding:48px 24px;">
+            <div class="home-rs-empty-icon"><i class="fas fa-clock"></i></div>
+            <h3 style="font-size:1.1rem;font-weight:800;color:#1e293b;margin:0 0 8px;">Loading timed out</h3>
+            <p style="font-size:13px;color:#94a3b8;max-width:300px;margin:0 auto 20px;line-height:1.7;">
+              Arc Network is responding slowly. Sales data will appear once the network is reachable.
+            </p>
+            <button onclick="renderRecentSales()" style="display:inline-flex;align-items:center;gap:6px;padding:8px 18px;background:#dc2626;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;"><i class="fas fa-redo"></i> Retry</button>
+          </div>
+        </div>\`;
+    }, 10000);
+
     /* 1. Try on-chain first (works across all browsers — no localStorage dependency) */
     let orders = [];
     try {
-      const res = await fetch('/api/orders/on-chain?limit=20', { signal: AbortSignal.timeout(12000) });
+      const res = await fetch('/api/orders/on-chain?limit=20', { signal: AbortSignal.timeout(8000) });
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data.orders)) orders = data.orders;
@@ -3557,6 +3663,7 @@ function homePage() {
       .slice(0, 6);
 
     if (!orders.length) {
+      masterDone = true; clearTimeout(masterTimer);
       el.innerHTML = \`
         <div class="home-rs-grid">
           <div class="home-rs-empty">
@@ -3652,6 +3759,7 @@ function homePage() {
         </div>\`;
     }).join('');
 
+    masterDone = true; clearTimeout(masterTimer);
     el.innerHTML = '<div class="home-rs-grid">' + cards + '</div>';
   }
 
@@ -7810,178 +7918,312 @@ function sellPage() {
   `)
 }
 
-// ─── PAGE: SELLER DASHBOARD ──────────────────────────────────────────────
-function sellerDashboardPage() {
-  return shell('Seller Dashboard', `
+// ─── PAGE: PROFILE ──────────────────────────────────────────────────────
+function profilePage() {
+  return shell('Profile', `
   <div class="max-w-5xl mx-auto px-4 py-8">
+    <h1 class="text-3xl font-bold text-slate-800 mb-6 flex items-center gap-3">
+      <i class="fas fa-user text-red-500"></i> My Profile
+    </h1>
 
-    <!-- Header -->
-    <div class="flex items-center gap-4 mb-8">
-      <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-red-500 to-red-800 flex items-center justify-center text-white text-xl shadow-lg">
-        <i class="fas fa-chart-line"></i>
-      </div>
-      <div>
-        <h1 class="text-2xl font-extrabold text-slate-800">Seller Dashboard</h1>
-        <p class="text-slate-500 text-sm">Manage your listings on Arc Network</p>
-      </div>
-      <a href="/sell" class="ml-auto btn-primary text-sm"><i class="fas fa-plus-circle mr-1"></i> New Listing</a>
+    <!-- Decentralized marketplace helper text -->
+    <div class="demo-disclaimer mb-6">
+      <i class="fas fa-info-circle" style="color:#3b82f6;flex-shrink:0"></i>
+      <span>This is a decentralized marketplace. Connect your wallet to manage your products.</span>
     </div>
 
-    <!-- Wallet check -->
-    <div id="dash-wallet-check" class="mb-6"></div>
-
-    <!-- Stats row -->
-    <div id="dash-stats" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8"></div>
-
-    <!-- Products table -->
-    <div class="card p-6">
-      <div class="flex items-center justify-between mb-5">
-        <h2 class="font-bold text-slate-800 text-lg flex items-center gap-2">
-          <i class="fas fa-boxes text-red-500"></i> My Products
-        </h2>
-        <div class="flex gap-2">
-          <button onclick="filterDashProducts('all')" id="df-all" class="dash-filter-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-600 text-white">All</button>
-          <button onclick="filterDashProducts('active')" id="df-active" class="dash-filter-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200">Active</button>
-          <button onclick="filterDashProducts('paused')" id="df-paused" class="dash-filter-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200">Paused</button>
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <!-- Sidebar -->
+      <div class="card p-5">
+        <div class="text-center mb-5">
+          <div class="w-16 h-16 rounded-full bg-gradient-to-br from-red-400 to-red-700 flex items-center justify-center text-white text-2xl font-bold mx-auto mb-2">
+            <i class="fas fa-user"></i>
+          </div>
+          <p class="font-bold text-slate-800 text-sm break-all" id="prof-address">Not connected</p>
+          <div class="mt-1" id="prof-network-badge"></div>
         </div>
+        <nav class="sidebar-nav space-y-1" id="prof-sidebar-nav">
+          <a href="#" onclick="profShowTab('overview');return false;" class="active" id="pnav-overview"><i class="fas fa-user w-4"></i> Overview</a>
+          <a href="#" onclick="profShowTab('products');return false;" id="pnav-products"><i class="fas fa-boxes w-4"></i> My Products</a>
+          <a href="/orders"><i class="fas fa-box w-4"></i> My Orders</a>
+          <a href="/wallet"><i class="fas fa-wallet w-4"></i> Wallet</a>
+          <a href="/sell"><i class="fas fa-store w-4"></i> Sell</a>
+          <a href="/disputes"><i class="fas fa-gavel w-4"></i> Disputes</a>
+          <a href="/notifications"><i class="fas fa-bell w-4"></i> Notifications</a>
+        </nav>
       </div>
-      <div id="dash-products-container">
-        <!-- populated by JS — no static spinner to avoid permanent loading state -->
-      </div>
-    </div>
 
+      <!-- Main content -->
+      <div class="md:col-span-3 space-y-5">
+
+        <!-- ══ TAB: OVERVIEW ══ -->
+        <div id="prof-tab-overview">
+          <div class="card p-6">
+            <h2 class="font-bold text-slate-800 text-lg mb-4">Personal Information</h2>
+            <div class="space-y-4">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div><label class="block text-sm font-medium text-slate-700 mb-1">Full Name</label><input type="text" placeholder="Your name" class="input"/></div>
+                <div><label class="block text-sm font-medium text-slate-700 mb-1">Email</label><input type="email" placeholder="your@email.com" class="input"/></div>
+              </div>
+              <div><label class="block text-sm font-medium text-slate-700 mb-1">Shipping Address</label><input type="text" placeholder="Street, City, Country" class="input"/></div>
+              <button onclick="showToast('Profile saved locally','success')" class="btn-primary"><i class="fas fa-save"></i> Save Changes</button>
+            </div>
+          </div>
+          <!-- Wallet on-chain info -->
+          <div class="card p-5 mt-5">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                <i class="fas fa-wallet text-red-500"></i> Arc Network Wallet
+              </h3>
+              <a href="/wallet" class="text-red-600 text-sm hover:underline">Manage →</a>
+            </div>
+            <div id="prof-wallet-info" class="text-slate-400 text-sm">Loading…</div>
+          </div>
+          <!-- Stats (on-chain via /api/orders/on-chain) -->
+          <div class="grid grid-cols-3 gap-4 mt-5" id="prof-stats">
+            <div class="card p-4 text-center"><i class="fas fa-box text-red-500 text-xl mb-2 block"></i><p class="text-2xl font-extrabold text-slate-800" id="stat-orders">—</p><p class="text-slate-400 text-xs">Orders</p></div>
+            <div class="card p-4 text-center"><i class="fas fa-coins text-red-500 text-xl mb-2 block"></i><p class="text-2xl font-extrabold text-slate-800" id="stat-spent">—</p><p class="text-slate-400 text-xs">USDC Spent</p></div>
+            <div class="card p-4 text-center"><i class="fas fa-store text-green-500 text-xl mb-2 block"></i><p class="text-2xl font-extrabold text-slate-800" id="stat-listings">—</p><p class="text-slate-400 text-xs">Listings</p></div>
+          </div>
+        </div>
+
+        <!-- ══ TAB: MY PRODUCTS ══ -->
+        <div id="prof-tab-products" style="display:none;">
+          <div class="card p-6">
+            <!-- Tab header -->
+            <div class="flex items-center justify-between mb-5">
+              <h2 class="font-bold text-slate-800 text-lg flex items-center gap-2">
+                <i class="fas fa-boxes text-red-500"></i> My Products
+              </h2>
+              <div class="flex gap-2 flex-wrap">
+                <button onclick="profFilterProducts('all')" id="ppf-all" class="ppf-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-600 text-white">All</button>
+                <button onclick="profFilterProducts('active')" id="ppf-active" class="ppf-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200">Active</button>
+                <button onclick="profFilterProducts('paused')" id="ppf-paused" class="ppf-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200">Paused</button>
+                <a href="/sell" class="btn-primary text-xs py-1.5 px-3"><i class="fas fa-plus mr-1"></i>New</a>
+              </div>
+            </div>
+            <div id="prof-products-container">
+              <!-- populated by JS -->
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /main content -->
+    </div><!-- /grid -->
+  </div><!-- /max-w -->
+
+  <!-- ══ EDIT PRODUCT MODAL ══ -->
+  <div id="prof-edit-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;align-items:center;justify-content:center;padding:16px;">
+    <div class="card p-6 w-full max-w-lg max-h-screen overflow-y-auto">
+      <div class="flex items-center justify-between mb-5">
+        <h3 class="font-bold text-slate-800 text-lg flex items-center gap-2"><i class="fas fa-edit text-red-500"></i> Edit Product</h3>
+        <button onclick="profCloseEdit()" class="w-8 h-8 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600"><i class="fas fa-times"></i></button>
+      </div>
+      <form id="prof-edit-form" onsubmit="profSaveProduct(event)" class="space-y-4">
+        <input type="hidden" id="pedit-id"/>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Product Name *</label>
+          <input type="text" id="pedit-title" class="input" placeholder="Product name" required/>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Description *</label>
+          <textarea id="pedit-description" class="input" rows="3" placeholder="Product description" required style="height:auto;resize:vertical;"></textarea>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">Price *</label>
+            <input type="number" id="pedit-price" class="input" placeholder="0.00" step="0.01" min="0.01" required/>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">Token</label>
+            <select id="pedit-token" class="select">
+              <option value="USDC">USDC</option>
+              <option value="EURC">EURC</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Image URL</label>
+          <input type="url" id="pedit-image" class="input" placeholder="https://…"/>
+        </div>
+        <div class="flex gap-3 pt-2">
+          <button type="submit" id="pedit-save-btn" class="btn-primary flex-1"><i class="fas fa-save mr-1"></i> Save Changes</button>
+          <button type="button" onclick="profCloseEdit()" class="btn-secondary flex-1">Cancel</button>
+        </div>
+      </form>
+    </div>
   </div>
 
   <script>
-  // ── Seller Dashboard — fully functional logic ──────────────────────────
-  var _dashProducts = [];
-  var _dashFilter   = 'all';
-  var _dashAddress  = null;
+  // ── Profile page state ──────────────────────────────────────────────────
+  var _profProducts  = [];
+  var _profFilter    = 'all';
+  var _profAddress   = null;
+  var _profActiveTab = 'overview';
 
-  // ── helpers ──────────────────────────────────────────────────────────
-  function _dashShowLoading(){
-    var c = document.getElementById('dash-products-container');
-    if(c) c.innerHTML =
+  // ── Tab switching ──────────────────────────────────────────────────────
+  function profShowTab(tab) {
+    _profActiveTab = tab;
+    document.getElementById('prof-tab-overview').style.display  = (tab==='overview')  ? '' : 'none';
+    document.getElementById('prof-tab-products').style.display  = (tab==='products')  ? '' : 'none';
+    document.querySelectorAll('#prof-sidebar-nav a').forEach(function(a) {
+      a.classList.remove('active');
+    });
+    var navEl = document.getElementById('pnav-'+tab);
+    if(navEl) navEl.classList.add('active');
+    // Update URL hash without navigation
+    try { history.replaceState(null,'','/profile?tab='+tab); } catch(e){}
+    // Load products when switching to products tab
+    if(tab==='products' && _profAddress) loadProfProducts(_profAddress);
+  }
+
+  // ── Init ───────────────────────────────────────────────────────────────
+  document.addEventListener('DOMContentLoaded', async function() {
+    var w = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
+
+    if(w && w.address) {
+      _profAddress = w.address;
+      document.getElementById('prof-address').textContent = w.address.substring(0,10)+'…'+w.address.slice(-6);
+      document.getElementById('prof-network-badge').innerHTML =
+        '<span class="arc-badge text-xs"><i class="fas fa-network-wired text-xs"></i> Arc Testnet</span>';
+      var explorerBase = (window.ARC && window.ARC.explorer) || 'https://testnet.arcscan.app';
+      document.getElementById('prof-wallet-info').innerHTML =
+        '<div class="space-y-1">'
+        +'<p class="text-xs text-slate-500">Address</p>'
+        +'<p class="font-mono text-xs text-slate-700 break-all">'+w.address+'</p>'
+        +'<a href="'+explorerBase+'/address/'+w.address+'" target="_blank" class="text-blue-600 text-xs hover:underline flex items-center gap-1 mt-1">'
+        +'<i class="fas fa-external-link-alt text-xs"></i> View on Arc Explorer</a></div>';
+
+      // Load on-chain stats for buyer orders
+      loadProfStats(w.address);
+    } else {
+      document.getElementById('prof-wallet-info').innerHTML =
+        '<a href="/wallet" class="text-red-600 hover:underline">Connect wallet to see on-chain data →</a>';
+      document.getElementById('stat-orders').textContent = '—';
+      document.getElementById('stat-spent').textContent  = '—';
+      document.getElementById('stat-listings').textContent = '—';
+    }
+
+    // Read URL param to auto-switch tab
+    var tabParam = new URLSearchParams(location.search).get('tab');
+    if(tabParam === 'products') {
+      profShowTab('products');
+    }
+  });
+
+  // ── Load on-chain stats ───────────────────────────────────────────────
+  async function loadProfStats(address) {
+    try {
+      // On-chain buyer orders
+      var res = await fetch('/api/orders/on-chain?buyer='+encodeURIComponent(address)+'&limit=50', {
+        signal: AbortSignal.timeout(10000)
+      });
+      var total = 0, spent = 0;
+      if(res.ok) {
+        var data = await res.json();
+        var orders = Array.isArray(data.orders) ? data.orders : [];
+        total = orders.length;
+        spent = orders.reduce(function(s,o){ return s + parseFloat(o.amount||0); }, 0);
+      }
+      document.getElementById('stat-orders').textContent = total;
+      document.getElementById('stat-spent').textContent  = spent.toFixed(2);
+    } catch(e) {
+      document.getElementById('stat-orders').textContent = '?';
+      document.getElementById('stat-spent').textContent  = '?';
+    }
+    // Listings count — from seller API
+    if(address) {
+      try {
+        var r2 = await fetch('/api/seller/'+encodeURIComponent(address)+'/products', {
+          signal: AbortSignal.timeout(8000)
+        });
+        if(r2.ok) {
+          var d2 = await r2.json();
+          document.getElementById('stat-listings').textContent = d2.total || 0;
+        }
+      } catch(e) {
+        document.getElementById('stat-listings').textContent = '?';
+      }
+    }
+  }
+
+  // ── Load seller products ──────────────────────────────────────────────
+  async function loadProfProducts(address) {
+    if(!address) { profShowNoWallet(); return; }
+    profShowProductsLoading();
+    try {
+      var controller = new AbortController();
+      var timeout = setTimeout(function(){ controller.abort(); }, 10000);
+      var res = await fetch('/api/seller/'+encodeURIComponent(address)+'/products', {
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+      if(!res.ok) { profShowProductsError('Server error '+res.status+'. Please try again.'); return; }
+      var data = await res.json();
+      _profProducts = Array.isArray(data.products) ? data.products : [];
+      renderProfProducts();
+    } catch(e) {
+      if(e && e.name === 'AbortError') {
+        profShowProductsError('Request timed out. Please check your connection and try again.');
+      } else {
+        profShowProductsError(e && e.message ? e.message : 'Unable to load data. Please try again.');
+      }
+    }
+  }
+
+  // ── Render helpers ────────────────────────────────────────────────────
+  function profShowNoWallet() {
+    var c = document.getElementById('prof-products-container');
+    if(!c) return;
+    c.innerHTML =
+      '<div class="p-8 text-center">'
+      +'<div class="empty-state">'
+      +'<i class="fas fa-wallet"></i>'
+      +'<h3 class="font-bold text-slate-600 mb-2">Wallet Required</h3>'
+      +'<p class="text-sm text-slate-400 mb-4">Connect your wallet to manage your product listings on Arc Network.</p>'
+      +'<a href="/wallet" class="btn-primary mx-auto"><i class="fas fa-wallet mr-1"></i> Connect Wallet</a>'
+      +'</div></div>';
+  }
+
+  function profShowProductsLoading() {
+    var c = document.getElementById('prof-products-container');
+    if(!c) return;
+    c.innerHTML =
       '<div class="text-center py-12">'
       +'<div class="loading-spinner-lg mx-auto mb-4"></div>'
       +'<p class="text-slate-400 text-sm">Loading your products…</p>'
       +'</div>';
   }
 
-  function _dashShowError(msg){
-    var c = document.getElementById('dash-products-container');
-    if(c) c.innerHTML =
+  function profShowProductsError(msg) {
+    var c = document.getElementById('prof-products-container');
+    if(!c) return;
+    c.innerHTML =
       '<div class="p-8 text-center">'
-      +'<i class="fas fa-exclamation-circle text-red-400 text-3xl mb-3"></i>'
+      +'<i class="fas fa-exclamation-circle text-red-400 text-3xl mb-3 block"></i>'
       +'<p class="text-red-500 font-medium mb-1">Failed to load products</p>'
-      +'<p class="text-slate-400 text-sm mb-4">'+(msg||'Network error. Please try again.')+'</p>'
-      +'<button onclick="loadDashboardProducts(_dashAddress)" class="btn-primary text-sm mx-auto"><i class="fas fa-redo mr-1"></i> Retry</button>'
+      +'<p class="text-slate-400 text-sm mb-4">'+(msg||'Unable to load data. Please try again.')+'</p>'
+      +'<button onclick="loadProfProducts(_profAddress)" class="btn-primary text-sm mx-auto">'
+      +'<i class="fas fa-redo mr-1"></i> Retry</button>'
       +'</div>';
   }
 
-  function _dashClearStats(){
-    var s = document.getElementById('dash-stats');
-    if(s) s.innerHTML = '';
-  }
-
-  // ── init ──────────────────────────────────────────────────────────────
-  function _dashInit(){
-    var wallet = (typeof getStoredWallet === 'function') ? getStoredWallet() : null;
-    var wc = document.getElementById('dash-wallet-check');
-    var container = document.getElementById('dash-products-container');
-
-    if(!wallet || !wallet.address){
-      // No wallet — clear spinner, show connect prompt
-      if(container) container.innerHTML = '';
-      _dashClearStats();
-      if(wc) wc.innerHTML =
-        '<div class="card p-8 text-center">'
-        +'<div class="empty-state">'
-        +'<i class="fas fa-wallet"></i>'
-        +'<h3 class="font-bold text-slate-600 mb-2">Connect Wallet</h3>'
-        +'<p class="text-sm text-slate-400 mb-4">Connect your wallet to manage your listings on Arc Network.</p>'
-        +'<a href="/wallet" class="btn-primary mx-auto"><i class="fas fa-wallet mr-1"></i> Connect Wallet</a>'
-        +'</div></div>';
-      return;
-    }
-
-    // Wallet connected — clear wallet-check banner if any
-    if(wc) wc.innerHTML = '';
-    _dashAddress = wallet.address;
-    _dashShowLoading();
-    loadDashboardProducts(wallet.address);
-  }
-
-  // Fire on DOMContentLoaded — guard against globalScript timing
-  if(document.readyState === 'loading'){
-    document.addEventListener('DOMContentLoaded', _dashInit);
-  } else {
-    _dashInit();
-  }
-
-  // ── fetch products ────────────────────────────────────────────────────
-  async function loadDashboardProducts(address){
-    if(!address){ _dashShowError('No wallet address.'); return; }
-    _dashAddress = address;
-    _dashShowLoading();
-    try {
-      var res  = await fetch('/api/seller/'+encodeURIComponent(address)+'/products');
-      if(!res.ok){ _dashShowError('Server returned '+res.status); return; }
-      var data = await res.json();
-      _dashProducts = Array.isArray(data.products) ? data.products : [];
-      renderDashStats();
-      renderDashProducts();
-    } catch(e){
-      _dashShowError(e && e.message ? e.message : 'Could not reach server.');
-    }
-  }
-
-  // ── stats ─────────────────────────────────────────────────────────────
-  function renderDashStats(){
-    var total  = _dashProducts.length;
-    var active = _dashProducts.filter(function(p){return p.status==='active';}).length;
-    var paused = _dashProducts.filter(function(p){return p.status==='paused';}).length;
-    var wallet = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
-    var myAddr = wallet ? wallet.address.toLowerCase() : '';
-    var allOrders = JSON.parse(localStorage.getItem('rh_orders')||'[]');
-    var mySales = allOrders.filter(function(o){ return o.sellerAddress && o.sellerAddress.toLowerCase()===myAddr; });
-    var stats = [
-      {icon:'fas fa-boxes',    label:'Total Listings', value:total,          color:'text-red-600'},
-      {icon:'fas fa-check-circle', label:'Active',     value:active,         color:'text-green-600'},
-      {icon:'fas fa-pause-circle', label:'Paused',     value:paused,         color:'text-amber-600'},
-      {icon:'fas fa-shopping-bag', label:'Total Sales',value:mySales.length, color:'text-blue-600'},
-    ];
-    var el = document.getElementById('dash-stats');
-    if(!el) return;
-    el.innerHTML = stats.map(function(s){
-      return '<div class="card p-5 text-center">'
-        +'<div class="'+s.color+' text-2xl font-extrabold mb-1">'+s.value+'</div>'
-        +'<div class="text-xs text-slate-500 font-medium"><i class="'+s.icon+' mr-1"></i>'+s.label+'</div>'
-        +'</div>';
-    }).join('');
-  }
-
-  // ── filter buttons ────────────────────────────────────────────────────
-  function filterDashProducts(f){
-    _dashFilter = f;
-    document.querySelectorAll('.dash-filter-btn').forEach(function(b){
-      b.className = 'dash-filter-btn px-3 py-1.5 rounded-lg text-xs font-semibold '
-        +(b.id==='df-'+f ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200');
+  // ── Filter buttons ────────────────────────────────────────────────────
+  function profFilterProducts(f) {
+    _profFilter = f;
+    document.querySelectorAll('.ppf-btn').forEach(function(b) {
+      b.className = 'ppf-btn px-3 py-1.5 rounded-lg text-xs font-semibold '
+        +(b.id==='ppf-'+f ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200');
     });
-    renderDashProducts();
+    renderProfProducts();
   }
 
-  // ── render table ──────────────────────────────────────────────────────
-  function renderDashProducts(){
-    var container = document.getElementById('dash-products-container');
+  // ── Render product table ───────────────────────────────────────────────
+  function renderProfProducts() {
+    var container = document.getElementById('prof-products-container');
     if(!container) return;
 
-    var list = _dashFilter==='all'
-      ? _dashProducts
-      : _dashProducts.filter(function(p){ return p.status===_dashFilter; });
-
-    // Empty states
-    if(_dashProducts.length===0){
+    if(_profProducts.length === 0) {
       container.innerHTML =
         '<div class="text-center py-12">'
         +'<div class="empty-state">'
@@ -7992,194 +8234,178 @@ function sellerDashboardPage() {
         +'</div></div>';
       return;
     }
-    if(list.length===0){
+
+    var list = _profFilter==='all'
+      ? _profProducts
+      : _profProducts.filter(function(p){ return p.status===_profFilter; });
+
+    if(list.length === 0) {
       container.innerHTML =
         '<div class="text-center py-10 text-slate-400 text-sm">'
-        +'<i class="fas fa-filter mr-2"></i>No <strong>'+_dashFilter+'</strong> products found.'
+        +'<i class="fas fa-filter mr-2"></i>No <strong>'+_profFilter+'</strong> products found.'
         +'</div>';
       return;
     }
 
-    // Responsive table
     container.innerHTML =
       '<div class="overflow-x-auto">'
       +'<table class="w-full text-sm border-collapse">'
       +'<thead><tr class="border-b border-slate-100">'
       +'<th class="text-left py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Product</th>'
-      +'<th class="text-left py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wide hidden md:table-cell">Category</th>'
       +'<th class="text-right py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Price</th>'
-      +'<th class="text-center py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Stock</th>'
       +'<th class="text-center py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>'
       +'<th class="text-right py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Actions</th>'
       +'</tr></thead>'
       +'<tbody>'
-      +list.map(function(p){
-        var statusBadge = p.status==='active'
+      +list.map(function(p) {
+        var badge = p.status==='active'
           ? '<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">Active</span>'
-          : p.status==='paused'
-            ? '<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700">Paused</span>'
-            : '<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700">Deleted</span>';
+          : '<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700">Paused</span>';
         var imgEl = p.image
-          ? '<img src="'+p.image+'" class="w-10 h-10 rounded-lg object-cover mr-3 shrink-0" onerror="this.style.display=\'none\'">'
-          : '<div class="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center mr-3 shrink-0"><i class="fas fa-image text-slate-300"></i></div>';
+          ? '<img src="'+p.image+'" class="w-9 h-9 rounded-lg object-cover mr-2 shrink-0" onerror="this.style.display=\'none\'">'
+          : '<div class="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center mr-2 shrink-0"><i class="fas fa-image text-slate-300 text-xs"></i></div>';
         var actionBtns = '';
-        if(p.status==='active'){
-          actionBtns += '<button onclick="dashPauseProduct(\''+p.id+'\')" class="text-amber-600 hover:text-amber-800 text-xs font-semibold px-2 py-1 rounded hover:bg-amber-50" title="Pause Listing"><i class="fas fa-pause mr-1"></i>Pause</button>';
+        // Edit button — only if wallet owns the product
+        actionBtns += '<button onclick="profOpenEdit(\''+p.id+'\')" class="text-blue-600 hover:text-blue-800 text-xs font-semibold px-2 py-1 rounded hover:bg-blue-50" title="Edit Product"><i class="fas fa-edit mr-1"></i>Edit</button>';
+        if(p.status==='active') {
+          actionBtns += '<button onclick="profPauseProduct(\''+p.id+'\')" class="text-amber-600 hover:text-amber-800 text-xs font-semibold px-2 py-1 rounded hover:bg-amber-50"><i class="fas fa-pause mr-1"></i>Pause</button>';
         }
-        if(p.status==='paused'){
-          actionBtns += '<button onclick="dashResumeProduct(\''+p.id+'\')" class="text-green-600 hover:text-green-800 text-xs font-semibold px-2 py-1 rounded hover:bg-green-50" title="Resume Listing"><i class="fas fa-play mr-1"></i>Resume</button>';
+        if(p.status==='paused') {
+          actionBtns += '<button onclick="profResumeProduct(\''+p.id+'\')" class="text-green-600 hover:text-green-800 text-xs font-semibold px-2 py-1 rounded hover:bg-green-50"><i class="fas fa-play mr-1"></i>Resume</button>';
         }
-        actionBtns += '<a href="/product/'+p.id+'" class="text-blue-600 hover:text-blue-800 text-xs font-semibold px-2 py-1 rounded hover:bg-blue-50" title="View Product"><i class="fas fa-eye mr-1"></i>View</a>';
-        actionBtns += '<button onclick="dashDeleteProduct(\''+p.id+'\')" class="text-red-500 hover:text-red-700 text-xs font-semibold px-2 py-1 rounded hover:bg-red-50" title="Delete Product"><i class="fas fa-trash mr-1"></i>Delete</button>';
+        actionBtns += '<a href="/product/'+p.id+'" class="text-slate-500 hover:text-slate-700 text-xs font-semibold px-2 py-1 rounded hover:bg-slate-50"><i class="fas fa-eye mr-1"></i>View</a>';
+        actionBtns += '<button onclick="profDeleteProduct(\''+p.id+'\')" class="text-red-500 hover:text-red-700 text-xs font-semibold px-2 py-1 rounded hover:bg-red-50"><i class="fas fa-trash mr-1"></i>Delete</button>';
         return '<tr class="border-b border-slate-50 hover:bg-slate-50 transition-colors">'
           +'<td class="py-3 px-2"><div class="flex items-center">'+imgEl
-          +'<div><p class="font-semibold text-slate-800 text-xs leading-tight line-clamp-2 max-w-xs">'+((p.title||'Untitled').replace(/</g,'&lt;'))+'</p>'
+          +'<div><p class="font-semibold text-slate-800 text-xs leading-tight max-w-xs line-clamp-2">'+((p.title||'Untitled').replace(/</g,'&lt;'))+'</p>'
           +'<p class="text-slate-400 text-xs font-mono">'+p.id+'</p></div></div></td>'
-          +'<td class="py-3 px-2 text-slate-500 text-xs hidden md:table-cell">'+(p.category||'Other')+'</td>'
-          +'<td class="py-3 px-2 text-right font-bold text-red-600">'+parseFloat(p.price||0).toFixed(2)
-          +' <span class="text-xs font-normal text-slate-500">'+(p.token||'USDC')+'</span></td>'
-          +'<td class="py-3 px-2 text-center text-slate-600">'+(p.stock||0)+'</td>'
-          +'<td class="py-3 px-2 text-center">'+statusBadge+'</td>'
-          +'<td class="py-3 px-2 text-right"><div class="flex items-center justify-end gap-1">'+actionBtns+'</div></td>'
+          +'<td class="py-3 px-2 text-right font-bold text-red-600 whitespace-nowrap">'+parseFloat(p.price||0).toFixed(2)+' <span class="text-xs font-normal text-slate-500">'+(p.token||'USDC')+'</span></td>'
+          +'<td class="py-3 px-2 text-center">'+badge+'</td>'
+          +'<td class="py-3 px-2 text-right"><div class="flex items-center justify-end gap-1 flex-wrap">'+actionBtns+'</div></td>'
           +'</tr>';
       }).join('')
       +'</tbody></table></div>';
   }
 
-  // ── action handlers ───────────────────────────────────────────────────
-  async function dashPauseProduct(productId){
-    if(!confirm('Pause this listing? It will be hidden from the marketplace but not deleted.')) return;
+  // ── Edit modal ────────────────────────────────────────────────────────
+  function profOpenEdit(productId) {
+    var wallet = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
+    if(!wallet){ showToast('Connect wallet first','error'); return; }
+    var p = _profProducts.find(function(x){ return x.id===productId; });
+    if(!p){ showToast('Product not found','error'); return; }
+    // Security: only owner can edit
+    if(p.seller_id.toLowerCase() !== wallet.address.toLowerCase()){
+      showToast('Unauthorized: you do not own this product','error'); return;
+    }
+    document.getElementById('pedit-id').value          = p.id;
+    document.getElementById('pedit-title').value       = p.title||'';
+    document.getElementById('pedit-description').value = p.description||'';
+    document.getElementById('pedit-price').value       = p.price||'';
+    document.getElementById('pedit-token').value       = p.token||'USDC';
+    document.getElementById('pedit-image').value       = p.image||'';
+    var modal = document.getElementById('prof-edit-modal');
+    modal.style.display = 'flex';
+  }
+
+  function profCloseEdit() {
+    document.getElementById('prof-edit-modal').style.display = 'none';
+  }
+
+  async function profSaveProduct(e) {
+    e.preventDefault();
+    var wallet = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
+    if(!wallet){ showToast('Connect wallet first','error'); return; }
+    var id    = document.getElementById('pedit-id').value;
+    var title = document.getElementById('pedit-title').value.trim();
+    var desc  = document.getElementById('pedit-description').value.trim();
+    var price = parseFloat(document.getElementById('pedit-price').value);
+    var token = document.getElementById('pedit-token').value;
+    var image = document.getElementById('pedit-image').value.trim();
+    if(!title || !desc || isNaN(price) || price <= 0){
+      showToast('Please fill in all required fields correctly','error'); return;
+    }
+    var btn = document.getElementById('pedit-save-btn');
+    btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Saving…';
+    try {
+      var res = await fetch('/api/products/'+id, {
+        method:'PATCH',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ seller_id:wallet.address, title, description:desc, price, token, image }),
+        signal: AbortSignal.timeout(10000)
+      });
+      var data = await res.json();
+      if(!res.ok){ showToast(data.error||'Failed to update product','error'); return; }
+      showToast('Product updated successfully','success');
+      profCloseEdit();
+      await loadProfProducts(wallet.address);
+    } catch(err) {
+      showToast(err && err.message ? err.message : 'Network error. Please try again.','error');
+    } finally {
+      btn.disabled = false; btn.innerHTML = '<i class="fas fa-save mr-1"></i> Save Changes';
+    }
+  }
+
+  // ── Product actions ───────────────────────────────────────────────────
+  async function profPauseProduct(productId) {
+    if(!confirm('Pause this listing? It will be hidden from the marketplace.')) return;
     var wallet = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
     if(!wallet){ showToast('Connect wallet first','error'); return; }
     try {
       var res = await fetch('/api/products/'+productId+'/status',{
-        method:'PATCH', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({seller_id:wallet.address, status:'paused'})
+        method:'PATCH',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({seller_id:wallet.address,status:'paused'}),
+        signal:AbortSignal.timeout(10000)
       });
       var data = await res.json();
-      if(!res.ok){ showToast(data.error||'Failed to pause','error'); return; }
-      showToast('Listing paused — hidden from marketplace','info');
-      await loadDashboardProducts(wallet.address);
-    } catch(e){ showToast('Network error','error'); }
+      if(!res.ok){ showToast(data.error||'Failed','error'); return; }
+      showToast('Listing paused','info');
+      await loadProfProducts(wallet.address);
+    } catch(e){ showToast('Network error. Please try again.','error'); }
   }
 
-  async function dashResumeProduct(productId){
+  async function profResumeProduct(productId) {
     if(!confirm('Resume this listing? It will be visible in the marketplace again.')) return;
     var wallet = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
     if(!wallet){ showToast('Connect wallet first','error'); return; }
     try {
       var res = await fetch('/api/products/'+productId+'/status',{
-        method:'PATCH', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({seller_id:wallet.address, status:'active'})
+        method:'PATCH',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({seller_id:wallet.address,status:'active'}),
+        signal:AbortSignal.timeout(10000)
       });
       var data = await res.json();
-      if(!res.ok){ showToast(data.error||'Failed to resume','error'); return; }
-      showToast('Listing is now active on the marketplace','success');
-      await loadDashboardProducts(wallet.address);
-    } catch(e){ showToast('Network error','error'); }
+      if(!res.ok){ showToast(data.error||'Failed','error'); return; }
+      showToast('Listing is now active','success');
+      await loadProfProducts(wallet.address);
+    } catch(e){ showToast('Network error. Please try again.','error'); }
   }
 
-  async function dashDeleteProduct(productId){
-    if(!confirm('Delete this product? It will be permanently removed. This cannot be undone.')) return;
+  async function profDeleteProduct(productId) {
+    if(!confirm('Delete this product permanently? This cannot be undone.')) return;
     var wallet = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
     if(!wallet){ showToast('Connect wallet first','error'); return; }
     try {
       var res = await fetch('/api/products/'+productId,{
-        method:'DELETE', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({seller_id:wallet.address})
+        method:'DELETE',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({seller_id:wallet.address}),
+        signal:AbortSignal.timeout(10000)
       });
       var data = await res.json();
-      if(!res.ok){ showToast(data.error||'Failed to delete','error'); return; }
-      showToast('Product deleted successfully','success');
-      await loadDashboardProducts(wallet.address);
-    } catch(e){ showToast('Network error','error'); }
+      if(!res.ok){ showToast(data.error||'Failed','error'); return; }
+      showToast('Product deleted','success');
+      await loadProfProducts(wallet.address);
+    } catch(e){ showToast('Network error. Please try again.','error'); }
   }
-  </script>
-  `)
-}
 
-
-// ─── PAGE: PROFILE ──────────────────────────────────────────────────────
-function profilePage() {
-  return shell('Profile', `
-  <div class="max-w-4xl mx-auto px-4 py-8">
-    <h1 class="text-3xl font-bold text-slate-800 mb-6 flex items-center gap-3">
-      <i class="fas fa-user text-red-500"></i> My Profile
-    </h1>
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-      <div class="card p-6">
-        <div class="text-center mb-6">
-          <div class="w-20 h-20 rounded-full bg-gradient-to-br from-red-400 to-red-700 flex items-center justify-center text-white text-3xl font-bold mx-auto mb-3">
-            <i class="fas fa-user"></i>
-          </div>
-          <p class="font-bold text-slate-800" id="prof-address">Not connected</p>
-          <div class="mt-2" id="prof-network-badge"></div>
-        </div>
-        <nav class="sidebar-nav space-y-1">
-          <a href="/profile" class="active"><i class="fas fa-user w-4"></i> Profile</a>
-          <a href="/orders"><i class="fas fa-box w-4"></i> My Orders</a>
-          <a href="/wallet"><i class="fas fa-wallet w-4"></i> Wallet</a>
-          <a href="/sell"><i class="fas fa-store w-4"></i> Sell</a>
-          <a href="/disputes"><i class="fas fa-gavel w-4"></i> Disputes</a>
-          <a href="/notifications"><i class="fas fa-bell w-4"></i> Notifications</a>
-        </nav>
-      </div>
-      <div class="md:col-span-2 space-y-5">
-        <div class="card p-6">
-          <h2 class="font-bold text-slate-800 text-lg mb-4">Personal Information</h2>
-          <div class="space-y-4">
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div><label class="block text-sm font-medium text-slate-700 mb-1">Full Name</label><input type="text" placeholder="Your name" class="input"/></div>
-              <div><label class="block text-sm font-medium text-slate-700 mb-1">Email</label><input type="email" placeholder="your@email.com" class="input"/></div>
-            </div>
-            <div><label class="block text-sm font-medium text-slate-700 mb-1">Shipping Address</label><input type="text" placeholder="Street, City, Country" class="input"/></div>
-            <button onclick="showToast('Profile saved locally','success')" class="btn-primary"><i class="fas fa-save"></i> Save Changes</button>
-          </div>
-        </div>
-        <!-- Wallet on-chain info -->
-        <div class="card p-5" id="prof-wallet-card">
-          <div class="flex items-center justify-between mb-3">
-            <h3 class="font-bold text-slate-800 flex items-center gap-2">
-              <i class="fas fa-wallet text-red-500"></i> Arc Network Wallet
-            </h3>
-            <a href="/wallet" class="text-red-600 text-sm hover:underline">Manage →</a>
-          </div>
-          <div id="prof-wallet-info" class="text-slate-400 text-sm">Loading…</div>
-        </div>
-        <!-- Stats (from localStorage orders) -->
-        <div class="grid grid-cols-3 gap-4" id="prof-stats">
-          <div class="card p-4 text-center"><i class="fas fa-box text-red-500 text-xl mb-2"></i><p class="text-2xl font-extrabold text-slate-800" id="stat-orders">0</p><p class="text-slate-400 text-xs">Orders</p></div>
-          <div class="card p-4 text-center"><i class="fas fa-coins text-red-500 text-xl mb-2"></i><p class="text-2xl font-extrabold text-slate-800" id="stat-spent">0</p><p class="text-slate-400 text-xs">USDC Spent</p></div>
-          <div class="card p-4 text-center"><i class="fas fa-check-circle text-green-500 text-xl mb-2"></i><p class="text-2xl font-extrabold text-slate-800" id="stat-completed">0</p><p class="text-slate-400 text-xs">Completed</p></div>
-        </div>
-      </div>
-    </div>
-  </div>
-  <script>
-  document.addEventListener('DOMContentLoaded', async () => {
-    const w=getStoredWallet();
-    if(w){
-      document.getElementById('prof-address').textContent=w.address.substring(0,10)+'…'+w.address.slice(-6);
-      document.getElementById('prof-network-badge').innerHTML='<span class="arc-badge text-xs"><i class="fas fa-network-wired text-xs"></i> Arc Testnet</span>';
-      document.getElementById('prof-wallet-info').innerHTML=
-        '<div class="space-y-1">'
-        +'<p class="text-xs text-slate-500">Address</p>'
-        +'<p class="font-mono text-xs text-slate-700 break-all">'+w.address+'</p>'
-        +'<a href="${ARC.explorer}/address/'+w.address+'" target="_blank" class="text-blue-600 text-xs hover:underline flex items-center gap-1 mt-1">'
-        +'<i class="fas fa-external-link-alt text-xs"></i> View on Arc Explorer</a></div>';
-      const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]').filter(o=>o.buyerAddress&&o.buyerAddress.toLowerCase()===w.address.toLowerCase());
-      document.getElementById('stat-orders').textContent=orders.length;
-      document.getElementById('stat-spent').textContent=(orders.reduce((s,o)=>s+(o.amount||0),0)).toFixed(2);
-      document.getElementById('stat-completed').textContent=orders.filter(o=>o.status==='completed').length;
-    } else {
-      document.getElementById('prof-wallet-info').innerHTML='<a href="/wallet" class="text-red-600 hover:underline">Connect wallet →</a>';
-    }
+  // Close modal on backdrop click
+  document.getElementById('prof-edit-modal').addEventListener('click', function(e) {
+    if(e.target === this) profCloseEdit();
   });
   </script>
   `)
 }
 
-// ─── PAGE: REGISTER ──────────────────────────────────────────────────────
+
 function registerPage() {
   return shell('Register', `
   <div class="min-h-screen flex items-center justify-center px-4 py-12 bg-gradient-to-br from-red-50 to-white">
