@@ -295,16 +295,20 @@ const store = {
 
   // List products for a seller (all statuses except deleted)
   async listBySeller(env: Bindings, address: string): Promise<Product[]> {
+    // Normalise address to lowercase for cross-browser consistency (Brave/Chrome
+    // may preserve checksummed addresses differently)
+    const normAddr = address.toLowerCase()
     if (env.DB) {
       try {
+        // LOWER() handles addresses stored in either checksummed or lowercase form
         const { results } = await env.DB.prepare(
-          `SELECT * FROM products WHERE seller_id = ? AND status != 'deleted' ORDER BY created_at DESC`
-        ).bind(address).all()
+          `SELECT * FROM products WHERE LOWER(seller_id) = ? AND status != 'deleted' ORDER BY created_at DESC`
+        ).bind(normAddr).all()
         return results as Product[]
       } catch (e: any) { console.error('D1 listBySeller error:', e.message) }
     }
     const { data: allS } = await storageGet(env.PRODUCTS_KV)
-    return allS.filter(p => p.seller_id === address && p.status !== 'deleted')
+    return allS.filter(p => p.seller_id && p.seller_id.toLowerCase() === normAddr && p.status !== 'deleted')
               .sort((a,b) => b.created_at.localeCompare(a.created_at))
   },
 
@@ -722,7 +726,7 @@ app.delete('/api/products/:id', async (c) => {
     const { seller_id } = await c.req.json() as any
     const row = await store.getAny(c.env, c.req.param('id'))
     if (!row)                          return c.json({ error: 'Product not found' }, 404)
-    if (row.seller_id !== seller_id)   return c.json({ error: 'Unauthorized' }, 403)
+    if ((row.seller_id || '').toLowerCase() !== String(seller_id || '').toLowerCase())   return c.json({ error: 'Unauthorized' }, 403)
     await store.setStatus(c.env, c.req.param('id'), 'deleted')
     return c.json({ success: true })
   } catch (e: any) {
@@ -739,7 +743,7 @@ app.patch('/api/products/:id/status', async (c) => {
       return c.json({ error: 'Invalid status. Use active, paused, or deleted' }, 400)
     const row = await store.getAny(c.env, c.req.param('id'))
     if (!row)                          return c.json({ error: 'Product not found' }, 404)
-    if (row.seller_id !== seller_id)   return c.json({ error: 'Unauthorized' }, 403)
+    if ((row.seller_id || '').toLowerCase() !== String(seller_id || '').toLowerCase())   return c.json({ error: 'Unauthorized' }, 403)
     await store.setStatus(c.env, c.req.param('id'), status)
     return c.json({ success: true, status })
   } catch (e: any) {
@@ -767,7 +771,8 @@ app.patch('/api/products/:id', async (c) => {
     if (!seller_id) return c.json({ error: 'Missing seller_id' }, 400)
     const row = await store.getAny(c.env, c.req.param('id'))
     if (!row) return c.json({ error: 'Product not found' }, 404)
-    if (row.seller_id !== seller_id) return c.json({ error: 'Unauthorized' }, 403)
+    // Case-insensitive comparison to handle checksummed vs lowercase addresses
+    if ((row.seller_id || '').toLowerCase() !== String(seller_id).toLowerCase()) return c.json({ error: 'Unauthorized' }, 403)
     if (price !== undefined && Number(price) <= 0)
       return c.json({ error: 'Price must be greater than 0' }, 400)
     if (token !== undefined && !['USDC','EURC'].includes(token))
@@ -1829,10 +1834,15 @@ async function unlockWallet(password) {
 
 // getStoredWallet — returns active wallet from session OR legacy plain rh_wallet
 function getStoredWallet() {
+  // Helper to normalise address
+  function normWallet(w) {
+    if (w && w.address) return Object.assign({}, w, { address: w.address.toLowerCase() });
+    return w;
+  }
   // 1. Check session (unlocked this tab/session)
   try {
     const sess = sessionStorage.getItem('rh_wallet_sess');
-    if (sess) return JSON.parse(sess);
+    if (sess) return normWallet(JSON.parse(sess));
   } catch { /* ignore */ }
   // 2. Legacy plain-text wallet (backwards compatibility)
   try {
@@ -1841,8 +1851,9 @@ function getStoredWallet() {
       const w = JSON.parse(plain);
       // If it has a privateKey in plain text, put in session and continue
       if (w && w.address) {
-        sessionStorage.setItem('rh_wallet_sess', plain);
-        return w;
+        const nw = normWallet(w);
+        sessionStorage.setItem('rh_wallet_sess', JSON.stringify(nw));
+        return nw;
       }
     }
   } catch { /* ignore */ }
@@ -1851,6 +1862,8 @@ function getStoredWallet() {
 
 // storeWallet — legacy plain text (used by MetaMask connect flow)
 function storeWallet(w) {
+  // Always normalise address to lowercase for cross-browser consistency
+  if (w && w.address) w = Object.assign({}, w, { address: w.address.toLowerCase() });
   localStorage.setItem('rh_wallet', JSON.stringify(w));
   sessionStorage.setItem('rh_wallet_sess', JSON.stringify(w));
 }
@@ -1961,7 +1974,8 @@ async function connectWallet(type) {
       showToast('Connecting to MetaMask…', 'info');
       const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
       if (!accounts.length) { showToast('No accounts found', 'error'); return; }
-      const address = accounts[0];
+      // Always lowercase for cross-browser consistency (Brave vs Chrome)
+      const address = accounts[0].toLowerCase();
 
       // Switch to Arc Network
       const onArc = await isOnArcNetwork();
@@ -2016,36 +2030,42 @@ function disconnectWallet() {
   setTimeout(() => location.reload(), 800);
 }
 
-// ─ Wallet event listeners (MetaMask) ──────────────────────────
+// ─ Wallet event listeners (MetaMask / Brave / EIP-1193) ───────
 function setupWalletListeners() {
-  if (!window.ethereum) return;
-  window.ethereum.on('accountsChanged', (accounts) => {
-    if (!accounts.length) {
+  var eth = window.ethereum || window._ethProvider;
+  if (!eth || typeof eth.on !== 'function') return;
+  eth.on('accountsChanged', function(accounts) {
+    if (!accounts || !accounts.length) {
       clearWallet();
       updateWalletBadge(null);
       showToast('Wallet disconnected', 'info');
-      setTimeout(() => location.reload(), 800);
+      setTimeout(function() { location.reload(); }, 800);
     } else {
-      const stored = getStoredWallet();
+      var stored = getStoredWallet();
+      // Normalise new address to lowercase
+      var newAddr = (accounts[0] || '').toLowerCase();
       if (stored && stored.type === 'metamask') {
-        stored.address = accounts[0];
+        stored.address = newAddr;
         storeWallet(stored);
-        updateWalletBadge(accounts[0]);
-        showToast('Account changed: ' + accounts[0].substring(0,10) + '…', 'info');
-        setTimeout(() => location.reload(), 800);
+        updateWalletBadge(newAddr);
+        showToast('Account changed: ' + newAddr.substring(0,10) + '\u2026', 'info');
+        setTimeout(function() { location.reload(); }, 800);
+      } else {
+        // Force reload to pick up new account even without stored wallet
+        setTimeout(function() { location.reload(); }, 800);
       }
     }
   });
-  window.ethereum.on('chainChanged', (chainId) => {
-    const newChain = parseInt(chainId, 16);
+  eth.on('chainChanged', function(chainId) {
+    var newChain = parseInt(chainId, 16);
     if (newChain !== ARC_CHAIN_ID) {
       showToast('Wrong network! Please switch to Arc Testnet (Chain ID: 5042002)', 'warning');
     } else {
-      showToast('Connected to Arc Testnet ✓', 'success');
+      showToast('Connected to Arc Testnet \u2713', 'success');
     }
-    setTimeout(() => location.reload(), 1000);
+    setTimeout(function() { location.reload(); }, 1000);
   });
-  window.ethereum.on('disconnect', () => {
+  eth.on('disconnect', function() {
     clearWallet();
     updateWalletBadge(null);
     showToast('Wallet provider disconnected', 'info');
@@ -2092,25 +2112,38 @@ async function checkNetworkStatus(containerEl) {
 }
 
 // ─ Init on every page ─────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', function() {
   // 1. Migrate any items saved under old localStorage keys → canonical 'cart'
   CartStore._migrate();
   // 2. Hydrate cart badge
   updateCartBadge();
-  // 3. Wallet listeners
+  // 3. Wallet listeners — also try _ethProvider (Brave shields workaround)
   setupWalletListeners();
+  // Retry after EIP-6963 provider announcement (100ms delay)
+  setTimeout(function() {
+    if (window.ethereum || window._ethProvider) setupWalletListeners();
+  }, 150);
 
-  const stored = getStoredWallet();
+  var stored = getStoredWallet();
   if (stored) {
     updateWalletBadge(stored.address);
-    // Re-verify MetaMask is still connected
-    if (stored.type === 'metamask' && window.ethereum) {
-      window.ethereum.request({ method: 'eth_accounts' }).then(accounts => {
-        if (!accounts.length) {
+    // Re-verify MetaMask is still connected (cross-browser: use eth || _ethProvider)
+    var eth = window.ethereum || window._ethProvider;
+    if (stored.type === 'metamask' && eth) {
+      eth.request({ method: 'eth_accounts' }).then(function(accounts) {
+        if (!accounts || !accounts.length) {
           clearWallet();
           updateWalletBadge(null);
+        } else {
+          // Normalise in case the stored address differs in case
+          var liveAddr = (accounts[0] || '').toLowerCase();
+          if (stored.address !== liveAddr) {
+            stored.address = liveAddr;
+            storeWallet(stored);
+            updateWalletBadge(liveAddr);
+          }
         }
-      }).catch(() => {});
+      }).catch(function() {});
     }
   }
 });
@@ -8206,6 +8239,7 @@ function profilePage() {
   var _profProducts  = [];
   var _profFilter    = 'all';
   var _profAddress   = null;
+  var _profLoading   = false;   // prevent repeated fetch calls
   var _profActiveTab = 'overview';
 
   // ── Tab switching ──────────────────────────────────────────────────────
@@ -8321,6 +8355,9 @@ function profilePage() {
   // ── Load seller products ──────────────────────────────────────────────
   async function loadProfProducts(address) {
     if(!address) { profShowNoWallet(); return; }
+    // Prevent concurrent calls
+    if(_profLoading) return;
+    _profLoading = true;
     // Normalize address to lowercase for consistent comparison
     var normAddr = address.toLowerCase();
     _profAddress = normAddr;
@@ -8329,7 +8366,7 @@ function profilePage() {
     try {
       var controller = new AbortController();
       var timeout = setTimeout(function(){ controller.abort(); }, 10000);
-      var res = await fetch('/api/seller/'+encodeURIComponent(address)+'/products', {
+      var res = await fetch('/api/seller/'+encodeURIComponent(normAddr)+'/products', {
         signal: controller.signal
       });
       clearTimeout(timeout);
@@ -8350,6 +8387,8 @@ function profilePage() {
         console.error('[myproducts] loadProfProducts error:', e);
         profShowProductsError(e && e.message ? e.message : 'Unable to load data. Please try again.');
       }
+    } finally {
+      _profLoading = false;
     }
   }
 
@@ -8444,19 +8483,19 @@ function profilePage() {
           ? '<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">Active</span>'
           : '<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700">Paused</span>';
         var imgEl = p.image
-          ? '<img src="'+p.image+'" class="w-9 h-9 rounded-lg object-cover mr-2 shrink-0" onerror="this.style.display=\'none\'">'
+          ? '<img src="'+p.image+'" class="w-9 h-9 rounded-lg object-cover mr-2 shrink-0" onerror="this.style.display=&quot;none&quot;">'
           : '<div class="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center mr-2 shrink-0"><i class="fas fa-image text-slate-300 text-xs"></i></div>';
         var actionBtns = '';
-        // Edit button — only if wallet owns the product
-        actionBtns += '<button onclick="profOpenEdit(\''+p.id+'\')" class="text-blue-600 hover:text-blue-800 text-xs font-semibold px-2 py-1 rounded hover:bg-blue-50" title="Edit Product"><i class="fas fa-edit mr-1"></i>Edit</button>';
+        // Edit button — data-id used to avoid quote escaping issues
+        actionBtns += '<button data-action="edit" data-pid="'+p.id+'" class="text-blue-600 hover:text-blue-800 text-xs font-semibold px-2 py-1 rounded hover:bg-blue-50" title="Edit Product"><i class="fas fa-edit mr-1"></i>Edit</button>';
         if(p.status==='active') {
-          actionBtns += '<button onclick="profPauseProduct(\''+p.id+'\')" class="text-amber-600 hover:text-amber-800 text-xs font-semibold px-2 py-1 rounded hover:bg-amber-50"><i class="fas fa-pause mr-1"></i>Pause</button>';
+          actionBtns += '<button data-action="pause" data-pid="'+p.id+'" class="text-amber-600 hover:text-amber-800 text-xs font-semibold px-2 py-1 rounded hover:bg-amber-50"><i class="fas fa-pause mr-1"></i>Pause</button>';
         }
         if(p.status==='paused') {
-          actionBtns += '<button onclick="profResumeProduct(\''+p.id+'\')" class="text-green-600 hover:text-green-800 text-xs font-semibold px-2 py-1 rounded hover:bg-green-50"><i class="fas fa-play mr-1"></i>Resume</button>';
+          actionBtns += '<button data-action="resume" data-pid="'+p.id+'" class="text-green-600 hover:text-green-800 text-xs font-semibold px-2 py-1 rounded hover:bg-green-50"><i class="fas fa-play mr-1"></i>Resume</button>';
         }
         actionBtns += '<a href="/product/'+p.id+'" class="text-slate-500 hover:text-slate-700 text-xs font-semibold px-2 py-1 rounded hover:bg-slate-50"><i class="fas fa-eye mr-1"></i>View</a>';
-        actionBtns += '<button onclick="profDeleteProduct(\''+p.id+'\')" class="text-red-500 hover:text-red-700 text-xs font-semibold px-2 py-1 rounded hover:bg-red-50"><i class="fas fa-trash mr-1"></i>Delete</button>';
+        actionBtns += '<button data-action="delete" data-pid="'+p.id+'" class="text-red-500 hover:text-red-700 text-xs font-semibold px-2 py-1 rounded hover:bg-red-50"><i class="fas fa-trash mr-1"></i>Delete</button>';
         return '<tr class="border-b border-slate-50 hover:bg-slate-50 transition-colors">'
           +'<td class="py-3 px-2"><div class="flex items-center">'+imgEl
           +'<div><p class="font-semibold text-slate-800 text-xs leading-tight max-w-xs line-clamp-2">'+((p.title||'Untitled').replace(/</g,'&lt;'))+'</p>'
@@ -8467,6 +8506,18 @@ function profilePage() {
           +'</tr>';
       }).join('')
       +'</tbody></table></div>';
+
+    // Event delegation for product action buttons (avoids onclick+quote issues)
+    container.querySelectorAll('[data-action]').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var action = this.getAttribute('data-action');
+        var pid    = this.getAttribute('data-pid');
+        if(action === 'edit')   profOpenEdit(pid);
+        if(action === 'pause')  profPauseProduct(pid);
+        if(action === 'resume') profResumeProduct(pid);
+        if(action === 'delete') profDeleteProduct(pid);
+      });
+    });
   }
 
   // ── Edit modal ────────────────────────────────────────────────────────
