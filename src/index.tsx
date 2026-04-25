@@ -805,8 +805,9 @@ app.get('/api/orders', (c) => {
 // Returns: { orders: [...], source: 'on_chain', blockRange: [...], total: N }
 app.get('/api/orders/on-chain', async (c) => {
   try {
-    const buyerParam = (c.req.query('buyer') || '').trim().toLowerCase()
-    const limitParam = Math.min(parseInt(c.req.query('limit') || '20'), 50)
+    const buyerParam  = (c.req.query('buyer')  || '').trim().toLowerCase()
+    const sellerParam = (c.req.query('seller') || '').trim().toLowerCase()
+    const limitParam  = Math.min(parseInt(c.req.query('limit') || '20'), 50)
 
     // EscrowFunded(bytes32 indexed orderId, address indexed buyer, uint256 amount)
     // topic0 = keccak256("EscrowFunded(bytes32,address,uint256)")
@@ -818,9 +819,11 @@ app.get('/api/orders/on-chain', async (c) => {
     const latestHex: string = await arcRpc('eth_blockNumber', [])
     const latest = parseInt(latestHex, 16)
     // Look back ~5000 blocks (~4 hours on Arc testnet ≈ 3s blocks)
-    const fromBlock = '0x' + Math.max(0, latest - 5000).toString(16)
+    // When filtering by seller, scan more blocks (seller may have older listings)
+    const lookback = sellerParam && !buyerParam ? 10000 : 5000
+    const fromBlock = '0x' + Math.max(0, latest - lookback).toString(16)
 
-    // Build topics filter
+    // Build topics filter — buyer is indexed (topic2); seller is NOT indexed so must filter post-fetch
     let buyerTopic: string | null = null
     if (buyerParam && /^0x[0-9a-f]{40}$/i.test(buyerParam)) {
       buyerTopic = '0x000000000000000000000000' + buyerParam.replace('0x', '').toLowerCase()
@@ -902,11 +905,16 @@ app.get('/api/orders/on-chain', async (c) => {
       } catch { /* skip malformed log */ }
     }
 
+    // Filter by seller if requested (seller is not indexed, so post-process)
+    const filtered = sellerParam
+      ? orders.filter(o => o.sellerAddress && o.sellerAddress.toLowerCase() === sellerParam)
+      : orders
+
     return c.json({
-      orders: orders.reverse(),  // newest first
+      orders: filtered.reverse(),  // newest first
       source: 'on_chain',
       blockRange: [parseInt(fromBlock, 16), latest],
-      total: orders.length
+      total: filtered.length
     })
   } catch (err: any) {
     console.error('[orders/on-chain]', err)
@@ -1501,6 +1509,47 @@ function shell(title: string, body: string, extraHead = '', catNav = '') {
 function globalScript() {
   return `<script>
 // ══════════════════════════════════════════════════════════════
+//  CROSS-BROWSER POLYFILLS & COMPAT FIXES
+// ══════════════════════════════════════════════════════════════
+
+// AbortSignal.timeout polyfill (Brave < 102, Firefox < 90, Safari < 15.4)
+if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout !== 'function') {
+  AbortSignal.timeout = function(ms) {
+    var ctrl = new AbortController();
+    setTimeout(function() { ctrl.abort(new DOMException('TimeoutError', 'TimeoutError')); }, ms);
+    return ctrl.signal;
+  };
+}
+
+// window.ethereum cross-browser compatibility
+// Brave shields can hide window.ethereum — use window.ethereum || window.web3?.currentProvider
+(function patchEthereum() {
+  if (window.ethereum) return; // already available
+  // Brave with shields up: try coinbasewallet or injected providers array
+  try {
+    var providers = window.ethereum?.providers || [];
+    for (var i = 0; i < providers.length; i++) {
+      if (providers[i].isMetaMask || providers[i].isBraveWallet) {
+        window._ethProvider = providers[i]; return;
+      }
+    }
+  } catch(e) {}
+  // EIP-6963 fallback
+  try {
+    window.addEventListener('eip6963:announceProvider', function(e) {
+      if (!window.ethereum && e.detail && e.detail.provider) {
+        window.ethereum = e.detail.provider;
+      }
+    }, { once: true });
+    window.dispatchEvent(new Event('eip6963:requestProvider'));
+  } catch(e) {}
+  // Final alias: ensure window.ethereum uses any available provider
+  setTimeout(function() {
+    if (!window.ethereum && window._ethProvider) window.ethereum = window._ethProvider;
+  }, 100);
+})();
+
+// ══════════════════════════════════════════════════════════════
 //  ARC NETWORK — Real wallet integration
 //  Chain ID: 5042002 (Arc Testnet)
 //  RPC: https://rpc.testnet.arc.network
@@ -2018,8 +2067,15 @@ async function fetchTxHistory(address, limit = 10) {
 // ─ Network indicator banner ────────────────────────────────────
 async function checkNetworkStatus(containerEl) {
   if (!containerEl) return;
+  // If no MetaMask/browser wallet, check if user has an internal wallet stored
+  const storedWallet = (typeof getStoredWallet === 'function') ? getStoredWallet() : null;
   if (!window.ethereum) {
-    containerEl.innerHTML = '<div class="network-warning"><i class="fas fa-exclamation-triangle"></i>No wallet extension detected. Install MetaMask or create an in-app wallet to use Arc Network.</div>';
+    if (storedWallet && storedWallet.type === 'internal') {
+      // Internal wallet — show Arc Network ready
+      containerEl.innerHTML = '<div class="network-ok"><i class="fas fa-circle text-green-500"></i>Arc Testnet (Chain ID: 5042002) — Internal wallet active · <a href="' + ARC_EXPLORER + '" target="_blank" class="underline ml-1">Explorer</a></div>';
+    } else {
+      containerEl.innerHTML = '<div class="network-warning"><i class="fas fa-exclamation-triangle"></i>No wallet detected. <a href="/wallet" class="underline font-bold ml-1">Connect wallet →</a></div>';
+    }
     return;
   }
   try {
@@ -3599,168 +3655,174 @@ function homePage() {
      Merges both sources, deduplicates by txHash/orderId32, shows newest 6.
      Hard 10 s master timeout so spinner never stays forever.
   ─────────────────────────────────────────────────────────────────────── */
+  /* ─── renderRecentSales — on-chain first, cross-browser safe ───────────
+     - Uses AbortController (not AbortSignal.timeout) for Brave/Firefox compat
+     - masterDone flag prevents double DOM writes (race condition fixed)
+     - Shows "No recent sales yet" empty state when no orders found
+     - Hard 10s master timeout stops spinner forever
+  ─────────────────────────────────────────────────────────────────────── */
+  var _rrsRunning = false;
   async function renderRecentSales() {
-    const el = document.getElementById('home-recent-sales-container');
-    if (!el) return;
+    // Prevent concurrent calls (e.g. retry while already loading)
+    if (_rrsRunning) return;
+    _rrsRunning = true;
 
-    // Show loading spinner immediately
-    el.innerHTML = \`<div class="home-loading"><div class="loading-spinner-lg"></div><p>Loading on-chain sales…</p></div>\`;
+    var el = document.getElementById('home-recent-sales-container');
+    if (!el) { _rrsRunning = false; return; }
 
-    // Master timeout — if everything takes > 10 s, show fallback
-    let masterDone = false;
-    const masterTimer = setTimeout(() => {
+    // Show loading spinner
+    el.innerHTML = '<div class="home-loading"><div class="loading-spinner-lg"></div><p>Loading on-chain sales\u2026</p></div>';
+
+    // Master timeout — set masterDone=true BEFORE writing DOM to prevent race
+    var masterDone = false;
+    var masterTimer = setTimeout(function() {
       if (masterDone) return;
       masterDone = true;
-      el.innerHTML = \`
-        <div class="home-rs-grid">
-          <div class="home-rs-empty" style="grid-column:1/-1;text-align:center;padding:48px 24px;">
-            <div class="home-rs-empty-icon"><i class="fas fa-clock"></i></div>
-            <h3 style="font-size:1.1rem;font-weight:800;color:#1e293b;margin:0 0 8px;">Loading timed out</h3>
-            <p style="font-size:13px;color:#94a3b8;max-width:300px;margin:0 auto 20px;line-height:1.7;">
-              Arc Network is responding slowly. Sales data will appear once the network is reachable.
-            </p>
-            <button onclick="renderRecentSales()" style="display:inline-flex;align-items:center;gap:6px;padding:8px 18px;background:#dc2626;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;"><i class="fas fa-redo"></i> Retry</button>
-          </div>
-        </div>\`;
+      _rrsRunning = false;
+      el.innerHTML =
+        '<div class="home-rs-grid">'
+        + '<div class="home-rs-empty" style="grid-column:1/-1;text-align:center;padding:48px 24px;">'
+        + '<div class="home-rs-empty-icon"><i class="fas fa-clock"></i></div>'
+        + '<h3 style="font-size:1.1rem;font-weight:800;color:#1e293b;margin:0 0 8px;">Unable to load data. Please try again.</h3>'
+        + '<p style="font-size:13px;color:#94a3b8;max-width:300px;margin:0 auto 20px;line-height:1.7;">'
+        + 'Arc Network is responding slowly.</p>'
+        + '<button onclick="renderRecentSales()" style="display:inline-flex;align-items:center;gap:6px;padding:8px 18px;background:#dc2626;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">'
+        + '<i class="fas fa-redo"></i> Retry</button>'
+        + '</div></div>';
     }, 10000);
 
-    /* 1. Try on-chain first (works across all browsers — no localStorage dependency) */
-    let orders = [];
     try {
-      const res = await fetch('/api/orders/on-chain?limit=20', { signal: AbortSignal.timeout(8000) });
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data.orders)) orders = data.orders;
-      }
-    } catch { /* network timeout — fall through to localStorage */ }
-
-    /* 2. Merge localStorage orders (same-browser cache, for product name enrichment) */
-    let localOrders = [];
-    try { const r = localStorage.getItem('rh_orders'); if (r) localOrders = JSON.parse(r); } catch {}
-    if (Array.isArray(localOrders) && localOrders.length) {
-      // Merge: on-chain orders take precedence; local adds product name if on-chain lacks it
-      const onChainIds = new Set(orders.map(o => (o.fundTxHash || o.txHash || '').toLowerCase()));
-      for (const lo of localOrders) {
-        const id = (lo.fundTxHash || lo.txHash || '').toLowerCase();
-        if (!id || onChainIds.has(id)) {
-          // enrich existing on-chain entry with product name from local
-          const match = orders.find(o => (o.fundTxHash||o.txHash||'').toLowerCase() === id);
-          if (match && !match.items && lo.items) match.items = lo.items;
-          if (match && !match.productId && lo.productId) match.productId = lo.productId;
-          continue;
-        }
-        orders.push(lo);
-      }
-    }
-
-    // Sort newest first, cap at 6
-    orders = orders
-      .sort((a, b) => {
-        const ta = b.blockNumber ? b.blockNumber : (new Date(b.createdAt||0).getTime()/1000);
-        const tb = a.blockNumber ? a.blockNumber : (new Date(a.createdAt||0).getTime()/1000);
-        return ta - tb;
-      })
-      .slice(0, 6);
-
-    if (!orders.length) {
-      masterDone = true; clearTimeout(masterTimer);
-      el.innerHTML = \`
-        <div class="home-rs-grid">
-          <div class="home-rs-empty">
-            <div class="home-rs-empty-icon"><i class="fas fa-receipt"></i></div>
-            <h3 style="font-size:1.1rem;font-weight:800;color:#1e293b;margin:0 0 8px;">No Sales Yet</h3>
-            <p style="font-size:13px;color:#94a3b8;max-width:300px;margin:0 auto 24px;line-height:1.7;">
-              Completed purchases will appear here in real time once escrow transactions are confirmed on Arc Network.
-            </p>
-            <a href="/marketplace" class="btn-secondary" style="font-size:13px;padding:9px 20px;display:inline-flex;">
-              <i class="fas fa-store"></i> Browse Marketplace
-            </a>
-          </div>
-        </div>\`;
-      return;
-    }
-
-    function shortAddr(addr) {
-      if (!addr) return '—';
-      const s = String(addr);
-      return s.length > 10 ? s.slice(0, 6) + '…' + s.slice(-4) : s;
-    }
-    function shortHash(hash) {
-      if (!hash) return '—';
-      const s = String(hash);
-      return s.length > 10 ? s.slice(0, 8) + '…' + s.slice(-6) : s;
-    }
-    function fmtDate(iso) {
-      if (!iso) return '';
+      /* 1. Try on-chain first (cross-browser: AbortController not AbortSignal.timeout) */
+      var orders = [];
       try {
-        const d = new Date(iso);
-        return d.toLocaleDateString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
-      } catch { return ''; }
-    }
+        var _oc1 = new AbortController();
+        var _t1  = setTimeout(function() { _oc1.abort(); }, 8000);
+        try {
+          var res = await fetch('/api/orders/on-chain?limit=20', { signal: _oc1.signal });
+          clearTimeout(_t1);
+          if (res.ok) {
+            var data = await res.json();
+            if (Array.isArray(data.orders)) orders = data.orders;
+          }
+        } finally { clearTimeout(_t1); }
+      } catch(e) { /* network timeout — fall through to localStorage */ }
 
-    const explorer = (window.ARC && window.ARC.explorer) || 'https://testnet.arcscan.app';
+      /* 2. Merge localStorage orders (same-browser enrichment only) */
+      var localOrders = [];
+      try { var r = localStorage.getItem('rh_orders'); if (r) localOrders = JSON.parse(r); } catch(e) {}
+      if (Array.isArray(localOrders) && localOrders.length) {
+        var onChainIds = new Set(orders.map(function(o) { return (o.fundTxHash || o.txHash || '').toLowerCase(); }));
+        for (var i = 0; i < localOrders.length; i++) {
+          var lo = localOrders[i];
+          var lid = (lo.fundTxHash || lo.txHash || '').toLowerCase();
+          if (!lid || onChainIds.has(lid)) {
+            var match = orders.find(function(o) { return (o.fundTxHash||o.txHash||'').toLowerCase() === lid; });
+            if (match) {
+              if (!match.items && lo.items) match.items = lo.items;
+              if (!match.productId && lo.productId) match.productId = lo.productId;
+            }
+            continue;
+          }
+          orders.push(lo);
+        }
+      }
 
-    const cards = orders.map(o => {
-      const product   = ((o.items && o.items[0] && o.items[0].name) || o.productId || 'On-chain Escrow');
-      const amount    = parseFloat(o.amount || 0).toFixed(2);
-      const token     = o.token || 'USDC';
-      const buyer     = shortAddr(o.buyerAddress);
-      const seller    = shortAddr(o.sellerAddress);
-      const txHash    = o.fundTxHash || o.txHash || '';
-      const shortTx   = shortHash(txHash);
-      const txLink    = txHash ? (explorer + '/tx/' + txHash) : '#';
-      const date      = fmtDate(o.createdAt);
-      const statusMap = {
-        escrow_locked:      'Escrow Locked',
-        escrow_pending:     'Pending',
-        delivery_confirmed: 'Delivery Confirmed',
-        funds_released:     'Completed',
-        refunded:           'Refunded',
-        disputed:           'Disputed',
-        delivered:          'Delivered',
-        completed:          'Completed',
+      // Sort newest first, cap at 6
+      orders = orders
+        .sort(function(a, b) {
+          var ta = b.blockNumber ? b.blockNumber : (new Date(b.createdAt||0).getTime()/1000);
+          var tb = a.blockNumber ? a.blockNumber : (new Date(a.createdAt||0).getTime()/1000);
+          return ta - tb;
+        })
+        .slice(0, 6);
+
+      // If master timeout already fired, stop — don't overwrite its UI
+      if (masterDone) return;
+      masterDone = true;
+      clearTimeout(masterTimer);
+
+      if (!orders.length) {
+        el.innerHTML =
+          '<div class="home-rs-grid">'
+          + '<div class="home-rs-empty">'
+          + '<div class="home-rs-empty-icon"><i class="fas fa-receipt"></i></div>'
+          + '<h3 style="font-size:1.1rem;font-weight:800;color:#1e293b;margin:0 0 8px;">No recent sales yet</h3>'
+          + '<p style="font-size:13px;color:#94a3b8;max-width:300px;margin:0 auto 24px;line-height:1.7;">'
+          + 'Completed purchases will appear here once escrow transactions are confirmed on Arc Network.</p>'
+          + '<a href="/marketplace" class="btn-secondary" style="font-size:13px;padding:9px 20px;display:inline-flex;">'
+          + '<i class="fas fa-store"></i> Browse Marketplace'
+          + '</a></div></div>';
+        return;
+      }
+
+      function shortAddrRS(addr) {
+        if (!addr) return '\u2014';
+        var s = String(addr);
+        return s.length > 10 ? s.slice(0, 6) + '\u2026' + s.slice(-4) : s;
+      }
+      function shortHashRS(hash) {
+        if (!hash) return '\u2014';
+        var s = String(hash);
+        return s.length > 10 ? s.slice(0, 8) + '\u2026' + s.slice(-6) : s;
+      }
+      function fmtDateRS(iso) {
+        if (!iso) return '';
+        try {
+          var d = new Date(iso);
+          return d.toLocaleDateString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+        } catch(e) { return ''; }
+      }
+
+      var explorer = (window.ARC && window.ARC.explorer) || 'https://testnet.arcscan.app';
+      var statusMapRS = {
+        escrow_locked:'Escrow Locked', escrow_pending:'Pending',
+        delivery_confirmed:'Delivery Confirmed', funds_released:'Completed',
+        refunded:'Refunded', disputed:'Disputed', delivered:'Delivered', completed:'Completed'
       };
-      const statusLabel = statusMap[o.status] || 'Escrow Locked';
 
-      return \`
-        <div class="home-rs-card">
-          <div class="home-rs-card-top">
-            <span class="home-rs-product" title="\${product}">\${product}</span>
-            <span class="home-rs-status"><span class="home-rs-status-dot"></span>\${statusLabel}</span>
-          </div>
-          <div>
-            <span class="home-rs-amount">\${amount}</span>
-            <span class="home-rs-token">\${token}</span>
-          </div>
-          <div class="home-rs-meta">
-            <div class="home-rs-meta-row">
-              <span class="home-rs-meta-icon"><i class="fas fa-user"></i></span>
-              <span>Buyer:</span>
-              <span class="home-rs-addr">\${buyer}</span>
-            </div>
-            \${seller ? \`
-            <div class="home-rs-meta-row">
-              <span class="home-rs-meta-icon"><i class="fas fa-store"></i></span>
-              <span>Seller:</span>
-              <span class="home-rs-addr">\${seller}</span>
-            </div>\` : ''}
-            \${txHash ? \`
-            <div class="home-rs-meta-row">
-              <span class="home-rs-meta-icon"><i class="fas fa-link"></i></span>
-              <span>Tx:</span>
-              <a href="\${txLink}" target="_blank" rel="noopener" class="home-rs-hash">\${shortTx}</a>
-            </div>\` : ''}
-            \${date ? \`
-            <div class="home-rs-meta-row">
-              <span class="home-rs-meta-icon"><i class="fas fa-clock"></i></span>
-              <span>\${date}</span>
-            </div>\` : ''}
-          </div>
-        </div>\`;
-    }).join('');
+      var cards = orders.map(function(o) {
+        var product   = ((o.items && o.items[0] && o.items[0].name) || o.productId || 'On-chain Escrow');
+        var amount    = parseFloat(o.amount || 0).toFixed(2);
+        var token     = o.token || 'USDC';
+        var buyer     = shortAddrRS(o.buyerAddress);
+        var seller    = shortAddrRS(o.sellerAddress);
+        var txHash    = o.fundTxHash || o.txHash || '';
+        var shortTx   = shortHashRS(txHash);
+        var txLink    = txHash ? (explorer + '/tx/' + txHash) : '#';
+        var date      = fmtDateRS(o.createdAt);
+        var statusLabel = statusMapRS[o.status] || 'Escrow Locked';
+        return '<div class="home-rs-card">'
+          + '<div class="home-rs-card-top">'
+          + '<span class="home-rs-product" title="' + product + '">' + product + '</span>'
+          + '<span class="home-rs-status"><span class="home-rs-status-dot"></span>' + statusLabel + '</span>'
+          + '</div>'
+          + '<div><span class="home-rs-amount">' + amount + '</span><span class="home-rs-token">' + token + '</span></div>'
+          + '<div class="home-rs-meta">'
+          + '<div class="home-rs-meta-row"><span class="home-rs-meta-icon"><i class="fas fa-user"></i></span><span>Buyer:</span><span class="home-rs-addr">' + buyer + '</span></div>'
+          + (seller ? '<div class="home-rs-meta-row"><span class="home-rs-meta-icon"><i class="fas fa-store"></i></span><span>Seller:</span><span class="home-rs-addr">' + seller + '</span></div>' : '')
+          + (txHash ? '<div class="home-rs-meta-row"><span class="home-rs-meta-icon"><i class="fas fa-link"></i></span><span>Tx:</span><a href="' + txLink + '" target="_blank" rel="noopener" class="home-rs-hash">' + shortTx + '</a></div>' : '')
+          + (date   ? '<div class="home-rs-meta-row"><span class="home-rs-meta-icon"><i class="fas fa-clock"></i></span><span>' + date + '</span></div>' : '')
+          + '</div></div>';
+      }).join('');
 
-    masterDone = true; clearTimeout(masterTimer);
-    el.innerHTML = '<div class="home-rs-grid">' + cards + '</div>';
+      el.innerHTML = '<div class="home-rs-grid">' + cards + '</div>';
+
+    } catch(err) {
+      if (masterDone) return; // timeout already handled
+      masterDone = true;
+      clearTimeout(masterTimer);
+      console.error('[renderRecentSales]', err);
+      el.innerHTML =
+        '<div class="home-rs-grid">'
+        + '<div class="home-rs-empty" style="grid-column:1/-1;text-align:center;padding:48px 24px;">'
+        + '<div class="home-rs-empty-icon"><i class="fas fa-exclamation-triangle"></i></div>'
+        + '<h3 style="font-size:1.1rem;font-weight:800;color:#1e293b;margin:0 0 8px;">Unable to load data. Please try again.</h3>'
+        + '<button onclick="renderRecentSales()" style="display:inline-flex;align-items:center;gap:6px;padding:8px 18px;background:#dc2626;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">'
+        + '<i class="fas fa-redo"></i> Retry</button>'
+        + '</div></div>';
+    } finally {
+      _rrsRunning = false;
+    }
   }
 
   /* ─── Glass card: Live Activity ───────────────────────────────────────
@@ -3774,11 +3836,16 @@ function homePage() {
     /* 1. Try on-chain */
     let orders = [];
     try {
-      const res = await fetch('/api/orders/on-chain?limit=10', { signal: AbortSignal.timeout(8000) });
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data.orders)) orders = data.orders;
-      }
+      const _oc2 = new AbortController();
+      const _t2  = setTimeout(() => _oc2.abort(), 8000);
+      try {
+        const res = await fetch('/api/orders/on-chain?limit=10', { signal: _oc2.signal });
+        clearTimeout(_t2);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.orders)) orders = data.orders;
+        }
+      } finally { clearTimeout(_t2); }
     } catch { /* fall through */ }
 
     /* 2. Merge localStorage */
@@ -3838,22 +3905,25 @@ function homePage() {
 
   /* ─── Glass card: Network status pill ─────────────────────────────── */
   async function updateGlassNetStatus() {
-    const pill = document.getElementById('hgc-net-status');
+    var pill = document.getElementById('hgc-net-status');
     if (!pill) return;
     try {
-      const rpc = (window.ARC && window.ARC.rpc) || 'https://rpc.arc.testnet.circle.com';
-      const res = await fetch(rpc, {
+      var rpc = (window.ARC && window.ARC.rpc) || 'https://rpc.arc.testnet.circle.com';
+      var netCtrl = new AbortController();
+      var netTimer = setTimeout(function() { netCtrl.abort(); }, 6000);
+      var res = await fetch(rpc, {
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({jsonrpc:'2.0',method:'eth_blockNumber',params:[],id:1}),
-        signal:AbortSignal.timeout(6000)
+        signal:netCtrl.signal
       });
-      const data = await res.json();
+      clearTimeout(netTimer);
+      var data = await res.json();
       if (data.result) {
         pill.className = 'hgc-net-pill hgc-net-pill--online';
         pill.innerHTML = '<span class="hgc-net-dot"></span><span>Online</span>';
       } else { throw new Error('no result'); }
-    } catch {
+    } catch(e) {
       pill.className = 'hgc-net-pill hgc-net-pill--offline';
       pill.innerHTML = '<span class="hgc-net-dot"></span><span>Offline</span>';
     }
@@ -3872,21 +3942,21 @@ function homePage() {
     if (btnR) btnR.addEventListener('click', () => track.scrollBy({left: STEP, behavior:'smooth'}));
 
     /* Active item by URL param */
-    const urlCat = new URLSearchParams(location.search).get('cat');
+    var urlCat = new URLSearchParams(location.search).get('cat');
     if (urlCat) {
-      track.querySelectorAll('.home-cat-nav-item').forEach(a => {
-        const el = a as HTMLElement;
+      track.querySelectorAll('.home-cat-nav-item').forEach(function(a) {
+        var el = a;
         el.classList.toggle('home-cat-nav-item--active',
           decodeURIComponent(el.dataset['cat']||'') === urlCat);
       });
     }
 
     /* Drag-to-scroll on desktop */
-    let isDown = false, startX = 0, scrollL = 0;
-    track.addEventListener('mousedown',  (e:MouseEvent) => { isDown=true; startX=e.pageX-track.offsetLeft; scrollL=track.scrollLeft; (track as HTMLElement).style.cursor='grabbing'; });
-    track.addEventListener('mouseleave', () => { isDown=false; (track as HTMLElement).style.cursor=''; });
-    track.addEventListener('mouseup',    () => { isDown=false; (track as HTMLElement).style.cursor=''; });
-    track.addEventListener('mousemove',  (e:MouseEvent) => { if(!isDown) return; e.preventDefault(); const x=e.pageX-track.offsetLeft; track.scrollLeft=scrollL-(x-startX); });
+    var isDown = false, startX = 0, scrollL = 0;
+    track.addEventListener('mousedown',  function(e) { isDown=true; startX=e.pageX-track.offsetLeft; scrollL=track.scrollLeft; track.style.cursor='grabbing'; });
+    track.addEventListener('mouseleave', function() { isDown=false; track.style.cursor=''; });
+    track.addEventListener('mouseup',    function() { isDown=false; track.style.cursor=''; });
+    track.addEventListener('mousemove',  function(e) { if(!isDown) return; e.preventDefault(); var x=e.pageX-track.offsetLeft; track.scrollLeft=scrollL-(x-startX); });
   }
   </script>
   `, '', catNavHTML())
@@ -3972,19 +4042,19 @@ function marketplacePage() {
   let activeCategory = 'All';
   let sortMode = 'newest';
 
-  document.addEventListener('DOMContentLoaded', async () => {
+  document.addEventListener('DOMContentLoaded', async function() {
     checkNetworkStatus(document.getElementById('mp-network-status'));
 
     // Read ?cat= param from URL
-    const urlCat = new URLSearchParams(window.location.search).get('cat') || 'All';
+    var urlCat = new URLSearchParams(window.location.search).get('cat') || 'All';
     activeCategory = urlCat;
 
     // Update sidebar checkbox
-    document.querySelectorAll('.cat-filter').forEach(cb => {
+    document.querySelectorAll('.cat-filter').forEach(function(cb) {
       cb.checked = (cb.dataset.cat === activeCategory || (activeCategory === 'All' && cb.dataset.cat === 'All'));
-      cb.addEventListener('change', () => {
-        activeCategory = cb.dataset.cat;
-        document.querySelectorAll('.cat-filter').forEach(x => { x.checked = x.dataset.cat === activeCategory; });
+      cb.addEventListener('change', function() {
+        activeCategory = this.dataset.cat;
+        document.querySelectorAll('.cat-filter').forEach(function(x) { x.checked = x.dataset.cat === activeCategory; });
         renderProducts();
       });
     });
@@ -3996,54 +4066,131 @@ function marketplacePage() {
       renderProducts(this.value.trim().toLowerCase());
     });
 
+    // Re-initialize provider and listen for wallet/chain changes
+    try {
+      var eth = window.ethereum || window._ethProvider;
+      if (eth && eth.on) {
+        eth.on('accountsChanged', function() {
+          console.log('[marketplace] accountsChanged → reload');
+          setTimeout(function() { location.reload(); }, 400);
+        });
+        eth.on('chainChanged', function() {
+          console.log('[marketplace] chainChanged → reload');
+          setTimeout(function() { location.reload(); }, 400);
+        });
+      }
+    } catch(e) {}
+
     await loadProducts();
   });
 
+  /* ── loadProducts: robust version with timeout, spinner stop, error UI ── */
+  var _mpLoading = false;
   async function loadProducts() {
+    if (_mpLoading) return;
+    _mpLoading = true;
+    var container = document.getElementById('mp-products-container');
+
+    // Show loading spinner
+    container.innerHTML =
+      '<div class="text-center py-12">'
+      + '<div class="loading-spinner-lg mx-auto mb-4"></div>'
+      + '<p class="text-slate-400">Fetching products from Arc Network\u2026</p>'
+      + '</div>';
+
+    // Hard 10-second timeout so spinner never hangs
+    var _timedOut = false;
+    var _mpTimer = setTimeout(function() {
+      _timedOut = true;
+      _mpLoading = false;
+      container.innerHTML =
+        '<div class="card p-10 text-center">'
+        + '<i class="fas fa-clock text-4xl text-amber-400 mb-3 block"></i>'
+        + '<p class="font-semibold text-slate-700 mb-1">Loading timed out</p>'
+        + '<p class="text-slate-400 text-sm mb-4">Arc Network is responding slowly. Please try again.</p>'
+        + '<button onclick="_mpLoading=false;loadProducts()" class="btn-primary mx-auto text-sm">'
+        + '<i class="fas fa-redo mr-1"></i>Retry</button>'
+        + '</div>';
+    }, 10000);
+
     try {
-      const res  = await fetch('/api/products');
-      const data = await res.json();
-      allProducts = data.products || [];
+      // Cross-browser compatible timeout (no AbortSignal.timeout dependency)
+      var ctrl = new AbortController();
+      var fetchTimer = setTimeout(function() { ctrl.abort(); }, 9000);
+      var res;
+      try {
+        res = await fetch('/api/products', { signal: ctrl.signal });
+      } finally {
+        clearTimeout(fetchTimer);
+      }
+      if (_timedOut) return; // timeout already handled
+      clearTimeout(_mpTimer);
+
+      if (!res.ok) {
+        throw new Error('Server error ' + res.status);
+      }
+      var data = await res.json();
+      allProducts = Array.isArray(data.products) ? data.products : [];
+      // Log for debugging (Brave vs Chrome)
+      console.log('[marketplace] loaded', allProducts.length, 'products');
       renderProducts();
-    } catch {
-      document.getElementById('mp-products-container').innerHTML =
-        '<div class="card p-8 text-center text-red-500"><i class="fas fa-exclamation-circle mr-2"></i>Could not connect to marketplace. Please try again.</div>';
+    } catch(err) {
+      if (_timedOut) return; // already handled
+      clearTimeout(_mpTimer);
+      var isAbort = err && (err.name === 'AbortError' || err.name === 'TimeoutError');
+      var msg = isAbort
+        ? 'Request timed out. Arc Network may be slow.'
+        : (err && err.message ? err.message : 'Could not connect to marketplace.');
+      console.error('[marketplace] loadProducts error:', err);
+      container.innerHTML =
+        '<div class="card p-10 text-center">'
+        + '<i class="fas fa-exclamation-triangle text-4xl text-red-400 mb-3 block"></i>'
+        + '<p class="font-semibold text-slate-700 mb-1">Failed to load products</p>'
+        + '<p class="text-slate-400 text-sm mb-4">' + msg + '</p>'
+        + '<button onclick="_mpLoading=false;loadProducts()" class="btn-primary mx-auto text-sm">'
+        + '<i class="fas fa-redo mr-1"></i>Retry</button>'
+        + '</div>';
+    } finally {
+      _mpLoading = false;
     }
   }
 
   function renderProducts(searchText) {
-    const q = (searchText !== undefined ? searchText : (document.getElementById('mp-search-bar')||{}).value || '').toLowerCase();
-    let list = allProducts.filter(p => {
-      const matchCat = activeCategory === 'All' || p.category === activeCategory;
-      const matchQ   = !q || (p.title||p.name||'').toLowerCase().includes(q) || (p.description||'').toLowerCase().includes(q);
+    var q = (searchText !== undefined ? searchText : (document.getElementById('mp-search-bar')||{}).value || '').toLowerCase();
+    var list = allProducts.filter(function(p) {
+      var matchCat = activeCategory === 'All' || p.category === activeCategory;
+      var matchQ   = !q || (p.title||p.name||'').toLowerCase().includes(q) || (p.description||'').toLowerCase().includes(q);
       return matchCat && matchQ;
     });
 
-    if (sortMode === 'price_asc')  list = [...list].sort((a,b) => a.price - b.price);
-    if (sortMode === 'price_desc') list = [...list].sort((a,b) => b.price - a.price);
-    if (sortMode === 'newest')     list = [...list].sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+    if (sortMode === 'price_asc')  list = list.slice().sort(function(a,b) { return a.price - b.price; });
+    if (sortMode === 'price_desc') list = list.slice().sort(function(a,b) { return b.price - a.price; });
+    if (sortMode === 'newest')     list = list.slice().sort(function(a,b) { return new Date(b.created_at) - new Date(a.created_at); });
 
-    const container = document.getElementById('mp-products-container');
+    var container = document.getElementById('mp-products-container');
+    if (!container) return;
+
     if (list.length === 0) {
-      container.innerHTML = \`
-        <div class="card p-16 text-center">
-          <div class="empty-state">
-            <i class="fas fa-store"></i>
-            <h3 class="font-bold text-slate-700 text-xl mb-2">\${allProducts.length === 0 ? 'No Products Listed Yet' : 'No Products Found'}</h3>
-            <p class="text-slate-400 text-sm mb-6 max-w-sm mx-auto">
-              \${allProducts.length === 0
-                ? 'Be the first seller to list your product and earn USDC or EURC!'
-                : 'Try changing the filters or search term.'}
-            </p>
-            <a href="/sell" class="btn-primary mx-auto text-base px-8 py-3">
-              <i class="fas fa-plus-circle"></i> List a Product
-            </a>
-          </div>
-        </div>\`;
+      var isGlobalEmpty = allProducts.length === 0;
+      container.innerHTML =
+        '<div class="card p-16 text-center">'
+        + '<div class="empty-state">'
+        + '<i class="fas fa-store"></i>'
+        + '<h3 class="font-bold text-slate-700 text-xl mb-2">'
+        + (isGlobalEmpty ? 'No Products Available' : 'No Products Found')
+        + '</h3>'
+        + '<p class="text-slate-400 text-sm mb-6 max-w-sm mx-auto">'
+        + (isGlobalEmpty
+            ? 'No products are currently listed. Be the first seller to earn USDC or EURC!'
+            : 'Try changing the filters or search term.')
+        + '</p>'
+        + '<a href="/sell" class="btn-primary mx-auto text-base px-8 py-3">'
+        + '<i class="fas fa-plus-circle"></i> List a Product'
+        + '</a></div></div>';
     } else {
       container.innerHTML = '<div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">'
-        + list.map(p => renderMPCard(p)).join('') + '</div>'
-        + \`<p class="text-xs text-slate-400 text-right mt-3">\${list.length} product\${list.length!==1?'s':''} found</p>\`;
+        + list.map(function(p) { return renderMPCard(p); }).join('') + '</div>'
+        + '<p class="text-xs text-slate-400 text-right mt-3">' + list.length + ' product' + (list.length!==1?'s':'') + ' found</p>';
       // Lazy-load images after rendering
       lazyLoadMPImages(list);
     }
@@ -8082,8 +8229,8 @@ function profilePage() {
     var w = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
 
     if(w && w.address) {
-      _profAddress = w.address;
-      document.getElementById('prof-address').textContent = w.address.substring(0,10)+'…'+w.address.slice(-6);
+      _profAddress = w.address.toLowerCase();
+      document.getElementById('prof-address').textContent = w.address.substring(0,10)+'\u2026'+w.address.slice(-6);
       document.getElementById('prof-network-badge').innerHTML =
         '<span class="arc-badge text-xs"><i class="fas fa-network-wired text-xs"></i> Arc Testnet</span>';
       var explorerBase = (window.ARC && window.ARC.explorer) || 'https://testnet.arcscan.app';
@@ -8092,17 +8239,35 @@ function profilePage() {
         +'<p class="text-xs text-slate-500">Address</p>'
         +'<p class="font-mono text-xs text-slate-700 break-all">'+w.address+'</p>'
         +'<a href="'+explorerBase+'/address/'+w.address+'" target="_blank" class="text-blue-600 text-xs hover:underline flex items-center gap-1 mt-1">'
-        +'<i class="fas fa-external-link-alt text-xs"></i> View on Arc Explorer</a></div>';
+        +'<i class="fas fa-external-link-alt text-xs"></i> View on Arc Explorer</a>'
+        +'<p class="text-xs text-slate-400 mt-2"><i class="fas fa-info-circle mr-1"></i>This is a decentralized marketplace. Connect your wallet to manage your products.</p>'
+        +'</div>';
 
       // Load on-chain stats for buyer orders
       loadProfStats(w.address);
     } else {
       document.getElementById('prof-wallet-info').innerHTML =
-        '<a href="/wallet" class="text-red-600 hover:underline">Connect wallet to see on-chain data →</a>';
-      document.getElementById('stat-orders').textContent = '—';
-      document.getElementById('stat-spent').textContent  = '—';
-      document.getElementById('stat-listings').textContent = '—';
+        '<a href="/wallet" class="text-red-600 hover:underline">Connect wallet to see on-chain data \u2192</a>'
+        +'<p class="text-xs text-slate-400 mt-2"><i class="fas fa-info-circle mr-1"></i>This is a decentralized marketplace. Connect your wallet to manage your products.</p>';
+      document.getElementById('stat-orders').textContent = '\u2014';
+      document.getElementById('stat-spent').textContent  = '\u2014';
+      document.getElementById('stat-listings').textContent = '\u2014';
     }
+
+    // Listen for wallet/chain changes — reload page for fresh data (cross-browser)
+    try {
+      var eth = window.ethereum || window._ethProvider;
+      if (eth && eth.on) {
+        eth.on('accountsChanged', function(accounts) {
+          console.log('[profile] accountsChanged', accounts);
+          setTimeout(function() { location.reload(); }, 400);
+        });
+        eth.on('chainChanged', function(chainId) {
+          console.log('[profile] chainChanged', chainId);
+          setTimeout(function() { location.reload(); }, 400);
+        });
+      }
+    } catch(e) {}
 
     // Read URL param to auto-switch tab
     var tabParam = new URLSearchParams(location.search).get('tab');
@@ -8114,10 +8279,13 @@ function profilePage() {
   // ── Load on-chain stats ───────────────────────────────────────────────
   async function loadProfStats(address) {
     try {
-      // On-chain buyer orders
+      // On-chain buyer orders (cross-browser AbortController)
+      var sc1 = new AbortController();
+      var st1 = setTimeout(function(){ sc1.abort(); }, 10000);
       var res = await fetch('/api/orders/on-chain?buyer='+encodeURIComponent(address)+'&limit=50', {
-        signal: AbortSignal.timeout(10000)
+        signal: sc1.signal
       });
+      clearTimeout(st1);
       var total = 0, spent = 0;
       if(res.ok) {
         var data = await res.json();
@@ -8134,9 +8302,12 @@ function profilePage() {
     // Listings count — from seller API
     if(address) {
       try {
+        var sc2 = new AbortController();
+        var st2 = setTimeout(function(){ sc2.abort(); }, 8000);
         var r2 = await fetch('/api/seller/'+encodeURIComponent(address)+'/products', {
-          signal: AbortSignal.timeout(8000)
+          signal: sc2.signal
         });
+        clearTimeout(st2);
         if(r2.ok) {
           var d2 = await r2.json();
           document.getElementById('stat-listings').textContent = d2.total || 0;
@@ -8150,6 +8321,10 @@ function profilePage() {
   // ── Load seller products ──────────────────────────────────────────────
   async function loadProfProducts(address) {
     if(!address) { profShowNoWallet(); return; }
+    // Normalize address to lowercase for consistent comparison
+    var normAddr = address.toLowerCase();
+    _profAddress = normAddr;
+    console.log('[myproducts] loadProfProducts for', normAddr);
     profShowProductsLoading();
     try {
       var controller = new AbortController();
@@ -8160,12 +8335,19 @@ function profilePage() {
       clearTimeout(timeout);
       if(!res.ok) { profShowProductsError('Server error '+res.status+'. Please try again.'); return; }
       var data = await res.json();
-      _profProducts = Array.isArray(data.products) ? data.products : [];
+      var products = Array.isArray(data.products) ? data.products : [];
+      console.log('[myproducts] fetched', products.length, 'products for', normAddr);
+      // Filter: only show products owned by this wallet (seller_id match, case-insensitive)
+      _profProducts = products.filter(function(p) {
+        return p.seller_id && p.seller_id.toLowerCase() === normAddr;
+      });
+      console.log('[myproducts] after seller filter:', _profProducts.length, 'products');
       renderProfProducts();
     } catch(e) {
       if(e && e.name === 'AbortError') {
-        profShowProductsError('Request timed out. Please check your connection and try again.');
+        profShowProductsError('Request timed out. Arc Network may be slow. Please try again.');
       } else {
+        console.error('[myproducts] loadProfProducts error:', e);
         profShowProductsError(e && e.message ? e.message : 'Unable to load data. Please try again.');
       }
     }
@@ -8228,7 +8410,7 @@ function profilePage() {
         '<div class="text-center py-12">'
         +'<div class="empty-state">'
         +'<i class="fas fa-store"></i>'
-        +'<h3 class="font-bold text-slate-600 mb-2">No products listed yet</h3>'
+        +'<h3 class="font-bold text-slate-600 mb-2">You have no products yet</h3>'
         +'<p class="text-sm text-slate-400 mb-4">Start selling by listing your first product on Arc Network.</p>'
         +'<a href="/sell" class="btn-primary mx-auto"><i class="fas fa-plus-circle mr-1"></i> List a Product</a>'
         +'</div></div>';
@@ -8325,14 +8507,17 @@ function profilePage() {
       showToast('Please fill in all required fields correctly','error'); return;
     }
     var btn = document.getElementById('pedit-save-btn');
-    btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Saving…';
+    btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Saving\u2026';
     try {
+      var ctrl2 = new AbortController();
+      var t2 = setTimeout(function(){ ctrl2.abort(); }, 10000);
       var res = await fetch('/api/products/'+id, {
         method:'PATCH',
         headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ seller_id:wallet.address, title, description:desc, price, token, image }),
-        signal: AbortSignal.timeout(10000)
+        body: JSON.stringify({ seller_id:wallet.address, title:title, description:desc, price:price, token:token, image:image }),
+        signal: ctrl2.signal
       });
+      clearTimeout(t2);
       var data = await res.json();
       if(!res.ok){ showToast(data.error||'Failed to update product','error'); return; }
       showToast('Product updated successfully','success');
@@ -8351,11 +8536,14 @@ function profilePage() {
     var wallet = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
     if(!wallet){ showToast('Connect wallet first','error'); return; }
     try {
+      var ctrl3 = new AbortController();
+      var t3 = setTimeout(function(){ ctrl3.abort(); }, 10000);
       var res = await fetch('/api/products/'+productId+'/status',{
         method:'PATCH',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({seller_id:wallet.address,status:'paused'}),
-        signal:AbortSignal.timeout(10000)
+        signal:ctrl3.signal
       });
+      clearTimeout(t3);
       var data = await res.json();
       if(!res.ok){ showToast(data.error||'Failed','error'); return; }
       showToast('Listing paused','info');
@@ -8368,11 +8556,14 @@ function profilePage() {
     var wallet = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
     if(!wallet){ showToast('Connect wallet first','error'); return; }
     try {
+      var ctrl4 = new AbortController();
+      var t4 = setTimeout(function(){ ctrl4.abort(); }, 10000);
       var res = await fetch('/api/products/'+productId+'/status',{
         method:'PATCH',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({seller_id:wallet.address,status:'active'}),
-        signal:AbortSignal.timeout(10000)
+        signal:ctrl4.signal
       });
+      clearTimeout(t4);
       var data = await res.json();
       if(!res.ok){ showToast(data.error||'Failed','error'); return; }
       showToast('Listing is now active','success');
@@ -8385,11 +8576,14 @@ function profilePage() {
     var wallet = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
     if(!wallet){ showToast('Connect wallet first','error'); return; }
     try {
+      var ctrl5 = new AbortController();
+      var t5 = setTimeout(function(){ ctrl5.abort(); }, 10000);
       var res = await fetch('/api/products/'+productId,{
         method:'DELETE',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({seller_id:wallet.address}),
-        signal:AbortSignal.timeout(10000)
+        signal:ctrl5.signal
       });
+      clearTimeout(t5);
       var data = await res.json();
       if(!res.ok){ showToast(data.error||'Failed','error'); return; }
       showToast('Product deleted','success');

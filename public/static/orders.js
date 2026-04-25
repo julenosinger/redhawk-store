@@ -1,35 +1,32 @@
-/* orders.js — redhawk-store My Orders page logic
- * Extracted from inline script to static file for clean separation.
+/* orders.js — Shukly Store My Orders page logic v5
+ * Cross-browser fix: primary data source is /api/orders/on-chain (no localStorage dependency).
+ * localStorage rh_orders used only for product-name enrichment.
  * Loaded via <script src="/static/orders.js" defer> in ordersPage().
  */
+
 /* ═══════════════════════════════════════════════════════════════════════════
-   ORDERS PAGE — Complete rewrite v4
-   Key fix: renderOrders runs IMMEDIATELY (synchronous, no setTimeout/polling).
-   The spinner is replaced right away — no async waiting, no polling loops.
-   All paths clear loading state via finally blocks.
-   Safety timeout added as belt-and-suspenders in case of unexpected throws.
+   ORDERS PAGE v5 — on-chain first, zero localStorage dependency for data
+   - Primary: /api/orders/on-chain?buyer= or ?seller= (Arc Network eth_getLogs)
+   - Fallback: localStorage rh_orders (product name enrichment only)
+   - Timeout: 10 s hard-stop so spinner never stays forever
+   - Cross-browser: no sessionStorage/localStorage for primary order data
+   - Compatible with Brave, Chrome, Firefox, Safari
 ═══════════════════════════════════════════════════════════════════════════ */
 
 var _currentOrderTab = 'purchases';
 var _ordersLoading   = false;   /* concurrency guard — reset in finally     */
-var _safetyTimer     = null;    /* 9-second hard-stop handle                */
+var _safetyTimer     = null;    /* 10-second hard-stop handle               */
+var _allOrdersCache  = null;    /* in-memory cache per page load            */
 
 /* ── get wallet — reads localStorage directly, no dependency on globalScript */
 function _getWallet() {
-  /* 1. Try the registered helper if it's already available */
   if (typeof getStoredWallet === 'function') {
-    try { var w = getStoredWallet(); if (w) return w; } catch(e) {
-      console.warn('[Orders] getStoredWallet() failed:', e);
-    }
+    try { var w = getStoredWallet(); if (w) return w; } catch(e) {}
   }
-  /* 2. Direct localStorage fallback — always available */
   try {
     var raw = localStorage.getItem('rh_wallet');
     if (raw) return JSON.parse(raw);
-  } catch(e) {
-    console.error('[Orders] localStorage access blocked:', e);
-    console.warn('[Orders] Chrome may be blocking third-party storage. Try opening in Incognito or allowing cookies.');
-  }
+  } catch(e) {}
   return null;
 }
 
@@ -39,19 +36,21 @@ function _setContainer(html) {
   if (c) c.innerHTML = html;
 }
 
+function _showLoading() {
+  _setContainer(
+    '<div class="card p-8 text-center">'
+    + '<div class="loading-spinner-lg mx-auto mb-3"></div>'
+    + '<p class="text-slate-400 text-sm">Loading your orders from Arc Network…</p>'
+    + '</div>'
+  );
+}
+
 function _showError(msg) {
   _setContainer(
     '<div class="card p-8 text-center">'
     + '<i class="fas fa-exclamation-triangle text-3xl text-yellow-400 mb-3 block"></i>'
-    + '<p class="text-slate-500 text-sm mb-4">' + (msg || 'Could not load orders.') + '</p>'
-    + '<div class="text-xs text-slate-400 mb-4 p-3 bg-slate-50 rounded-lg border border-slate-200">'
-    + '<p class="mb-2"><strong>Troubleshooting:</strong></p>'
-    + '<ul class="text-left space-y-1">'
-    + '<li>• Chrome/Safari: Allow cookies in Settings → Privacy</li>'
-    + '<li>• Or try opening in Incognito/Private mode</li>'
-    + '<li>• Brave browser recommended (no restrictions)</li>'
-    + '</ul>'
-    + '</div>'
+    + '<p class="text-slate-700 font-semibold mb-1">Unable to load orders</p>'
+    + '<p class="text-slate-500 text-sm mb-4">' + (msg || 'Please try again.') + '</p>'
     + '<button onclick="_resetAndRender()" class="btn-secondary mx-auto text-sm">'
     + '<i class="fas fa-redo mr-1"></i>Retry</button>'
     + '</div>'
@@ -60,7 +59,8 @@ function _showError(msg) {
 
 /* Reset guard then re-render (used by Retry button) */
 function _resetAndRender() {
-  _ordersLoading = false;
+  _ordersLoading   = false;
+  _allOrdersCache  = null;
   if (_safetyTimer) { clearTimeout(_safetyTimer); _safetyTimer = null; }
   renderOrders(_currentOrderTab);
 }
@@ -76,7 +76,6 @@ function switchOrderTab(tab) {
   if (ts) ts.className = tab === 'sales'
     ? 'px-4 py-2 rounded-lg text-sm font-semibold bg-red-600 text-white shadow-sm'
     : 'px-4 py-2 rounded-lg text-sm font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200';
-  /* Always reset guard before tab switch so clicks are never stuck */
   _ordersLoading = false;
   if (_safetyTimer) { clearTimeout(_safetyTimer); _safetyTimer = null; }
   renderOrders(tab);
@@ -86,45 +85,115 @@ function switchOrderTab(tab) {
 function _norm(o) {
   return {
     id:            o.id || o.orderId || ('ORD-' + Date.now()),
-    txHash:        o.txHash || o.tx_hash || '',
+    txHash:        o.txHash || o.tx_hash || o.fundTxHash || '',
     buyerAddress:  (o.buyerAddress  || o.buyer_address  || o.buyer  || '').toLowerCase(),
     sellerAddress: (o.sellerAddress || o.seller_address || o.seller || '').toLowerCase(),
     amount:        o.amount  || 0,
     token:         o.token   || 'USDC',
     status:        o.status  || 'escrow_locked',
     createdAt:     o.createdAt || o.created_at || new Date().toISOString(),
-    explorerUrl:   o.explorerUrl || ('https://testnet.arcscan.app/tx/' + (o.txHash || '')),
+    explorerUrl:   o.explorerUrl || ('https://testnet.arcscan.app/tx/' + (o.txHash || o.fundTxHash || '')),
     items:         o.items        || [],
     shippingInfo:  o.shippingInfo || null,
     shippedAt:     o.shippedAt    || null,
     deliveredAt:   o.deliveredAt  || null,
     releasedAt:    o.releasedAt   || null,
-    productId:     o.productId    || null
+    productId:     o.productId    || null,
+    blockNumber:   o.blockNumber  || null
   };
 }
 
-/* ── main render ─────────────────────────────────────────────── */
-function renderOrders(tab) {
+/* ── fetch with cross-browser timeout (no AbortSignal.timeout) ── */
+function _fetchWithTimeout(url, timeoutMs) {
+  return new Promise(function(resolve, reject) {
+    var ctrl = new AbortController();
+    var timer = setTimeout(function() {
+      ctrl.abort();
+      reject(new Error('Request timed out after ' + timeoutMs + 'ms'));
+    }, timeoutMs);
+    fetch(url, { signal: ctrl.signal })
+      .then(function(r) { clearTimeout(timer); resolve(r); })
+      .catch(function(e) { clearTimeout(timer); reject(e); });
+  });
+}
+
+/* ── fetch orders from on-chain API (works across all browsers) ── */
+async function _fetchOnChainOrders(wallet) {
+  var addr = wallet.address;
+  /* Fetch both buyer and seller in parallel */
+  var buyerPromise  = _fetchWithTimeout('/api/orders/on-chain?buyer='  + encodeURIComponent(addr) + '&limit=50', 9000).then(function(r) { return r.ok ? r.json() : { orders: [] }; }).catch(function() { return { orders: [] }; });
+  var sellerPromise = _fetchWithTimeout('/api/orders/on-chain?seller=' + encodeURIComponent(addr) + '&limit=50', 9000).then(function(r) { return r.ok ? r.json() : { orders: [] }; }).catch(function() { return { orders: [] }; });
+  var results = await Promise.all([buyerPromise, sellerPromise]);
+  var buyerOrders  = Array.isArray(results[0].orders) ? results[0].orders : [];
+  var sellerOrders = Array.isArray(results[1].orders) ? results[1].orders : [];
+
+  /* Merge, deduplicate by txHash */
+  var seen = new Set();
+  var all  = [];
+  buyerOrders.concat(sellerOrders).forEach(function(o) {
+    var key = (o.txHash || o.fundTxHash || o.orderId || o.id || '').toLowerCase();
+    if (!seen.has(key)) { seen.add(key); all.push(o); }
+  });
+
+  /* Enrich with localStorage product names (same-browser only, not required) */
+  try {
+    var local = JSON.parse(localStorage.getItem('rh_orders') || '[]');
+    if (Array.isArray(local) && local.length) {
+      var localMap = {};
+      local.forEach(function(lo) {
+        var k = (lo.txHash || lo.fundTxHash || lo.id || '').toLowerCase();
+        if (k) localMap[k] = lo;
+      });
+      all.forEach(function(o) {
+        var k = (o.txHash || o.fundTxHash || o.id || '').toLowerCase();
+        var lo = localMap[k];
+        if (lo) {
+          if (!o.items  || !o.items.length)  o.items       = lo.items       || o.items;
+          if (!o.shippingInfo)               o.shippingInfo= lo.shippingInfo || null;
+          if (!o.shippedAt)                  o.shippedAt   = lo.shippedAt   || null;
+          if (!o.releasedAt)                 o.releasedAt  = lo.releasedAt  || null;
+          if (!o.productId)                  o.productId   = lo.productId   || null;
+        }
+      });
+      /* Also add purely local orders not on chain (in-progress or pending) */
+      local.forEach(function(lo) {
+        var k = (lo.txHash || lo.fundTxHash || lo.id || '').toLowerCase();
+        if (!seen.has(k) && k) {
+          seen.add(k);
+          all.push(lo);
+        }
+      });
+    }
+  } catch(e) {}
+
+  return all;
+}
+
+/* ── main async render ─────────────────────────────────────────── */
+async function renderOrders(tab) {
   /* Concurrency guard */
   if (_ordersLoading) return;
   _ordersLoading = true;
 
-  console.log('[Orders] renderOrders called for tab:', tab);
+  _showLoading();
 
-  /* Safety hard-stop: 9 s (belt-and-suspenders; renderOrders is synchronous) */
+  /* Safety hard-stop: 10 s */
   if (_safetyTimer) clearTimeout(_safetyTimer);
+  var _stopped = false;
   _safetyTimer = setTimeout(function() {
-    _ordersLoading = false;
-    _safetyTimer   = null;
-    _showError('Timed out. Please refresh and try again.');
-  }, 9000);
+    if (!_stopped) {
+      _stopped = true;
+      _ordersLoading = false;
+      _safetyTimer   = null;
+      _showError('Unable to load data. Arc Network may be slow. Please try again.');
+    }
+  }, 10000);
 
   try {
-    /* Get wallet synchronously — no async polling */
     var wallet = _getWallet();
-    console.log('[Orders] Wallet detected:', wallet ? wallet.address : 'none');
 
     if (!wallet) {
+      _stopped = true;
       _setContainer(
         '<div class="card p-12 text-center"><div class="empty-state">'
         + '<i class="fas fa-wallet"></i>'
@@ -138,32 +207,39 @@ function renderOrders(tab) {
 
     var myAddr = wallet.address.toLowerCase();
 
-    /* Load orders */
+    /* Load orders — on-chain first, localStorage enrichment */
     var allOrders = [];
-    try { 
-      allOrders = JSON.parse(localStorage.getItem('rh_orders') || '[]');
-      console.log('[Orders] Loaded', allOrders.length, 'total orders from localStorage');
-    } catch(e) {
-      console.error('[Orders] Failed to load orders from localStorage:', e);
+    if (_allOrdersCache) {
+      allOrders = _allOrdersCache;
+    } else {
+      allOrders = await _fetchOnChainOrders(wallet);
+      _allOrdersCache = allOrders;
     }
     allOrders = allOrders.map(_norm);
+
+    /* Update summary badge */
+    try {
+      var buys  = allOrders.filter(function(o) { return o.buyerAddress  === myAddr; }).length;
+      var sells = allOrders.filter(function(o) { return o.sellerAddress === myAddr; }).length;
+      var badge = document.getElementById('orders-summary-badge');
+      if (badge) badge.textContent = buys + ' purchase' + (buys !== 1 ? 's' : '') + ' · ' + sells + ' sale' + (sells !== 1 ? 's' : '');
+    } catch(e) {}
 
     /* Filter by tab */
     var orders = tab === 'purchases'
       ? allOrders.filter(function(o) { return o.buyerAddress  === myAddr; })
       : allOrders.filter(function(o) { return o.sellerAddress === myAddr; });
-    
-    console.log('[Orders] Filtered to', orders.length, tab, 'for address', myAddr);
 
     /* Empty state */
     if (!orders.length) {
       var emptyMsg  = tab === 'purchases' ? 'No purchases yet.' : 'No sales yet.';
       var emptySub  = tab === 'purchases'
-        ? 'When you buy a product, your order will appear here.'
+        ? 'When you buy a product, your escrow order will appear here.'
         : 'When a buyer purchases your product, the sale will appear here.';
       var emptyLink = tab === 'purchases'
         ? '<a href="/marketplace" class="btn-primary mx-auto"><i class="fas fa-store mr-1"></i>Browse Marketplace</a>'
         : '<a href="/sell" class="btn-primary mx-auto"><i class="fas fa-plus-circle mr-1"></i>List a Product</a>';
+      _stopped = true;
       _setContainer(
         '<div class="card p-12 text-center"><div class="empty-state">'
         + '<i class="fas fa-box-open"></i>'
@@ -182,16 +258,17 @@ function renderOrders(tab) {
       escrow_locked:'bg-yellow-100 text-yellow-700', escrow_pending:'bg-blue-100 text-blue-700',
       shipped:'bg-indigo-100 text-indigo-700', delivered:'bg-teal-100 text-teal-700',
       completed:'bg-green-100 text-green-700', funds_released:'bg-emerald-100 text-emerald-800',
-      dispute:'bg-red-100 text-red-700'
+      dispute:'bg-red-100 text-red-700', escrow_funded:'bg-yellow-100 text-yellow-700'
     };
     var statusLabels = {
       escrow_locked:'Escrow Locked', escrow_pending:'Pending', shipped:'Shipped',
-      delivered:'Delivered', completed:'Confirmed', funds_released:'Funds Released', dispute:'Dispute'
+      delivered:'Delivered', completed:'Confirmed', funds_released:'Funds Released',
+      dispute:'Dispute', escrow_funded:'Escrow Funded'
     };
 
     var html = orders.slice().reverse().map(function(o) {
       var sc  = statusColors[o.status]  || 'bg-slate-100 text-slate-700';
-      var sl  = statusLabels[o.status]  || o.status.replace(/_/g,' ');
+      var sl  = statusLabels[o.status]  || (o.status || '').replace(/_/g,' ');
       var exu = o.explorerUrl || ('https://testnet.arcscan.app/tx/' + (o.txHash || ''));
 
       var productName = '';
@@ -204,7 +281,7 @@ function renderOrders(tab) {
 
       var actionBtns = '';
       if (isSeller) {
-        if (o.status === 'escrow_locked')
+        if (o.status === 'escrow_locked' || o.status === 'escrow_funded')
           actionBtns = '<button data-oid="' + o.id + '" class="mark-shipped-btn btn-primary text-xs py-1.5 px-3">'
             + '<i class="fas fa-shipping-fast mr-1"></i>Mark as Shipped</button>';
         if (o.status === 'completed')
@@ -241,7 +318,7 @@ function renderOrders(tab) {
         + '<span class="px-3 py-1 rounded-full text-xs font-bold ' + sc + ' capitalize shrink-0">' + sl + '</span>'
         + '</div>'
         + '<div class="text-sm mb-3 flex flex-col gap-1">'
-        + '<p class="text-slate-600">Amount: <strong class="text-red-600">' + o.amount + ' ' + (o.token || 'USDC') + '</strong></p>'
+        + '<p class="text-slate-600">Amount: <strong class="text-red-600">' + parseFloat(o.amount||0).toFixed(2) + ' ' + (o.token || 'USDC') + '</strong></p>'
         + (isSeller
             ? '<p class="text-slate-400 text-xs addr-mono">Buyer: '  + (o.buyerAddress  || '\u2014') + '</p>'
             : '<p class="text-slate-400 text-xs addr-mono">Seller: ' + (o.sellerAddress || '\u2014') + '</p>')
@@ -256,6 +333,7 @@ function renderOrders(tab) {
         + '</div>';
     }).join('');
 
+    _stopped = true;
     _setContainer(html);
 
     /* Attach listeners */
@@ -273,10 +351,12 @@ function renderOrders(tab) {
     });
 
   } catch(err) {
-    _showError('Something went wrong. Please try again.');
-    console.error('[redhawk orders]', err);
+    if (!_stopped) {
+      _showError('Something went wrong. Please try again.');
+      console.error('[orders]', err);
+    }
   } finally {
-    /* ALWAYS clear loading state */
+    _stopped     = true;
     _ordersLoading = false;
     if (_safetyTimer) { clearTimeout(_safetyTimer); _safetyTimer = null; }
   }
@@ -291,9 +371,10 @@ function confirmDeliveryOrder(orderId) {
       orders[i].status      = 'completed';
       orders[i].deliveredAt = new Date().toISOString();
       localStorage.setItem('rh_orders', JSON.stringify(orders));
-      showToast('Delivery confirmed! Funds released from escrow.', 'success');
-      setTimeout(function() { _ordersLoading = false; renderOrders(_currentOrderTab); }, 600);
     }
+    showToast('Delivery confirmed! Funds released from escrow.', 'success');
+    _allOrdersCache = null; // invalidate cache
+    setTimeout(function() { _ordersLoading = false; renderOrders(_currentOrderTab); }, 600);
   } catch(e) { showToast('Error updating order.', 'error'); }
 }
 
@@ -344,10 +425,11 @@ function markOrderShipped(orderId) {
         orders[i].shippedAt    = new Date().toISOString();
         orders[i].shippingInfo = { trackingNumber: tracking, carrier: carrier, trackingLink: link || null, notes: notes || null, sentAt: new Date().toISOString() };
         localStorage.setItem('rh_orders', JSON.stringify(orders));
-        closeShipModal();
-        showToast('Shipping info sent to buyer! Order marked as shipped.', 'success');
-        setTimeout(function() { _ordersLoading = false; renderOrders(_currentOrderTab); }, 600);
       }
+      closeShipModal();
+      showToast('Shipping info sent to buyer! Order marked as shipped.', 'success');
+      _allOrdersCache = null; // invalidate cache
+      setTimeout(function() { _ordersLoading = false; renderOrders(_currentOrderTab); }, 600);
     } catch(e) { showToast('Error saving shipping info.', 'error'); }
   };
 }
@@ -361,27 +443,37 @@ function releaseFundsOrder(orderId) {
       orders[i].status     = 'funds_released';
       orders[i].releasedAt = new Date().toISOString();
       localStorage.setItem('rh_orders', JSON.stringify(orders));
-      showToast('Funds released to seller wallet!', 'success');
-      _setContainer(
-        '<div class="card p-10 text-center max-w-md mx-auto mt-4">'
-        + '<div class="w-20 h-20 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-4">'
-        + '<i class="fas fa-check-circle text-4xl text-emerald-500"></i></div>'
-        + '<h2 class="text-2xl font-bold text-slate-800 mb-2">Funds Released!</h2>'
-        + '<p class="text-slate-500 mb-1">Order <span class="font-mono font-bold text-slate-700">' + orderId + '</span></p>'
-        + '<p class="text-slate-500 text-sm mb-6">Escrow funds successfully released to the seller wallet on Arc Network.</p>'
-        + '<div class="flex flex-col gap-3">'
-        + '<button onclick="showReceiptModal(&apos;' + orderId + '&apos;)" class="btn-primary justify-center"><i class="fas fa-receipt mr-2"></i>View &amp; Download Receipt</button>'
-        + '<button onclick="switchOrderTab(&apos;sales&apos;)" class="btn-secondary justify-center"><i class="fas fa-list mr-2"></i>Back to My Sales</button>'
-        + '</div></div>'
-      );
     }
+    showToast('Funds released to seller wallet!', 'success');
+    _setContainer(
+      '<div class="card p-10 text-center max-w-md mx-auto mt-4">'
+      + '<div class="w-20 h-20 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-4">'
+      + '<i class="fas fa-check-circle text-4xl text-emerald-500"></i></div>'
+      + '<h2 class="text-2xl font-bold text-slate-800 mb-2">Funds Released!</h2>'
+      + '<p class="text-slate-500 mb-1">Order <span class="font-mono font-bold text-slate-700">' + orderId + '</span></p>'
+      + '<p class="text-slate-500 text-sm mb-6">Escrow funds successfully released to the seller wallet on Arc Network.</p>'
+      + '<div class="flex flex-col gap-3">'
+      + '<button onclick="showReceiptModal(\'' + orderId + '\')" class="btn-primary justify-center"><i class="fas fa-receipt mr-2"></i>View &amp; Download Receipt</button>'
+      + '<button onclick="switchOrderTab(\'sales\')" class="btn-secondary justify-center"><i class="fas fa-list mr-2"></i>Back to My Sales</button>'
+      + '</div></div>'
+    );
   } catch(e) { showToast('Error releasing funds.', 'error'); }
 }
 
-/* ── receipt modal (unchanged logic) ─────────────────────────── */
+/* ── receipt modal ─────────────────────────────────────────────── */
 function showReceiptModal(orderId) {
-  var orders = JSON.parse(localStorage.getItem('rh_orders') || '[]');
-  var order  = orders.find(function(o) { return o.id === orderId; });
+  /* Try on-chain cache first, then localStorage */
+  var order = null;
+  if (_allOrdersCache) {
+    order = _allOrdersCache.find(function(o) { return o.id === orderId || (_norm(o)).id === orderId; });
+    if (order) order = _norm(order);
+  }
+  if (!order) {
+    try {
+      var localOrders = JSON.parse(localStorage.getItem('rh_orders') || '[]');
+      order = localOrders.find(function(o) { return o.id === orderId; });
+    } catch(e) {}
+  }
   if (!order) { showToast('Order not found', 'error'); return; }
   var root = document.getElementById('receipt-modal-root');
   if (!root) return;
@@ -428,7 +520,7 @@ function showReceiptModal(orderId) {
     + '<div style="background:#f8fafc;border-radius:12px;padding:12px;">' + itemsHtml + '</div></div>'
     + '<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:12px;padding:14px;display:flex;align-items:center;justify-content:space-between;">'
     + '<span style="font-size:13px;font-weight:600;color:#64748b;">Total Amount</span>'
-    + '<span style="font-size:20px;font-weight:800;color:#ef4444;">' + (order.amount || 0) + ' ' + (order.token || 'USDC') + '</span></div>'
+    + '<span style="font-size:20px;font-weight:800;color:#ef4444;">' + (parseFloat(order.amount||0).toFixed(2)) + ' ' + (order.token || 'USDC') + '</span></div>'
     + '<div><p style="margin:0 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;font-weight:700;">Transaction Hash</p>'
     + '<a href="' + explorerUrl + '" target="_blank" style="font-size:11px;font-family:monospace;color:#3b82f6;word-break:break-all;text-decoration:none;">' + (order.txHash || 'Pending \u2014 Transaction not yet recorded') + '</a>'
     + '</div>'
@@ -482,7 +574,7 @@ function showReceiptModal(orderId) {
       + '<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;padding-bottom:16px;border-bottom:2px solid #ef4444;">'
       + '<div style="width:40px;height:40px;border-radius:8px;background:#fef2f2;display:flex;align-items:center;justify-content:center;">'
       + '<span style="color:#ef4444;font-size:20px;">&#128993;</span></div>'
-      + '<div><h1>Order Receipt</h1><p style="margin:0;color:#94a3b8;font-size:12px;">redhawk-store &bull; Arc Network</p></div></div>'
+      + '<div><h1>Order Receipt</h1><p style="margin:0;color:#94a3b8;font-size:12px;">Shukly Store &bull; Arc Network</p></div></div>'
       + '<span class="badge">' + statusLabel + '</span>'
       + '<h2>Order Information</h2>'
       + '<div class="row"><span style="color:#64748b;">Order ID</span><span class="mono">' + order.id + '</span></div>'
@@ -496,11 +588,11 @@ function showReceiptModal(orderId) {
       + '<table><thead><tr><th>Product</th><th style="text-align:center;">Qty</th><th style="text-align:right;">Price</th></tr></thead>'
       + '<tbody>' + productRows + '</tbody></table>'
       + '<h2>Payment</h2>'
-      + '<div class="total"><span>Total Amount</span><span>' + (order.amount||0) + ' ' + (order.token||'USDC') + '</span></div>'
+      + '<div class="total"><span>Total Amount</span><span>' + (parseFloat(order.amount||0).toFixed(2)) + ' ' + (order.token||'USDC') + '</span></div>'
       + '<h2>Transaction</h2>'
       + '<div class="row"><span style="color:#64748b;">Hash</span><span class="mono">' + (order.txHash||'Pending') + '</span></div>'
       + '<div class="row"><span style="color:#64748b;">Explorer</span><a href="' + explorerUrl + '" style="color:#3b82f6;font-size:11px;">' + explorerUrl + '</a></div>'
-      + '<p style="margin-top:24px;font-size:10px;color:#94a3b8;text-align:center;">Generated ' + new Date().toLocaleString() + ' &bull; redhawk-store</p>'
+      + '<p style="margin-top:24px;font-size:10px;color:#94a3b8;text-align:center;">Generated ' + new Date().toLocaleString() + ' &bull; Shukly Store</p>'
       + '</body></html>';
     var w = window.open('', '_blank', 'width=700,height=900');
     w.document.write(pdfContent);
@@ -512,14 +604,13 @@ function showReceiptModal(orderId) {
 
 /* ── initializer ─────────────────────────────────────────────── */
 function _ordersInit() {
-  /* Network status — best effort */
   try {
     if (typeof checkNetworkStatus === 'function') {
       checkNetworkStatus(document.getElementById('orders-network-status'));
     }
   } catch(e) {}
 
-  /* Wallet bar + badge */
+  /* Wallet bar */
   try {
     var w = _getWallet();
     if (w) {
@@ -527,41 +618,24 @@ function _ordersInit() {
       var addr = document.getElementById('orders-wallet-addr');
       if (bar)  bar.classList.remove('hidden');
       if (addr) addr.textContent = w.address.substring(0,10) + '\u2026' + w.address.slice(-6);
-      try {
-        var all    = JSON.parse(localStorage.getItem('rh_orders') || '[]');
-        var mya    = w.address.toLowerCase();
-        var buys   = all.filter(function(o){ return (o.buyerAddress||o.buyer_address||o.buyer||'').toLowerCase()===mya; }).length;
-        var sells  = all.filter(function(o){ return (o.sellerAddress||o.seller_address||o.seller||'').toLowerCase()===mya; }).length;
-        var badge  = document.getElementById('orders-summary-badge');
-        if (badge) badge.textContent = buys+' purchase'+(buys!==1?'s':'')+' \u00b7 '+sells+' sale'+(sells!==1?'s':'');
-      } catch(e) {}
     }
   } catch(e) {}
 
   renderOrders('purchases');
 }
 
-/* ── Bootstrap: run _ordersInit as soon as possible ────────────
-   Since renderOrders is fully synchronous (reads localStorage, no
-   network calls), we can call it directly without setTimeout.
-   If the DOM element isn't ready yet we defer only to DOMContentLoaded.
-─────────────────────────────────────────────────────────────── */
+/* ── Bootstrap ───────────────────────────────────────────────── */
 (function() {
   function _run() {
-    /* Safety: ensure the container element actually exists before rendering */
     if (!document.getElementById('orders-container')) {
-      /* Extremely unlikely but guard it anyway */
       document.addEventListener('DOMContentLoaded', _ordersInit);
       return;
     }
     _ordersInit();
   }
-
   if (document.readyState === 'loading') {
-    /* Script executed in <head> or mid-parse — wait for DOM */
     document.addEventListener('DOMContentLoaded', _run);
   } else {
-    /* DOM is already parsed (script is inline after the container div) */
     _run();
   }
 })();
