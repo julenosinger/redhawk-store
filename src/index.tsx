@@ -38,7 +38,7 @@ app.use('*', async (c, next) => {
     "font-src 'self' data: https://cdn.jsdelivr.net https://fonts.gstatic.com",
     "img-src 'self' data: blob: https: ipfs: https://ipfs.io https://cloudflare-ipfs.com https://gateway.pinata.cloud https://www.genspark.ai",
     "connect-src 'self' https://rpc.testnet.arc.network https://rpc.blockdaemon.testnet.arc.network https://api.circle.com https://testnet.arcscan.app https://faucet.circle.com https://ipfs.io wss:",
-    "frame-src 'none'",
+    "frame-src https://www.youtube-nocookie.com https://www.youtube.com",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -1321,6 +1321,8 @@ app.get('/privacy', (c) => c.html(privacyPage()))
 app.get('/disclaimer', (c) => c.html(disclaimerPage()))
 app.get('/about', (c) => c.html(aboutPage()))
 app.get('/deploy-escrow', (c) => c.html(deployEscrowPage()))
+app.get('/how-to-use', (c) => c.html(howToUsePage()))
+app.get('/admin', (c) => c.html(adminPage()))
 
 export default app
 
@@ -2389,7 +2391,7 @@ function footer() {
         <div>
           <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Account</p>
           <ul class="space-y-2">
-            ${['My Wallet:/wallet','Profile:/profile','About Us:/about','Terms:/terms','Privacy:/privacy','Disclaimer:/disclaimer'].map(t=>{const[l,u]=t.split(':');return`<li><a href="${u}" class="text-xs text-slate-500 hover:text-red-400 transition-colors">${l}</a></li>`}).join('')}
+            ${['My Wallet:/wallet','Profile:/profile','How to Use:/how-to-use','About Us:/about','Terms:/terms','Privacy:/privacy','Disclaimer:/disclaimer'].map(t=>{const[l,u]=t.split(':');return`<li><a href="${u}" class="text-xs text-slate-500 hover:text-red-400 transition-colors">${l}</a></li>`}).join('')}
           </ul>
         </div>
 
@@ -8101,76 +8103,119 @@ function sellPage() {
 // ─── PAGE: PROFILE ──────────────────────────────────────────────────────
 function profilePage() {
   return shell('Profile', `
-  <div class="max-w-5xl mx-auto px-4 py-8">
-    <h1 class="text-3xl font-bold text-slate-800 mb-6 flex items-center gap-3">
-      <i class="fas fa-user text-red-500"></i> My Profile
-    </h1>
+  <div class="max-w-6xl mx-auto px-4 py-8">
 
-    <!-- Decentralized marketplace helper text -->
-    <div class="demo-disclaimer mb-6">
-      <i class="fas fa-info-circle" style="color:#3b82f6;flex-shrink:0"></i>
-      <span>This is a decentralized marketplace. Connect your wallet to manage your products.</span>
+    <!-- ═══ HEADER ═════════════════════════════════════════════════════ -->
+    <div class="dash-header-card mb-6" id="dash-header">
+      <div class="dash-avatar" id="dash-avatar-initials"><i class="fas fa-user"></i></div>
+      <div class="dash-header-info">
+        <h1 class="dash-username" id="dash-username">Not Connected</h1>
+        <div class="dash-wallet-row">
+          <code class="dash-wallet-addr" id="dash-wallet-addr">—</code>
+          <button class="dash-copy-btn" id="dash-copy-btn" title="Copy address" onclick="dashCopyAddr()"><i class="fas fa-copy"></i></button>
+          <a id="dash-explorer-link" href="#" target="_blank" class="dash-explorer-link"><i class="fas fa-external-link-alt mr-1"></i>Explorer</a>
+        </div>
+        <div class="dash-badges-row">
+          <span class="dash-badge network-badge"><i class="fas fa-network-wired mr-1"></i>Arc Testnet</span>
+          <span class="dash-badge rep-badge"><i class="fas fa-star mr-1 text-yellow-400"></i><span id="dash-rep">—</span> Rep</span>
+          <span class="dash-badge verified-badge" id="dash-verified-badge" style="display:none;"><i class="fas fa-check-circle mr-1 text-green-400"></i>Verified</span>
+        </div>
+      </div>
+      <div class="dash-quick-actions">
+        <a href="/sell" class="dash-qa-btn"><i class="fas fa-plus-circle mr-1"></i>Sell</a>
+        <a href="/orders" class="dash-qa-btn"><i class="fas fa-box mr-1"></i>Orders</a>
+        <a href="/disputes" class="dash-qa-btn dispute-btn"><i class="fas fa-gavel mr-1"></i>Disputes</a>
+      </div>
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
-      <!-- Sidebar -->
-      <div class="card p-5">
-        <div class="text-center mb-5">
-          <div class="w-16 h-16 rounded-full bg-gradient-to-br from-red-400 to-red-700 flex items-center justify-center text-white text-2xl font-bold mx-auto mb-2">
-            <i class="fas fa-user"></i>
-          </div>
-          <p class="font-bold text-slate-800 text-sm break-all" id="prof-address">Not connected</p>
-          <div class="mt-1" id="prof-network-badge"></div>
-        </div>
+    <!-- ═══ WALLET OVERVIEW + STATS ═══════════════════════════════════ -->
+    <div class="dash-stats-grid mb-6">
+      <div class="dash-stat-card" id="dsc-balance">
+        <div class="dsc-icon" style="background:#dcfce7;"><i class="fas fa-coins text-green-600"></i></div>
+        <div><p class="dsc-label">Available Balance</p><p class="dsc-value" id="ds-balance">—</p></div>
+      </div>
+      <div class="dash-stat-card" id="dsc-locked">
+        <div class="dsc-icon" style="background:#fee2e2;"><i class="fas fa-lock text-red-600"></i></div>
+        <div><p class="dsc-label">Escrow Locked</p><p class="dsc-value" id="ds-locked">—</p></div>
+      </div>
+      <div class="dash-stat-card" id="dsc-earned">
+        <div class="dsc-icon" style="background:#eff6ff;"><i class="fas fa-chart-line text-blue-600"></i></div>
+        <div><p class="dsc-label">Total Earned</p><p class="dsc-value" id="ds-earned">—</p></div>
+      </div>
+      <div class="dash-stat-card" id="dsc-orders">
+        <div class="dsc-icon" style="background:#f0fdf4;"><i class="fas fa-shopping-bag text-green-600"></i></div>
+        <div><p class="dsc-label">Total Orders</p><p class="dsc-value" id="ds-orders">—</p></div>
+      </div>
+      <div class="dash-stat-card" id="dsc-listings">
+        <div class="dsc-icon" style="background:#fef3c7;"><i class="fas fa-store text-amber-600"></i></div>
+        <div><p class="dsc-label">Active Listings</p><p class="dsc-value" id="ds-listings">—</p></div>
+      </div>
+      <div class="dash-stat-card" id="dsc-disputes">
+        <div class="dsc-icon" style="background:#fce7f3;"><i class="fas fa-gavel text-pink-600"></i></div>
+        <div><p class="dsc-label">Open Disputes</p><p class="dsc-value" id="ds-disputes">—</p></div>
+      </div>
+    </div>
+
+    <!-- ═══ MAIN GRID ══════════════════════════════════════════════════ -->
+    <div class="dash-main-grid">
+
+      <!-- LEFT: Sidebar nav -->
+      <aside class="dash-sidebar">
         <nav class="sidebar-nav space-y-1" id="prof-sidebar-nav">
           <a href="#" onclick="profShowTab('overview');return false;" class="active" id="pnav-overview"><i class="fas fa-user w-4"></i> Overview</a>
           <a href="#" onclick="profShowTab('products');return false;" id="pnav-products"><i class="fas fa-boxes w-4"></i> My Products</a>
+          <a href="#" onclick="profShowTab('wallet');return false;" id="pnav-wallet"><i class="fas fa-wallet w-4"></i> Wallet</a>
+          <a href="#" onclick="profShowTab('activity');return false;" id="pnav-activity"><i class="fas fa-history w-4"></i> Activity</a>
+          <a href="#" onclick="profShowTab('security');return false;" id="pnav-security"><i class="fas fa-shield-alt w-4"></i> Security</a>
           <a href="/orders"><i class="fas fa-box w-4"></i> My Orders</a>
-          <a href="/wallet"><i class="fas fa-wallet w-4"></i> Wallet</a>
-          <a href="/sell"><i class="fas fa-store w-4"></i> Sell</a>
           <a href="/disputes"><i class="fas fa-gavel w-4"></i> Disputes</a>
           <a href="/notifications"><i class="fas fa-bell w-4"></i> Notifications</a>
         </nav>
-      </div>
+      </aside>
 
-      <!-- Main content -->
-      <div class="md:col-span-3 space-y-5">
+      <!-- RIGHT: Tab content -->
+      <div class="dash-content">
 
-        <!-- ══ TAB: OVERVIEW ══ -->
+        <!-- ══ TAB: OVERVIEW ══════════════════════════════════════════ -->
         <div id="prof-tab-overview">
-          <div class="card p-6">
+
+          <!-- Active dispute widget -->
+          <div id="dash-dispute-widget" style="display:none;" class="card p-5 mb-5 border-l-4 border-red-500">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-bold text-slate-800 flex items-center gap-2"><i class="fas fa-gavel text-red-500"></i> Active Dispute</h3>
+              <a href="/disputes" class="btn-secondary text-xs py-1">View Details</a>
+            </div>
+            <div id="dash-dispute-widget-content"></div>
+          </div>
+
+          <!-- Personal Information -->
+          <div class="card p-6 mb-5">
             <h2 class="font-bold text-slate-800 text-lg mb-4">Personal Information</h2>
             <div class="space-y-4">
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div><label class="block text-sm font-medium text-slate-700 mb-1">Full Name</label><input type="text" placeholder="Your name" class="input"/></div>
-                <div><label class="block text-sm font-medium text-slate-700 mb-1">Email</label><input type="email" placeholder="your@email.com" class="input"/></div>
+                <div><label class="block text-sm font-medium text-slate-700 mb-1">Display Name</label><input type="text" id="prof-display-name" placeholder="Your name" class="input"/></div>
+                <div><label class="block text-sm font-medium text-slate-700 mb-1">Email (optional)</label><input type="email" id="prof-email" placeholder="your@email.com" class="input"/></div>
               </div>
-              <div><label class="block text-sm font-medium text-slate-700 mb-1">Shipping Address</label><input type="text" placeholder="Street, City, Country" class="input"/></div>
-              <button onclick="showToast('Profile saved locally','success')" class="btn-primary"><i class="fas fa-save"></i> Save Changes</button>
+              <div><label class="block text-sm font-medium text-slate-700 mb-1">Shipping Address</label><input type="text" id="prof-shipping" placeholder="Street, City, Country" class="input"/></div>
+              <button onclick="dashSaveProfile()" class="btn-primary"><i class="fas fa-save mr-1"></i> Save Changes</button>
             </div>
           </div>
-          <!-- Wallet on-chain info -->
-          <div class="card p-5 mt-5">
-            <div class="flex items-center justify-between mb-3">
-              <h3 class="font-bold text-slate-800 flex items-center gap-2">
-                <i class="fas fa-wallet text-red-500"></i> Arc Network Wallet
-              </h3>
-              <a href="/wallet" class="text-red-600 text-sm hover:underline">Manage →</a>
-            </div>
-            <div id="prof-wallet-info" class="text-slate-400 text-sm">Loading…</div>
-          </div>
-          <!-- Stats (on-chain via /api/orders/on-chain) -->
-          <div class="grid grid-cols-3 gap-4 mt-5" id="prof-stats">
-            <div class="card p-4 text-center"><i class="fas fa-box text-red-500 text-xl mb-2 block"></i><p class="text-2xl font-extrabold text-slate-800" id="stat-orders">—</p><p class="text-slate-400 text-xs">Orders</p></div>
-            <div class="card p-4 text-center"><i class="fas fa-coins text-red-500 text-xl mb-2 block"></i><p class="text-2xl font-extrabold text-slate-800" id="stat-spent">—</p><p class="text-slate-400 text-xs">USDC Spent</p></div>
-            <div class="card p-4 text-center"><i class="fas fa-store text-green-500 text-xl mb-2 block"></i><p class="text-2xl font-extrabold text-slate-800" id="stat-listings">—</p><p class="text-slate-400 text-xs">Listings</p></div>
-          </div>
-        </div>
 
-        <!-- ══ TAB: MY PRODUCTS ══ -->
+          <!-- Recent activity feed -->
+          <div class="card p-5 mb-5">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="font-bold text-slate-800 flex items-center gap-2"><i class="fas fa-history text-red-500"></i> Recent Activity</h3>
+            </div>
+            <div id="dash-activity-feed">
+              <div class="text-center py-6 text-slate-400 text-sm"><div class="loading-spinner mx-auto mb-2"></div>Loading activity…</div>
+            </div>
+          </div>
+
+        </div><!-- /overview -->
+
+        <!-- ══ TAB: MY PRODUCTS ═══════════════════════════════════════ -->
         <div id="prof-tab-products" style="display:none;">
           <div class="card p-6">
-            <!-- Tab header -->
             <div class="flex items-center justify-between mb-5">
               <h2 class="font-bold text-slate-800 text-lg flex items-center gap-2">
                 <i class="fas fa-boxes text-red-500"></i> My Products
@@ -8182,14 +8227,71 @@ function profilePage() {
                 <a href="/sell" class="btn-primary text-xs py-1.5 px-3"><i class="fas fa-plus mr-1"></i>New</a>
               </div>
             </div>
-            <div id="prof-products-container">
-              <!-- populated by JS -->
+            <div id="prof-products-container"></div>
+          </div>
+        </div>
+
+        <!-- ══ TAB: WALLET ════════════════════════════════════════════ -->
+        <div id="prof-tab-wallet" style="display:none;">
+          <div class="card p-6 mb-5">
+            <div class="flex items-center justify-between mb-4">
+              <h2 class="font-bold text-slate-800 text-lg flex items-center gap-2"><i class="fas fa-wallet text-red-500"></i> Wallet Overview</h2>
+              <a href="/wallet" class="btn-secondary text-xs py-1.5">Manage Wallet</a>
+            </div>
+            <div id="prof-wallet-info" class="text-slate-400 text-sm">Loading…</div>
+          </div>
+          <div class="card p-5">
+            <h3 class="font-bold text-slate-800 mb-3 flex items-center gap-2"><i class="fas fa-chart-bar text-red-500"></i> On-Chain Stats</h3>
+            <div class="grid grid-cols-3 gap-4" id="prof-stats">
+              <div class="card p-4 text-center"><i class="fas fa-box text-red-500 text-xl mb-2 block"></i><p class="text-2xl font-extrabold text-slate-800" id="stat-orders">—</p><p class="text-slate-400 text-xs">Orders</p></div>
+              <div class="card p-4 text-center"><i class="fas fa-coins text-red-500 text-xl mb-2 block"></i><p class="text-2xl font-extrabold text-slate-800" id="stat-spent">—</p><p class="text-slate-400 text-xs">USDC Spent</p></div>
+              <div class="card p-4 text-center"><i class="fas fa-store text-green-500 text-xl mb-2 block"></i><p class="text-2xl font-extrabold text-slate-800" id="stat-listings">—</p><p class="text-slate-400 text-xs">Listings</p></div>
             </div>
           </div>
         </div>
 
-      </div><!-- /main content -->
-    </div><!-- /grid -->
+        <!-- ══ TAB: ACTIVITY ══════════════════════════════════════════ -->
+        <div id="prof-tab-activity" style="display:none;">
+          <div class="card p-6">
+            <h2 class="font-bold text-slate-800 text-lg mb-4 flex items-center gap-2"><i class="fas fa-history text-red-500"></i> Full Activity Feed</h2>
+            <div id="dash-activity-full">
+              <div class="text-center py-6 text-slate-400 text-sm"><div class="loading-spinner mx-auto mb-2"></div>Loading…</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ══ TAB: SECURITY ══════════════════════════════════════════ -->
+        <div id="prof-tab-security" style="display:none;">
+          <div class="card p-6">
+            <h2 class="font-bold text-slate-800 text-lg mb-4 flex items-center gap-2"><i class="fas fa-shield-alt text-red-500"></i> Security</h2>
+            <div class="space-y-4">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div class="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                  <p class="text-xs font-bold text-slate-500 uppercase mb-1">Last Login</p>
+                  <p class="text-sm text-slate-700 font-medium" id="sec-last-login">—</p>
+                </div>
+                <div class="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                  <p class="text-xs font-bold text-slate-500 uppercase mb-1">Auth Method</p>
+                  <p class="text-sm text-slate-700 font-medium" id="sec-auth-method">—</p>
+                </div>
+                <div class="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                  <p class="text-xs font-bold text-slate-500 uppercase mb-1">Wallet Type</p>
+                  <p class="text-sm text-slate-700 font-medium" id="sec-wallet-type">—</p>
+                </div>
+                <div class="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                  <p class="text-xs font-bold text-slate-500 uppercase mb-1">Sessions</p>
+                  <p class="text-sm text-slate-700 font-medium">1 active session</p>
+                </div>
+              </div>
+              <div class="p-4 bg-amber-50 border border-amber-200 rounded-xl">
+                <p class="text-amber-800 text-sm font-semibold"><i class="fas fa-exclamation-triangle mr-2"></i>Always verify you're on the correct URL before connecting your wallet.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /dash-content -->
+    </div><!-- /dash-main-grid -->
   </div><!-- /max-w -->
 
   <!-- ══ EDIT PRODUCT MODAL ══ -->
@@ -8201,31 +8303,13 @@ function profilePage() {
       </div>
       <form id="prof-edit-form" onsubmit="profSaveProduct(event)" class="space-y-4">
         <input type="hidden" id="pedit-id"/>
-        <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">Product Name *</label>
-          <input type="text" id="pedit-title" class="input" placeholder="Product name" required/>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">Description *</label>
-          <textarea id="pedit-description" class="input" rows="3" placeholder="Product description" required style="height:auto;resize:vertical;"></textarea>
-        </div>
+        <div><label class="block text-sm font-medium text-slate-700 mb-1">Product Name *</label><input type="text" id="pedit-title" class="input" placeholder="Product name" required/></div>
+        <div><label class="block text-sm font-medium text-slate-700 mb-1">Description *</label><textarea id="pedit-description" class="input" rows="3" placeholder="Product description" required style="height:auto;resize:vertical;"></textarea></div>
         <div class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="block text-sm font-medium text-slate-700 mb-1">Price *</label>
-            <input type="number" id="pedit-price" class="input" placeholder="0.00" step="0.01" min="0.01" required/>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-slate-700 mb-1">Token</label>
-            <select id="pedit-token" class="select">
-              <option value="USDC">USDC</option>
-              <option value="EURC">EURC</option>
-            </select>
-          </div>
+          <div><label class="block text-sm font-medium text-slate-700 mb-1">Price *</label><input type="number" id="pedit-price" class="input" placeholder="0.00" step="0.01" min="0.01" required/></div>
+          <div><label class="block text-sm font-medium text-slate-700 mb-1">Token</label><select id="pedit-token" class="select"><option value="USDC">USDC</option><option value="EURC">EURC</option></select></div>
         </div>
-        <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">Image URL</label>
-          <input type="url" id="pedit-image" class="input" placeholder="https://…"/>
-        </div>
+        <div><label class="block text-sm font-medium text-slate-700 mb-1">Image URL</label><input type="url" id="pedit-image" class="input" placeholder="https://…"/></div>
         <div class="flex gap-3 pt-2">
           <button type="submit" id="pedit-save-btn" class="btn-primary flex-1"><i class="fas fa-save mr-1"></i> Save Changes</button>
           <button type="button" onclick="profCloseEdit()" class="btn-secondary flex-1">Cancel</button>
@@ -8234,131 +8318,344 @@ function profilePage() {
     </div>
   </div>
 
+  <style>
+  /* ── Dashboard Layout ── */
+  .dash-header-card{display:flex;align-items:flex-start;gap:16px;background:linear-gradient(135deg,#1e293b 0%,#0f172a 100%);border-radius:20px;padding:24px 28px;flex-wrap:wrap;}
+  .dash-avatar{width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#dc2626,#b91c1c);display:flex;align-items:center;justify-content:center;color:#fff;font-size:24px;font-weight:900;flex-shrink:0;border:3px solid rgba(255,255,255,.15);}
+  .dash-header-info{flex:1;min-width:180px;}
+  .dash-username{font-size:18px;font-weight:800;color:#fff;margin:0 0 4px;}
+  .dash-wallet-row{display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap;}
+  .dash-wallet-addr{font-size:11px;font-family:monospace;color:#94a3b8;background:rgba(255,255,255,.06);padding:3px 8px;border-radius:6px;}
+  .dash-copy-btn{background:none;border:none;color:#64748b;cursor:pointer;padding:2px 5px;border-radius:4px;font-size:12px;}
+  .dash-copy-btn:hover{color:#94a3b8;background:rgba(255,255,255,.08);}
+  .dash-explorer-link{font-size:11px;color:#60a5fa;text-decoration:none;}
+  .dash-explorer-link:hover{text-decoration:underline;}
+  .dash-badges-row{display:flex;gap:6px;flex-wrap:wrap;}
+  .dash-badge{font-size:10px;padding:3px 10px;border-radius:99px;font-weight:600;display:inline-flex;align-items:center;}
+  .network-badge{background:rgba(59,130,246,.18);color:#60a5fa;border:1px solid rgba(59,130,246,.25);}
+  .rep-badge{background:rgba(245,158,11,.18);color:#fbbf24;border:1px solid rgba(245,158,11,.25);}
+  .verified-badge{background:rgba(34,197,94,.18);color:#4ade80;border:1px solid rgba(34,197,94,.25);}
+  .dash-quick-actions{display:flex;flex-direction:column;gap:6px;flex-shrink:0;}
+  .dash-qa-btn{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);color:#e2e8f0;border-radius:8px;padding:6px 14px;font-size:12px;font-weight:600;text-decoration:none;display:flex;align-items:center;white-space:nowrap;}
+  .dash-qa-btn:hover{background:rgba(255,255,255,.15);}
+  .dash-qa-btn.dispute-btn{background:rgba(220,38,38,.2);border-color:rgba(220,38,38,.3);color:#fca5a5;}
+  /* Stats grid */
+  .dash-stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;}
+  .dash-stat-card{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:14px 16px;display:flex;align-items:center;gap:12px;box-shadow:0 1px 4px rgba(0,0,0,.04);}
+  .dsc-icon{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;}
+  .dsc-label{font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.03em;margin:0 0 2px;}
+  .dsc-value{font-size:18px;font-weight:800;color:#1e293b;margin:0;}
+  /* Main grid */
+  .dash-main-grid{display:grid;grid-template-columns:200px 1fr;gap:20px;align-items:start;}
+  @media(max-width:768px){.dash-main-grid{grid-template-columns:1fr;}.dash-sidebar{display:none;}}
+  .dash-sidebar{position:sticky;top:80px;}
+  .dash-content{min-width:0;}
+  /* Activity feed */
+  .dash-feed-item{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid #f1f5f9;}
+  .dash-feed-icon{width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;}
+  .dash-feed-body{flex:1;}
+  .dash-feed-title{font-size:13px;font-weight:600;color:#334155;margin:0 0 2px;}
+  .dash-feed-sub{font-size:11px;color:#94a3b8;margin:0;}
+  .dash-feed-time{font-size:10px;color:#94a3b8;flex-shrink:0;white-space:nowrap;}
+  </style>
+
   <script>
-  // ── Profile page state ──────────────────────────────────────────────────
+  // ── State ────────────────────────────────────────────────────────────
   var _profProducts  = [];
   var _profFilter    = 'all';
   var _profAddress   = null;
-  var _profLoading   = false;   // prevent repeated fetch calls
+  var _profLoading   = false;
   var _profActiveTab = 'overview';
 
-  // ── Tab switching ──────────────────────────────────────────────────────
+  // ── Tab switching ──────────────────────────────────────────────────
   function profShowTab(tab) {
     _profActiveTab = tab;
-    document.getElementById('prof-tab-overview').style.display  = (tab==='overview')  ? '' : 'none';
-    document.getElementById('prof-tab-products').style.display  = (tab==='products')  ? '' : 'none';
-    document.querySelectorAll('#prof-sidebar-nav a').forEach(function(a) {
-      a.classList.remove('active');
+    var tabs = ['overview','products','wallet','activity','security'];
+    tabs.forEach(function(t) {
+      var el = document.getElementById('prof-tab-'+t);
+      if(el) el.style.display = (t===tab) ? '' : 'none';
+      var nav = document.getElementById('pnav-'+t);
+      if(nav) nav.classList.toggle('active', t===tab);
     });
-    var navEl = document.getElementById('pnav-'+tab);
-    if(navEl) navEl.classList.add('active');
-    // Update URL hash without navigation
     try { history.replaceState(null,'','/profile?tab='+tab); } catch(e){}
-    // Load products when switching to products tab
     if(tab==='products' && _profAddress) loadProfProducts(_profAddress);
+    if(tab==='activity') dashRenderFullActivity();
+    if(tab==='wallet' && _profAddress) { loadProfStats(_profAddress); dashRenderWalletInfo(); }
+    if(tab==='security') dashRenderSecurity();
   }
 
-  // ── Init ───────────────────────────────────────────────────────────────
+  // ── Dashboard helpers ─────────────────────────────────────────────
+  function dashCopyAddr() {
+    if(!_profAddress) return;
+    navigator.clipboard.writeText(_profAddress).then(function() { showToast('Address copied', 'success'); }).catch(function() {
+      var el = document.createElement('textarea');
+      el.value = _profAddress;
+      document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el);
+      showToast('Address copied','success');
+    });
+  }
+
+  function dashSaveProfile() {
+    var name = document.getElementById('prof-display-name').value.trim();
+    var email = document.getElementById('prof-email').value.trim();
+    var shipping = document.getElementById('prof-shipping').value.trim();
+    try { localStorage.setItem('rh_profile', JSON.stringify({name:name,email:email,shipping:shipping,savedAt:new Date().toISOString()})); } catch(e){}
+    showToast('Profile saved locally','success');
+  }
+
+  function dashLoadProfileFields() {
+    try {
+      var p = JSON.parse(localStorage.getItem('rh_profile')||'{}');
+      if(p.name) { var el = document.getElementById('prof-display-name'); if(el) el.value = p.name; }
+      if(p.email) { var el2 = document.getElementById('prof-email'); if(el2) el2.value = p.email; }
+      if(p.shipping) { var el3 = document.getElementById('prof-shipping'); if(el3) el3.value = p.shipping; }
+    } catch(e){}
+  }
+
+  function dashRenderWalletInfo() {
+    var el = document.getElementById('prof-wallet-info');
+    if(!el || !_profAddress) return;
+    var explorerBase = (window.ARC && window.ARC.explorer) || 'https://testnet.arcscan.app';
+    el.innerHTML =
+      '<div class="space-y-3">'
+      +'<div class="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200">'
+      +'<div><p class="text-xs text-slate-500 mb-0.5">Wallet Address</p>'
+      +'<p class="font-mono text-xs text-slate-700 break-all">'+_profAddress+'</p></div>'
+      +'</div>'
+      +'<a href="'+explorerBase+'/address/'+_profAddress+'" target="_blank" class="flex items-center gap-2 text-blue-600 text-sm hover:underline">'
+      +'<i class="fas fa-external-link-alt text-xs"></i> View on Arc Explorer</a>'
+      +'<p class="text-xs text-slate-400 mt-2"><i class="fas fa-info-circle mr-1"></i>Non-custodial marketplace. Only you control your wallet.</p>'
+      +'</div>';
+  }
+
+  function dashRenderSecurity() {
+    var w = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
+    var lastLogin = w && w.timestamp ? new Date(w.timestamp).toLocaleString() : 'Unknown';
+    var method = w && w.type ? w.type : 'MetaMask';
+    document.getElementById('sec-last-login').textContent = lastLogin;
+    document.getElementById('sec-auth-method').textContent = method;
+    document.getElementById('sec-wallet-type').textContent = method;
+  }
+
+  function dashRenderActivityFeed(containerId, limit) {
+    var el = document.getElementById(containerId);
+    if(!el || !_profAddress) return;
+    var orders = [];
+    try { orders = JSON.parse(localStorage.getItem('rh_orders')||'[]'); } catch(e){}
+    var myAddr = _profAddress;
+    var feedItems = [];
+
+    orders.forEach(function(o) {
+      var isBuyer  = o.buyerAddress  && o.buyerAddress.toLowerCase()  === myAddr;
+      var isSeller = o.sellerAddress && o.sellerAddress.toLowerCase() === myAddr;
+      if(isBuyer) {
+        feedItems.push({ icon:'fas fa-shopping-bag', bg:'#dcfce7', color:'#15803d', title:'Purchase — '+escHtml(o.id||''), sub: parseFloat(o.amount||0).toFixed(2)+' '+(o.token||'USDC')+' · Buyer', ts: o.createdAt, url:'/orders/'+(o.id||'') });
+        if(o.status==='dispute') feedItems.push({ icon:'fas fa-gavel', bg:'#fee2e2', color:'#dc2626', title:'Dispute Opened', sub:'Order '+(o.id||''), ts: o.disputedAt||o.createdAt, url:'/disputes' });
+        if(o.status==='completed') feedItems.push({ icon:'fas fa-check-circle', bg:'#dcfce7', color:'#15803d', title:'Order Completed', sub:'Escrow released · '+(o.id||''), ts: o.resolvedAt||o.updatedAt||o.createdAt, url:'/orders/'+(o.id||'') });
+      }
+      if(isSeller) {
+        feedItems.push({ icon:'fas fa-store', bg:'#eff6ff', color:'#1d4ed8', title:'Sale — '+escHtml(o.id||''), sub: parseFloat(o.amount||0).toFixed(2)+' '+(o.token||'USDC')+' · Seller', ts: o.createdAt, url:'/orders/'+(o.id||'') });
+      }
+    });
+
+    feedItems.sort(function(a,b){ return new Date(b.ts).getTime() - new Date(a.ts).getTime(); });
+    if(limit) feedItems = feedItems.slice(0, limit);
+
+    if(!feedItems.length) {
+      el.innerHTML = '<p class="text-slate-400 text-sm text-center py-6"><i class="fas fa-history mr-1"></i>No activity yet.</p>';
+      return;
+    }
+
+    el.innerHTML = feedItems.map(function(item) {
+      var timeStr = item.ts ? timeAgoStr(new Date(item.ts).getTime()) : '';
+      return '<a href="'+escHtml(item.url)+'" class="dash-feed-item" style="text-decoration:none;">'
+        +'<div class="dash-feed-icon" style="background:'+item.bg+';color:'+item.color+'"><i class="'+item.icon+'"></i></div>'
+        +'<div class="dash-feed-body">'
+        +'<p class="dash-feed-title">'+escHtml(item.title)+'</p>'
+        +'<p class="dash-feed-sub">'+escHtml(item.sub)+'</p>'
+        +'</div>'
+        +'<span class="dash-feed-time">'+timeStr+'</span>'
+        +'</a>';
+    }).join('');
+  }
+
+  function dashRenderFullActivity() {
+    dashRenderActivityFeed('dash-activity-full', 50);
+  }
+
+  function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+  function timeAgoStr(ts) {
+    var diff = Date.now() - ts;
+    var s = Math.floor(diff / 1000);
+    if(s < 60) return 'just now';
+    var m = Math.floor(s/60); if(m<60) return m+'m ago';
+    var h = Math.floor(m/60); if(h<24) return h+'h ago';
+    return Math.floor(h/24)+'d ago';
+  }
+
+  function dashRenderDisputeWidget(address) {
+    var orders = [];
+    try { orders = JSON.parse(localStorage.getItem('rh_orders')||'[]'); } catch(e){}
+    var activeDisputes = orders.filter(function(o) {
+      return o.status === 'dispute' &&
+        ((o.buyerAddress && o.buyerAddress.toLowerCase() === address) ||
+         (o.sellerAddress && o.sellerAddress.toLowerCase() === address));
+    });
+    var widget = document.getElementById('dash-dispute-widget');
+    var content = document.getElementById('dash-dispute-widget-content');
+    if(!widget || !content) return;
+    if(!activeDisputes.length) { widget.style.display = 'none'; return; }
+    widget.style.display = '';
+    var d = activeDisputes[0];
+    var meta = {};
+    try { meta = JSON.parse(localStorage.getItem('rh_disputes_v2')||'{}')[d.id]||{}; } catch(e){}
+    var deadline = meta.sellerDeadline || meta.buyerDeadline || null;
+    var deadlineStr = deadline ? 'Deadline: '+new Date(deadline).toLocaleString() : '';
+    content.innerHTML =
+      '<div class="flex items-center justify-between gap-4 flex-wrap">'
+      +'<div>'
+      +'<p class="text-sm font-semibold text-slate-800">Order: <code>'+escHtml(d.id||'')+'</code></p>'
+      +'<p class="text-xs text-slate-500">'+escHtml(String(d.amount||0))+' '+(d.token||'USDC')+' locked in escrow</p>'
+      +(deadlineStr ? '<p class="text-xs text-red-600 font-semibold mt-1"><i class="fas fa-clock mr-1"></i>'+escHtml(deadlineStr)+'</p>' : '')
+      +'</div>'
+      +(activeDisputes.length > 1 ? '<span class="text-xs text-red-500 font-bold">+' + (activeDisputes.length-1)+' more disputes</span>' : '')
+      +'</div>';
+    // Update stat
+    document.getElementById('ds-disputes').textContent = activeDisputes.length;
+  }
+
+  function dashLoadStats(address) {
+    // Orders and disputes from localStorage
+    var orders = [];
+    try { orders = JSON.parse(localStorage.getItem('rh_orders')||'[]'); } catch(e){}
+    var bought = orders.filter(function(o){ return o.buyerAddress && o.buyerAddress.toLowerCase()===address; });
+    var disputes = orders.filter(function(o){ return o.status==='dispute' && ((o.buyerAddress&&o.buyerAddress.toLowerCase()===address)||(o.sellerAddress&&o.sellerAddress.toLowerCase()===address)); });
+    var lockedAmt = disputes.reduce(function(s,o){ return s+parseFloat(o.amount||0); }, 0);
+    var totalSpent = bought.reduce(function(s,o){ return s+parseFloat(o.amount||0); }, 0);
+
+    document.getElementById('ds-orders').textContent   = bought.length || '0';
+    document.getElementById('ds-locked').textContent   = lockedAmt.toFixed(2)+' USDC';
+    document.getElementById('ds-disputes').textContent = disputes.length || '0';
+    document.getElementById('ds-balance').textContent  = '—'; // requires on-chain fetch
+    document.getElementById('ds-earned').textContent   = '—'; // requires on-chain fetch
+
+    // Calculate reputation score (simple heuristic)
+    var completedOrders = orders.filter(function(o){ return o.status==='completed' && ((o.buyerAddress&&o.buyerAddress.toLowerCase()===address)||(o.sellerAddress&&o.sellerAddress.toLowerCase()===address)); });
+    var repScore = Math.min(100, completedOrders.length * 10 + 50);
+    document.getElementById('dash-rep').textContent = repScore;
+    if(completedOrders.length >= 3) {
+      var vb = document.getElementById('dash-verified-badge');
+      if(vb) vb.style.display = '';
+    }
+
+    // Listings from API
+    fetch('/api/seller/'+encodeURIComponent(address)+'/products', {
+      signal: (function(){ var c=new AbortController(); setTimeout(function(){c.abort();},8000); return c.signal; })()
+    }).then(function(r){ return r.json(); }).then(function(d){
+      document.getElementById('ds-listings').textContent = d.total || 0;
+      document.getElementById('stat-listings').textContent = d.total || 0;
+    }).catch(function(){});
+
+    // On-chain orders
+    fetch('/api/orders/on-chain?buyer='+encodeURIComponent(address)+'&limit=50', {
+      signal: (function(){ var c=new AbortController(); setTimeout(function(){c.abort();},10000); return c.signal; })()
+    }).then(function(r){ return r.json(); }).then(function(d){
+      var onChainOrders = Array.isArray(d.orders) ? d.orders : [];
+      var onChainTotal  = onChainOrders.length;
+      var onChainSpent  = onChainOrders.reduce(function(s,o){ return s+parseFloat(o.amount||0); }, 0);
+      document.getElementById('stat-orders').textContent = onChainTotal;
+      document.getElementById('stat-spent').textContent  = onChainSpent.toFixed(2);
+      document.getElementById('ds-orders').textContent   = Math.max(bought.length, onChainTotal);
+    }).catch(function(){
+      document.getElementById('stat-orders').textContent = bought.length || '?';
+      document.getElementById('stat-spent').textContent  = totalSpent.toFixed(2);
+    });
+  }
+
+  // ── Init ───────────────────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', async function() {
     var w = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
 
     if(w && w.address) {
       _profAddress = w.address.toLowerCase();
-      document.getElementById('prof-address').textContent = w.address.substring(0,10)+'\u2026'+w.address.slice(-6);
-      document.getElementById('prof-network-badge').innerHTML =
-        '<span class="arc-badge text-xs"><i class="fas fa-network-wired text-xs"></i> Arc Testnet</span>';
       var explorerBase = (window.ARC && window.ARC.explorer) || 'https://testnet.arcscan.app';
-      document.getElementById('prof-wallet-info').innerHTML =
-        '<div class="space-y-1">'
-        +'<p class="text-xs text-slate-500">Address</p>'
-        +'<p class="font-mono text-xs text-slate-700 break-all">'+w.address+'</p>'
-        +'<a href="'+explorerBase+'/address/'+w.address+'" target="_blank" class="text-blue-600 text-xs hover:underline flex items-center gap-1 mt-1">'
-        +'<i class="fas fa-external-link-alt text-xs"></i> View on Arc Explorer</a>'
-        +'<p class="text-xs text-slate-400 mt-2"><i class="fas fa-info-circle mr-1"></i>This is a decentralized marketplace. Connect your wallet to manage your products.</p>'
-        +'</div>';
 
-      // Load on-chain stats for buyer orders
-      loadProfStats(w.address);
+      // Header
+      document.getElementById('dash-username').textContent = _profAddress.slice(0,10)+'…'+_profAddress.slice(-6);
+      document.getElementById('dash-wallet-addr').textContent = _profAddress.slice(0,10)+'…'+_profAddress.slice(-6);
+      var expLink = document.getElementById('dash-explorer-link');
+      if(expLink) expLink.href = explorerBase+'/address/'+_profAddress;
+
+      // Initials avatar from address
+      var av = document.getElementById('dash-avatar-initials');
+      if(av) av.textContent = _profAddress.slice(2,4).toUpperCase();
+
+      // Load profile fields
+      dashLoadProfileFields();
+
+      // Load all stats
+      dashLoadStats(_profAddress);
+
+      // Dispute widget
+      dashRenderDisputeWidget(_profAddress);
+
+      // Activity feed (overview tab — show last 5)
+      dashRenderActivityFeed('dash-activity-feed', 5);
+
+      // Wallet info tab
+      dashRenderWalletInfo();
     } else {
-      document.getElementById('prof-wallet-info').innerHTML =
-        '<a href="/wallet" class="text-red-600 hover:underline">Connect wallet to see on-chain data \u2192</a>'
-        +'<p class="text-xs text-slate-400 mt-2"><i class="fas fa-info-circle mr-1"></i>This is a decentralized marketplace. Connect your wallet to manage your products.</p>';
-      document.getElementById('stat-orders').textContent = '\u2014';
-      document.getElementById('stat-spent').textContent  = '\u2014';
-      document.getElementById('stat-listings').textContent = '\u2014';
+      document.getElementById('dash-username').textContent = 'Not Connected';
+      document.getElementById('dash-wallet-addr').textContent = '—';
+      ['ds-balance','ds-locked','ds-earned','ds-orders','ds-listings','ds-disputes','stat-orders','stat-spent','stat-listings','dash-rep'].forEach(function(id){
+        var el=document.getElementById(id); if(el) el.textContent='—';
+      });
+      document.getElementById('dash-activity-feed').innerHTML = '<p class="text-slate-400 text-sm text-center py-6"><a href="/wallet" class="text-red-600 hover:underline">Connect wallet</a> to see activity.</p>';
     }
 
-    // Listen for wallet/chain changes — reload page for fresh data (cross-browser)
+    // Wallet event listeners
     try {
       var eth = window.ethereum || window._ethProvider;
-      if (eth && eth.on) {
-        eth.on('accountsChanged', function(accounts) {
-          console.log('[profile] accountsChanged', accounts);
-          setTimeout(function() { location.reload(); }, 400);
-        });
-        eth.on('chainChanged', function(chainId) {
-          console.log('[profile] chainChanged', chainId);
-          setTimeout(function() { location.reload(); }, 400);
-        });
+      if(eth && eth.on) {
+        eth.on('accountsChanged', function(accs) { setTimeout(function(){ location.reload(); }, 400); });
+        eth.on('chainChanged', function() { setTimeout(function(){ location.reload(); }, 400); });
       }
-    } catch(e) {}
+    } catch(e){}
 
-    // Read URL param to auto-switch tab
+    // Auto-switch tab from URL
     var tabParam = new URLSearchParams(location.search).get('tab');
-    if(tabParam === 'products') {
-      profShowTab('products');
+    if(tabParam && ['overview','products','wallet','activity','security'].includes(tabParam)) {
+      profShowTab(tabParam);
     }
   });
 
-  // ── Load on-chain stats ───────────────────────────────────────────────
+  // ── Stats loader ─────────────────────────────────────────────────
   async function loadProfStats(address) {
     try {
-      // On-chain buyer orders (cross-browser AbortController)
       var sc1 = new AbortController();
       var st1 = setTimeout(function(){ sc1.abort(); }, 10000);
-      var res = await fetch('/api/orders/on-chain?buyer='+encodeURIComponent(address)+'&limit=50', {
-        signal: sc1.signal
-      });
+      var res = await fetch('/api/orders/on-chain?buyer='+encodeURIComponent(address)+'&limit=50', { signal: sc1.signal });
       clearTimeout(st1);
-      var total = 0, spent = 0;
-      if(res.ok) {
-        var data = await res.json();
-        var orders = Array.isArray(data.orders) ? data.orders : [];
-        total = orders.length;
-        spent = orders.reduce(function(s,o){ return s + parseFloat(o.amount||0); }, 0);
-      }
+      var total=0, spent=0;
+      if(res.ok) { var data=await res.json(); var ords=Array.isArray(data.orders)?data.orders:[]; total=ords.length; spent=ords.reduce(function(s,o){ return s+parseFloat(o.amount||0); },0); }
       document.getElementById('stat-orders').textContent = total;
       document.getElementById('stat-spent').textContent  = spent.toFixed(2);
-    } catch(e) {
-      document.getElementById('stat-orders').textContent = '?';
-      document.getElementById('stat-spent').textContent  = '?';
-    }
-    // Listings count — from seller API
+    } catch(e) { document.getElementById('stat-orders').textContent='?'; document.getElementById('stat-spent').textContent='?'; }
     if(address) {
       try {
-        var sc2 = new AbortController();
-        var st2 = setTimeout(function(){ sc2.abort(); }, 8000);
-        var r2 = await fetch('/api/seller/'+encodeURIComponent(address)+'/products', {
-          signal: sc2.signal
-        });
-        clearTimeout(st2);
-        if(r2.ok) {
-          var d2 = await r2.json();
-          document.getElementById('stat-listings').textContent = d2.total || 0;
-        }
-      } catch(e) {
-        document.getElementById('stat-listings').textContent = '?';
-      }
+        var sc2=new AbortController(); var st2=setTimeout(function(){sc2.abort();},8000);
+        var r2=await fetch('/api/seller/'+encodeURIComponent(address)+'/products',{signal:sc2.signal}); clearTimeout(st2);
+        if(r2.ok){ var d2=await r2.json(); document.getElementById('stat-listings').textContent=d2.total||0; }
+      } catch(e){ document.getElementById('stat-listings').textContent='?'; }
     }
   }
 
-  // ── Load seller products ──────────────────────────────────────────────
+  // ── Load seller products ──────────────────────────────────────────
   async function loadProfProducts(address) {
     if(!address) { profShowNoWallet(); return; }
-    // Prevent concurrent calls
     if(_profLoading) return;
     _profLoading = true;
-    // Normalize address to lowercase for consistent comparison
     var normAddr = address.toLowerCase();
     _profAddress = normAddr;
     console.log('[myproducts] loadProfProducts for', normAddr);
@@ -8366,290 +8663,160 @@ function profilePage() {
     try {
       var controller = new AbortController();
       var timeout = setTimeout(function(){ controller.abort(); }, 10000);
-      var res = await fetch('/api/seller/'+encodeURIComponent(normAddr)+'/products', {
-        signal: controller.signal
-      });
+      var res = await fetch('/api/seller/'+encodeURIComponent(normAddr)+'/products', { signal: controller.signal });
       clearTimeout(timeout);
       if(!res.ok) { profShowProductsError('Server error '+res.status+'. Please try again.'); return; }
       var data = await res.json();
       var products = Array.isArray(data.products) ? data.products : [];
-      console.log('[myproducts] fetched', products.length, 'products for', normAddr);
-      // Filter: only show products owned by this wallet (seller_id match, case-insensitive)
-      _profProducts = products.filter(function(p) {
-        return p.seller_id && p.seller_id.toLowerCase() === normAddr;
-      });
-      console.log('[myproducts] after seller filter:', _profProducts.length, 'products');
+      _profProducts = products.filter(function(p) { return p.seller_id && p.seller_id.toLowerCase() === normAddr; });
+      console.log('[myproducts] loaded', _profProducts.length, 'products');
       renderProfProducts();
     } catch(e) {
-      if(e && e.name === 'AbortError') {
-        profShowProductsError('Request timed out. Arc Network may be slow. Please try again.');
-      } else {
-        console.error('[myproducts] loadProfProducts error:', e);
-        profShowProductsError(e && e.message ? e.message : 'Unable to load data. Please try again.');
-      }
-    } finally {
-      _profLoading = false;
-    }
+      if(e && e.name==='AbortError') { profShowProductsError('Request timed out. Arc Network may be slow. Please try again.'); }
+      else { console.error('[myproducts] error:', e); profShowProductsError(e&&e.message?e.message:'Unable to load data. Please try again.'); }
+    } finally { _profLoading = false; }
   }
 
-  // ── Render helpers ────────────────────────────────────────────────────
+  // ── Render helpers ────────────────────────────────────────────────
   function profShowNoWallet() {
-    var c = document.getElementById('prof-products-container');
-    if(!c) return;
-    c.innerHTML =
-      '<div class="p-8 text-center">'
-      +'<div class="empty-state">'
-      +'<i class="fas fa-wallet"></i>'
-      +'<h3 class="font-bold text-slate-600 mb-2">Wallet Required</h3>'
-      +'<p class="text-sm text-slate-400 mb-4">Connect your wallet to manage your product listings on Arc Network.</p>'
-      +'<a href="/wallet" class="btn-primary mx-auto"><i class="fas fa-wallet mr-1"></i> Connect Wallet</a>'
-      +'</div></div>';
+    var c=document.getElementById('prof-products-container'); if(!c) return;
+    c.innerHTML='<div class="p-8 text-center"><div class="empty-state"><i class="fas fa-wallet"></i><h3 class="font-bold text-slate-600 mb-2">Wallet Required</h3><p class="text-sm text-slate-400 mb-4">Connect your wallet to manage your product listings.</p><a href="/wallet" class="btn-primary mx-auto"><i class="fas fa-wallet mr-1"></i> Connect Wallet</a></div></div>';
   }
-
   function profShowProductsLoading() {
-    var c = document.getElementById('prof-products-container');
-    if(!c) return;
-    c.innerHTML =
-      '<div class="text-center py-12">'
-      +'<div class="loading-spinner-lg mx-auto mb-4"></div>'
-      +'<p class="text-slate-400 text-sm">Loading your products…</p>'
-      +'</div>';
+    var c=document.getElementById('prof-products-container'); if(!c) return;
+    c.innerHTML='<div class="text-center py-12"><div class="loading-spinner-lg mx-auto mb-4"></div><p class="text-slate-400 text-sm">Loading your products\u2026</p></div>';
   }
-
   function profShowProductsError(msg) {
-    var c = document.getElementById('prof-products-container');
-    if(!c) return;
-    c.innerHTML =
-      '<div class="p-8 text-center">'
-      +'<i class="fas fa-exclamation-circle text-red-400 text-3xl mb-3 block"></i>'
-      +'<p class="text-red-500 font-medium mb-1">Failed to load products</p>'
-      +'<p class="text-slate-400 text-sm mb-4">'+(msg||'Unable to load data. Please try again.')+'</p>'
-      +'<button onclick="loadProfProducts(_profAddress)" class="btn-primary text-sm mx-auto">'
-      +'<i class="fas fa-redo mr-1"></i> Retry</button>'
-      +'</div>';
+    var c=document.getElementById('prof-products-container'); if(!c) return;
+    c.innerHTML='<div class="p-8 text-center"><i class="fas fa-exclamation-circle text-red-400 text-3xl mb-3 block"></i><p class="text-red-500 font-medium mb-1">Failed to load products</p><p class="text-slate-400 text-sm mb-4">'+(msg||'Unable to load data. Please try again.')+'</p><button onclick="loadProfProducts(_profAddress)" class="btn-primary text-sm mx-auto"><i class="fas fa-redo mr-1"></i> Retry</button></div>';
   }
 
-  // ── Filter buttons ────────────────────────────────────────────────────
   function profFilterProducts(f) {
-    _profFilter = f;
-    document.querySelectorAll('.ppf-btn').forEach(function(b) {
-      b.className = 'ppf-btn px-3 py-1.5 rounded-lg text-xs font-semibold '
-        +(b.id==='ppf-'+f ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200');
+    _profFilter=f;
+    document.querySelectorAll('.ppf-btn').forEach(function(b){
+      b.className='ppf-btn px-3 py-1.5 rounded-lg text-xs font-semibold '+(b.id==='ppf-'+f?'bg-red-600 text-white':'bg-slate-100 text-slate-600 hover:bg-slate-200');
     });
     renderProfProducts();
   }
 
-  // ── Render product table ───────────────────────────────────────────────
   function renderProfProducts() {
-    var container = document.getElementById('prof-products-container');
-    if(!container) return;
-
-    if(_profProducts.length === 0) {
-      container.innerHTML =
-        '<div class="text-center py-12">'
-        +'<div class="empty-state">'
-        +'<i class="fas fa-store"></i>'
-        +'<h3 class="font-bold text-slate-600 mb-2">You have no products yet</h3>'
-        +'<p class="text-sm text-slate-400 mb-4">Start selling by listing your first product on Arc Network.</p>'
-        +'<a href="/sell" class="btn-primary mx-auto"><i class="fas fa-plus-circle mr-1"></i> List a Product</a>'
-        +'</div></div>';
+    var container=document.getElementById('prof-products-container'); if(!container) return;
+    if(_profProducts.length===0) {
+      container.innerHTML='<div class="text-center py-12"><div class="empty-state"><i class="fas fa-store"></i><h3 class="font-bold text-slate-600 mb-2">You have no products yet</h3><p class="text-sm text-slate-400 mb-4">Start selling by listing your first product.</p><a href="/sell" class="btn-primary mx-auto"><i class="fas fa-plus-circle mr-1"></i> List a Product</a></div></div>';
       return;
     }
-
-    var list = _profFilter==='all'
-      ? _profProducts
-      : _profProducts.filter(function(p){ return p.status===_profFilter; });
-
-    if(list.length === 0) {
-      container.innerHTML =
-        '<div class="text-center py-10 text-slate-400 text-sm">'
-        +'<i class="fas fa-filter mr-2"></i>No <strong>'+_profFilter+'</strong> products found.'
-        +'</div>';
-      return;
-    }
-
-    container.innerHTML =
-      '<div class="overflow-x-auto">'
-      +'<table class="w-full text-sm border-collapse">'
-      +'<thead><tr class="border-b border-slate-100">'
-      +'<th class="text-left py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Product</th>'
-      +'<th class="text-right py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Price</th>'
-      +'<th class="text-center py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>'
-      +'<th class="text-right py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Actions</th>'
-      +'</tr></thead>'
-      +'<tbody>'
-      +list.map(function(p) {
-        var badge = p.status==='active'
-          ? '<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">Active</span>'
-          : '<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700">Paused</span>';
-        var imgEl = p.image
-          ? '<img src="'+p.image+'" class="w-9 h-9 rounded-lg object-cover mr-2 shrink-0" onerror="this.style.display=&quot;none&quot;">'
-          : '<div class="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center mr-2 shrink-0"><i class="fas fa-image text-slate-300 text-xs"></i></div>';
-        var actionBtns = '';
-        // Edit button — data-id used to avoid quote escaping issues
-        actionBtns += '<button data-action="edit" data-pid="'+p.id+'" class="text-blue-600 hover:text-blue-800 text-xs font-semibold px-2 py-1 rounded hover:bg-blue-50" title="Edit Product"><i class="fas fa-edit mr-1"></i>Edit</button>';
-        if(p.status==='active') {
-          actionBtns += '<button data-action="pause" data-pid="'+p.id+'" class="text-amber-600 hover:text-amber-800 text-xs font-semibold px-2 py-1 rounded hover:bg-amber-50"><i class="fas fa-pause mr-1"></i>Pause</button>';
-        }
-        if(p.status==='paused') {
-          actionBtns += '<button data-action="resume" data-pid="'+p.id+'" class="text-green-600 hover:text-green-800 text-xs font-semibold px-2 py-1 rounded hover:bg-green-50"><i class="fas fa-play mr-1"></i>Resume</button>';
-        }
-        actionBtns += '<a href="/product/'+p.id+'" class="text-slate-500 hover:text-slate-700 text-xs font-semibold px-2 py-1 rounded hover:bg-slate-50"><i class="fas fa-eye mr-1"></i>View</a>';
-        actionBtns += '<button data-action="delete" data-pid="'+p.id+'" class="text-red-500 hover:text-red-700 text-xs font-semibold px-2 py-1 rounded hover:bg-red-50"><i class="fas fa-trash mr-1"></i>Delete</button>';
-        return '<tr class="border-b border-slate-50 hover:bg-slate-50 transition-colors">'
-          +'<td class="py-3 px-2"><div class="flex items-center">'+imgEl
-          +'<div><p class="font-semibold text-slate-800 text-xs leading-tight max-w-xs line-clamp-2">'+((p.title||'Untitled').replace(/</g,'&lt;'))+'</p>'
-          +'<p class="text-slate-400 text-xs font-mono">'+p.id+'</p></div></div></td>'
-          +'<td class="py-3 px-2 text-right font-bold text-red-600 whitespace-nowrap">'+parseFloat(p.price||0).toFixed(2)+' <span class="text-xs font-normal text-slate-500">'+(p.token||'USDC')+'</span></td>'
-          +'<td class="py-3 px-2 text-center">'+badge+'</td>'
-          +'<td class="py-3 px-2 text-right"><div class="flex items-center justify-end gap-1 flex-wrap">'+actionBtns+'</div></td>'
-          +'</tr>';
-      }).join('')
-      +'</tbody></table></div>';
-
-    // Event delegation for product action buttons (avoids onclick+quote issues)
-    container.querySelectorAll('[data-action]').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        var action = this.getAttribute('data-action');
-        var pid    = this.getAttribute('data-pid');
-        if(action === 'edit')   profOpenEdit(pid);
-        if(action === 'pause')  profPauseProduct(pid);
-        if(action === 'resume') profResumeProduct(pid);
-        if(action === 'delete') profDeleteProduct(pid);
+    var list=_profFilter==='all'?_profProducts:_profProducts.filter(function(p){return p.status===_profFilter;});
+    if(!list.length){ container.innerHTML='<div class="text-center py-10 text-slate-400 text-sm"><i class="fas fa-filter mr-2"></i>No <strong>'+_profFilter+'</strong> products found.</div>'; return; }
+    container.innerHTML='<div class="overflow-x-auto"><table class="w-full text-sm border-collapse"><thead><tr class="border-b border-slate-100"><th class="text-left py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Product</th><th class="text-right py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Price</th><th class="text-center py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th><th class="text-right py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Actions</th></tr></thead><tbody>'
+    +list.map(function(p){
+      var badge=p.status==='active'?'<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">Active</span>':'<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700">Paused</span>';
+      var imgEl=p.image?'<img src="'+p.image+'" class="w-9 h-9 rounded-lg object-cover mr-2 shrink-0" onerror="this.style.display=&quot;none&quot;">':'<div class="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center mr-2 shrink-0"><i class="fas fa-image text-slate-300 text-xs"></i></div>';
+      var actionBtns='<button data-action="edit" data-pid="'+p.id+'" class="text-blue-600 hover:text-blue-800 text-xs font-semibold px-2 py-1 rounded hover:bg-blue-50"><i class="fas fa-edit mr-1"></i>Edit</button>';
+      if(p.status==='active') actionBtns+='<button data-action="pause" data-pid="'+p.id+'" class="text-amber-600 hover:text-amber-800 text-xs font-semibold px-2 py-1 rounded hover:bg-amber-50"><i class="fas fa-pause mr-1"></i>Pause</button>';
+      if(p.status==='paused') actionBtns+='<button data-action="resume" data-pid="'+p.id+'" class="text-green-600 hover:text-green-800 text-xs font-semibold px-2 py-1 rounded hover:bg-green-50"><i class="fas fa-play mr-1"></i>Resume</button>';
+      actionBtns+='<a href="/product/'+p.id+'" class="text-slate-500 hover:text-slate-700 text-xs font-semibold px-2 py-1 rounded hover:bg-slate-50"><i class="fas fa-eye mr-1"></i>View</a>';
+      actionBtns+='<button data-action="delete" data-pid="'+p.id+'" class="text-red-500 hover:text-red-700 text-xs font-semibold px-2 py-1 rounded hover:bg-red-50"><i class="fas fa-trash mr-1"></i>Delete</button>';
+      return '<tr class="border-b border-slate-50 hover:bg-slate-50 transition-colors"><td class="py-3 px-2"><div class="flex items-center">'+imgEl+'<div><p class="font-semibold text-slate-800 text-xs leading-tight max-w-xs line-clamp-2">'+((p.title||'Untitled').replace(/</g,'&lt;'))+'</p><p class="text-slate-400 text-xs font-mono">'+p.id+'</p></div></div></td><td class="py-3 px-2 text-right font-bold text-red-600 whitespace-nowrap">'+parseFloat(p.price||0).toFixed(2)+' <span class="text-xs font-normal text-slate-500">'+(p.token||'USDC')+'</span></td><td class="py-3 px-2 text-center">'+badge+'</td><td class="py-3 px-2 text-right"><div class="flex items-center justify-end gap-1 flex-wrap">'+actionBtns+'</div></td></tr>';
+    }).join('')+'</tbody></table></div>';
+    container.querySelectorAll('[data-action]').forEach(function(btn){
+      btn.addEventListener('click',function(){
+        var action=this.getAttribute('data-action'); var pid=this.getAttribute('data-pid');
+        if(action==='edit')   profOpenEdit(pid);
+        if(action==='pause')  profPauseProduct(pid);
+        if(action==='resume') profResumeProduct(pid);
+        if(action==='delete') profDeleteProduct(pid);
       });
     });
   }
 
-  // ── Edit modal ────────────────────────────────────────────────────────
+  // ── Edit modal ────────────────────────────────────────────────────
   function profOpenEdit(productId) {
-    var wallet = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
-    if(!wallet){ showToast('Connect wallet first','error'); return; }
-    var p = _profProducts.find(function(x){ return x.id===productId; });
-    if(!p){ showToast('Product not found','error'); return; }
-    // Security: only owner can edit
-    if(p.seller_id.toLowerCase() !== wallet.address.toLowerCase()){
-      showToast('Unauthorized: you do not own this product','error'); return;
-    }
-    document.getElementById('pedit-id').value          = p.id;
-    document.getElementById('pedit-title').value       = p.title||'';
-    document.getElementById('pedit-description').value = p.description||'';
-    document.getElementById('pedit-price').value       = p.price||'';
-    document.getElementById('pedit-token').value       = p.token||'USDC';
-    document.getElementById('pedit-image').value       = p.image||'';
-    var modal = document.getElementById('prof-edit-modal');
-    modal.style.display = 'flex';
+    var wallet=(typeof getStoredWallet==='function')?getStoredWallet():null;
+    if(!wallet){showToast('Connect wallet first','error');return;}
+    var p=_profProducts.find(function(x){return x.id===productId;});
+    if(!p){showToast('Product not found','error');return;}
+    if(p.seller_id.toLowerCase()!==wallet.address.toLowerCase()){showToast('Unauthorized','error');return;}
+    document.getElementById('pedit-id').value=p.id;
+    document.getElementById('pedit-title').value=p.title||'';
+    document.getElementById('pedit-description').value=p.description||'';
+    document.getElementById('pedit-price').value=p.price||'';
+    document.getElementById('pedit-token').value=p.token||'USDC';
+    document.getElementById('pedit-image').value=p.image||'';
+    document.getElementById('prof-edit-modal').style.display='flex';
   }
-
-  function profCloseEdit() {
-    document.getElementById('prof-edit-modal').style.display = 'none';
-  }
+  function profCloseEdit() { document.getElementById('prof-edit-modal').style.display='none'; }
 
   async function profSaveProduct(e) {
     e.preventDefault();
-    var wallet = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
-    if(!wallet){ showToast('Connect wallet first','error'); return; }
-    var id    = document.getElementById('pedit-id').value;
-    var title = document.getElementById('pedit-title').value.trim();
-    var desc  = document.getElementById('pedit-description').value.trim();
-    var price = parseFloat(document.getElementById('pedit-price').value);
-    var token = document.getElementById('pedit-token').value;
-    var image = document.getElementById('pedit-image').value.trim();
-    if(!title || !desc || isNaN(price) || price <= 0){
-      showToast('Please fill in all required fields correctly','error'); return;
-    }
-    var btn = document.getElementById('pedit-save-btn');
-    btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Saving\u2026';
+    var wallet=(typeof getStoredWallet==='function')?getStoredWallet():null;
+    if(!wallet){showToast('Connect wallet first','error');return;}
+    var id=document.getElementById('pedit-id').value;
+    var title=document.getElementById('pedit-title').value.trim();
+    var desc=document.getElementById('pedit-description').value.trim();
+    var price=parseFloat(document.getElementById('pedit-price').value);
+    var token=document.getElementById('pedit-token').value;
+    var image=document.getElementById('pedit-image').value.trim();
+    if(!title||!desc||isNaN(price)||price<=0){showToast('Please fill in all required fields correctly','error');return;}
+    var btn=document.getElementById('pedit-save-btn');
+    btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin mr-1"></i> Saving\u2026';
     try {
-      var ctrl2 = new AbortController();
-      var t2 = setTimeout(function(){ ctrl2.abort(); }, 10000);
-      var res = await fetch('/api/products/'+id, {
-        method:'PATCH',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ seller_id:wallet.address, title:title, description:desc, price:price, token:token, image:image }),
-        signal: ctrl2.signal
-      });
+      var ctrl2=new AbortController(); var t2=setTimeout(function(){ctrl2.abort();},10000);
+      var res=await fetch('/api/products/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({seller_id:wallet.address,title:title,description:desc,price:price,token:token,image:image}),signal:ctrl2.signal});
       clearTimeout(t2);
-      var data = await res.json();
-      if(!res.ok){ showToast(data.error||'Failed to update product','error'); return; }
+      var data=await res.json();
+      if(!res.ok){showToast(data.error||'Failed to update product','error');return;}
       showToast('Product updated successfully','success');
       profCloseEdit();
       await loadProfProducts(wallet.address);
-    } catch(err) {
-      showToast(err && err.message ? err.message : 'Network error. Please try again.','error');
-    } finally {
-      btn.disabled = false; btn.innerHTML = '<i class="fas fa-save mr-1"></i> Save Changes';
-    }
+    } catch(err){ showToast(err&&err.message?err.message:'Network error. Please try again.','error'); }
+    finally{ btn.disabled=false; btn.innerHTML='<i class="fas fa-save mr-1"></i> Save Changes'; }
   }
 
-  // ── Product actions ───────────────────────────────────────────────────
+  // ── Product actions ───────────────────────────────────────────────
   async function profPauseProduct(productId) {
     if(!confirm('Pause this listing? It will be hidden from the marketplace.')) return;
-    var wallet = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
-    if(!wallet){ showToast('Connect wallet first','error'); return; }
+    var wallet=(typeof getStoredWallet==='function')?getStoredWallet():null;
+    if(!wallet){showToast('Connect wallet first','error');return;}
     try {
-      var ctrl3 = new AbortController();
-      var t3 = setTimeout(function(){ ctrl3.abort(); }, 10000);
-      var res = await fetch('/api/products/'+productId+'/status',{
-        method:'PATCH',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({seller_id:wallet.address,status:'paused'}),
-        signal:ctrl3.signal
-      });
-      clearTimeout(t3);
-      var data = await res.json();
-      if(!res.ok){ showToast(data.error||'Failed','error'); return; }
-      showToast('Listing paused','info');
-      await loadProfProducts(wallet.address);
-    } catch(e){ showToast('Network error. Please try again.','error'); }
+      var ctrl3=new AbortController(); var t3=setTimeout(function(){ctrl3.abort();},10000);
+      var res=await fetch('/api/products/'+productId+'/status',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({seller_id:wallet.address,status:'paused'}),signal:ctrl3.signal});
+      clearTimeout(t3); var data=await res.json();
+      if(!res.ok){showToast(data.error||'Failed','error');return;}
+      showToast('Listing paused','info'); await loadProfProducts(wallet.address);
+    } catch(e){showToast('Network error. Please try again.','error');}
   }
 
   async function profResumeProduct(productId) {
     if(!confirm('Resume this listing? It will be visible in the marketplace again.')) return;
-    var wallet = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
-    if(!wallet){ showToast('Connect wallet first','error'); return; }
+    var wallet=(typeof getStoredWallet==='function')?getStoredWallet():null;
+    if(!wallet){showToast('Connect wallet first','error');return;}
     try {
-      var ctrl4 = new AbortController();
-      var t4 = setTimeout(function(){ ctrl4.abort(); }, 10000);
-      var res = await fetch('/api/products/'+productId+'/status',{
-        method:'PATCH',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({seller_id:wallet.address,status:'active'}),
-        signal:ctrl4.signal
-      });
-      clearTimeout(t4);
-      var data = await res.json();
-      if(!res.ok){ showToast(data.error||'Failed','error'); return; }
-      showToast('Listing is now active','success');
-      await loadProfProducts(wallet.address);
-    } catch(e){ showToast('Network error. Please try again.','error'); }
+      var ctrl4=new AbortController(); var t4=setTimeout(function(){ctrl4.abort();},10000);
+      var res=await fetch('/api/products/'+productId+'/status',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({seller_id:wallet.address,status:'active'}),signal:ctrl4.signal});
+      clearTimeout(t4); var data=await res.json();
+      if(!res.ok){showToast(data.error||'Failed','error');return;}
+      showToast('Listing is now active','success'); await loadProfProducts(wallet.address);
+    } catch(e){showToast('Network error. Please try again.','error');}
   }
 
   async function profDeleteProduct(productId) {
     if(!confirm('Delete this product permanently? This cannot be undone.')) return;
-    var wallet = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
-    if(!wallet){ showToast('Connect wallet first','error'); return; }
+    var wallet=(typeof getStoredWallet==='function')?getStoredWallet():null;
+    if(!wallet){showToast('Connect wallet first','error');return;}
     try {
-      var ctrl5 = new AbortController();
-      var t5 = setTimeout(function(){ ctrl5.abort(); }, 10000);
-      var res = await fetch('/api/products/'+productId,{
-        method:'DELETE',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({seller_id:wallet.address}),
-        signal:ctrl5.signal
-      });
-      clearTimeout(t5);
-      var data = await res.json();
-      if(!res.ok){ showToast(data.error||'Failed','error'); return; }
-      showToast('Product deleted','success');
-      await loadProfProducts(wallet.address);
-    } catch(e){ showToast('Network error. Please try again.','error'); }
+      var ctrl5=new AbortController(); var t5=setTimeout(function(){ctrl5.abort();},10000);
+      var res=await fetch('/api/products/'+productId,{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({seller_id:wallet.address}),signal:ctrl5.signal});
+      clearTimeout(t5); var data=await res.json();
+      if(!res.ok){showToast(data.error||'Failed','error');return;}
+      showToast('Product deleted','success'); await loadProfProducts(wallet.address);
+    } catch(e){showToast('Network error. Please try again.','error');}
   }
 
   // Close modal on backdrop click
-  document.getElementById('prof-edit-modal').addEventListener('click', function(e) {
-    if(e.target === this) profCloseEdit();
-  });
+  document.getElementById('prof-edit-modal').addEventListener('click', function(e) { if(e.target===this) profCloseEdit(); });
   </script>
   `)
 }
-
 
 function registerPage() {
   return shell('Register', `
@@ -9489,6 +9656,621 @@ function deployEscrowPage() {
       btn.innerHTML = '<i class="fas fa-rocket mr-2"></i> Retry Deployment';
     }
   }
+  </script>
+  `)
+}
+
+// ─── PAGE: HOW TO USE ─────────────────────────────────────────────────────
+function howToUsePage() {
+  return shell('How to Use', `
+  <div class="max-w-4xl mx-auto px-4 py-10">
+
+    <!-- Hero -->
+    <div style="background:linear-gradient(135deg,#1e293b 0%,#0f172a 100%);border-radius:24px;padding:48px 40px;margin-bottom:32px;position:relative;overflow:hidden;">
+      <div style="position:absolute;top:-40px;right:-40px;width:220px;height:220px;background:radial-gradient(circle,rgba(220,38,38,.18) 0%,transparent 70%);pointer-events:none;"></div>
+      <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px;position:relative;">
+        <div style="width:56px;height:56px;border-radius:16px;background:linear-gradient(135deg,#dc2626,#991b1b);display:flex;align-items:center;justify-content:center;box-shadow:0 8px 24px rgba(220,38,38,.35);">
+          <i class="fas fa-book-open" style="color:#fff;font-size:22px;"></i>
+        </div>
+        <div>
+          <h1 style="font-size:2rem;font-weight:900;color:#fff;margin:0;line-height:1.1;">How to Use Shukly Store</h1>
+          <p style="color:#94a3b8;font-size:.9rem;margin:4px 0 0;">Complete guide — from wallet setup to dispute resolution</p>
+        </div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;position:relative;">
+        <span style="display:inline-flex;align-items:center;gap:6px;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.25);color:#4ade80;border-radius:999px;padding:5px 14px;font-size:.75rem;font-weight:600;">
+          <i class="fas fa-flask"></i> Testnet Only
+        </span>
+        <span style="display:inline-flex;align-items:center;gap:6px;background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.25);color:#60a5fa;border-radius:999px;padding:5px 14px;font-size:.75rem;font-weight:600;">
+          <i class="fas fa-shield-alt"></i> Non-Custodial
+        </span>
+        <span style="display:inline-flex;align-items:center;gap:6px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.25);color:#fbbf24;border-radius:999px;padding:5px 14px;font-size:.75rem;font-weight:600;">
+          <i class="fas fa-wallet"></i> MetaMask Required
+        </span>
+      </div>
+    </div>
+
+    <!-- Video -->
+    <div class="card p-6 mb-8">
+      <h2 class="text-xl font-bold text-slate-800 mb-3 flex items-center gap-2">
+        <i class="fas fa-play-circle text-red-500"></i> Video Walkthrough
+      </h2>
+      <p class="text-slate-500 text-sm mb-4">Watch the full step-by-step demo below:</p>
+      <div style="position:relative;padding-bottom:56.25%;height:0;border-radius:14px;overflow:hidden;background:#000;">
+        <iframe
+          src="https://www.youtube-nocookie.com/embed/Fgm7-F2JvNo"
+          title="Shukly Store Walkthrough"
+          frameborder="0"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowfullscreen
+          style="position:absolute;top:0;left:0;width:100%;height:100%;border-radius:14px;">
+        </iframe>
+      </div>
+    </div>
+
+    <!-- Requirements -->
+    <div class="card p-6 mb-8" style="background:#fffbeb;border:1.5px solid #fde68a;">
+      <h2 class="text-xl font-bold text-amber-800 mb-4 flex items-center gap-2">
+        <i class="fas fa-list-check text-amber-500"></i> Requirements
+      </h2>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;">
+        <div style="background:#fff;border-radius:10px;padding:14px;border:1px solid #fde68a;">
+          <div style="width:36px;height:36px;background:#fef3c7;border-radius:9px;display:flex;align-items:center;justify-content:center;margin-bottom:8px;">
+            <i class="fas fa-wallet text-amber-600"></i>
+          </div>
+          <p class="font-bold text-slate-800 text-sm mb-1">MetaMask Wallet</p>
+          <p class="text-slate-500 text-xs">Install MetaMask browser extension or use Brave's built-in wallet.</p>
+        </div>
+        <div style="background:#fff;border-radius:10px;padding:14px;border:1px solid #fde68a;">
+          <div style="width:36px;height:36px;background:#fef3c7;border-radius:9px;display:flex;align-items:center;justify-content:center;margin-bottom:8px;">
+            <i class="fas fa-coins text-amber-600"></i>
+          </div>
+          <p class="font-bold text-slate-800 text-sm mb-1">Testnet USDC/EURC</p>
+          <p class="text-slate-500 text-xs">Get free testnet tokens from <a href="https://faucet.circle.com" target="_blank" class="text-blue-600 hover:underline">Circle Faucet</a>.</p>
+        </div>
+        <div style="background:#fff;border-radius:10px;padding:14px;border:1px solid #fde68a;">
+          <div style="width:36px;height:36px;background:#fef3c7;border-radius:9px;display:flex;align-items:center;justify-content:center;margin-bottom:8px;">
+            <i class="fas fa-network-wired text-amber-600"></i>
+          </div>
+          <p class="font-bold text-slate-800 text-sm mb-1">Arc Testnet</p>
+          <p class="text-slate-500 text-xs">Network auto-added when you connect. Chain ID: 5042002.</p>
+        </div>
+        <div style="background:#fff;border-radius:10px;padding:14px;border:1px solid #fde68a;">
+          <div style="width:36px;height:36px;background:#fef3c7;border-radius:9px;display:flex;align-items:center;justify-content:center;margin-bottom:8px;">
+            <i class="fas fa-desktop text-amber-600"></i>
+          </div>
+          <p class="font-bold text-slate-800 text-sm mb-1">Modern Browser</p>
+          <p class="text-slate-500 text-xs">Chrome, Brave, Firefox or Edge (latest version recommended).</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step by step -->
+    <div class="card p-6 mb-8">
+      <h2 class="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
+        <i class="fas fa-route text-red-500"></i> Step-by-Step Guide
+      </h2>
+
+      <div style="display:flex;flex-direction:column;gap:0;">
+
+        <!-- Step 1 -->
+        <div style="display:flex;gap:16px;margin-bottom:28px;">
+          <div style="display:flex;flex-direction:column;align-items:center;">
+            <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:16px;flex-shrink:0;">1</div>
+            <div style="width:2px;flex:1;background:#fee2e2;margin-top:6px;"></div>
+          </div>
+          <div style="padding-bottom:20px;flex:1;">
+            <h3 class="font-bold text-slate-800 text-base mb-2">Connect Your Wallet</h3>
+            <p class="text-slate-600 text-sm mb-3">Click <strong>Connect Wallet</strong> in the top-right of the page. MetaMask will prompt you to add the Arc Testnet automatically. Approve the network switch.</p>
+            <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:9px;padding:10px 12px;">
+              <p class="text-green-800 text-xs font-semibold"><i class="fas fa-lightbulb mr-1"></i> Tip: Brave users — use Brave Wallet or enable MetaMask. Both are supported.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 2 -->
+        <div style="display:flex;gap:16px;margin-bottom:28px;">
+          <div style="display:flex;flex-direction:column;align-items:center;">
+            <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:16px;flex-shrink:0;">2</div>
+            <div style="width:2px;flex:1;background:#fee2e2;margin-top:6px;"></div>
+          </div>
+          <div style="padding-bottom:20px;flex:1;">
+            <h3 class="font-bold text-slate-800 text-base mb-2">Get Testnet Tokens</h3>
+            <p class="text-slate-600 text-sm mb-3">Visit the <a href="https://faucet.circle.com" target="_blank" class="text-red-600 hover:underline font-semibold">Circle Faucet</a> and request free testnet USDC on the Arc Testnet chain. Tokens arrive in seconds.</p>
+            <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:9px;padding:10px 12px;">
+              <p class="text-blue-800 text-xs font-semibold"><i class="fas fa-info-circle mr-1"></i> These are testnet tokens — no real value. Safe to use for testing.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 3 -->
+        <div style="display:flex;gap:16px;margin-bottom:28px;">
+          <div style="display:flex;flex-direction:column;align-items:center;">
+            <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:16px;flex-shrink:0;">3</div>
+            <div style="width:2px;flex:1;background:#fee2e2;margin-top:6px;"></div>
+          </div>
+          <div style="padding-bottom:20px;flex:1;">
+            <h3 class="font-bold text-slate-800 text-base mb-2">Browse &amp; Buy</h3>
+            <p class="text-slate-600 text-sm mb-3">Go to the <a href="/marketplace" class="text-red-600 hover:underline font-semibold">Marketplace</a>, browse products, add to cart, and proceed to checkout. The escrow contract will lock your payment until delivery is confirmed.</p>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+              <div style="background:#f8fafc;border-radius:8px;padding:10px;border:1px solid #e2e8f0;">
+                <p class="text-xs font-bold text-slate-700 mb-1"><i class="fas fa-lock mr-1 text-red-500"></i> Escrow Protection</p>
+                <p class="text-xs text-slate-500">Funds locked until you confirm receipt.</p>
+              </div>
+              <div style="background:#f8fafc;border-radius:8px;padding:10px;border:1px solid #e2e8f0;">
+                <p class="text-xs font-bold text-slate-700 mb-1"><i class="fas fa-shield-alt mr-1 text-green-500"></i> Non-Custodial</p>
+                <p class="text-xs text-slate-500">Only you and the smart contract hold funds.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 4 -->
+        <div style="display:flex;gap:16px;margin-bottom:28px;">
+          <div style="display:flex;flex-direction:column;align-items:center;">
+            <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:16px;flex-shrink:0;">4</div>
+            <div style="width:2px;flex:1;background:#fee2e2;margin-top:6px;"></div>
+          </div>
+          <div style="padding-bottom:20px;flex:1;">
+            <h3 class="font-bold text-slate-800 text-base mb-2">Sell Products</h3>
+            <p class="text-slate-600 text-sm mb-3">Go to <a href="/sell" class="text-red-600 hover:underline font-semibold">Sell</a>, fill in product details, price in USDC/EURC, and publish. Manage your listings in <a href="/profile?tab=products" class="text-red-600 hover:underline font-semibold">My Profile → My Products</a>.</p>
+          </div>
+        </div>
+
+        <!-- Step 5 -->
+        <div style="display:flex;gap:16px;margin-bottom:28px;">
+          <div style="display:flex;flex-direction:column;align-items:center;">
+            <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:16px;flex-shrink:0;">5</div>
+            <div style="width:2px;flex:1;background:#fee2e2;margin-top:6px;"></div>
+          </div>
+          <div style="padding-bottom:20px;flex:1;">
+            <h3 class="font-bold text-slate-800 text-base mb-2">Track Orders</h3>
+            <p class="text-slate-600 text-sm mb-3">Visit <a href="/orders" class="text-red-600 hover:underline font-semibold">My Orders</a> to track the status of your purchases. Confirm delivery to release funds to the seller.</p>
+          </div>
+        </div>
+
+        <!-- Step 6 -->
+        <div style="display:flex;gap:16px;margin-bottom:8px;">
+          <div style="display:flex;flex-direction:column;align-items:center;">
+            <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:16px;flex-shrink:0;">6</div>
+          </div>
+          <div style="flex:1;">
+            <h3 class="font-bold text-slate-800 text-base mb-2">Open a Dispute</h3>
+            <p class="text-slate-600 text-sm mb-3">If there's an issue with an order, open a dispute from the Order Detail page. Submit evidence (text, images, links), chat with the other party, and await resolution. Auto-resolution rules apply after deadlines expire.</p>
+            <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:9px;padding:10px 12px;">
+              <p class="text-red-800 text-xs font-semibold"><i class="fas fa-clock mr-1"></i> Seller has 48h to respond. Buyer has 72h to submit evidence. Inactivity auto-resolves after 120h.</p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- FAQ -->
+    <div class="card p-6 mb-8">
+      <h2 class="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+        <i class="fas fa-question-circle text-red-500"></i> FAQ
+      </h2>
+      <div style="display:flex;flex-direction:column;gap:12px;" id="faq-list">
+        <details style="border:1px solid #e2e8f0;border-radius:10px;padding:0;overflow:hidden;">
+          <summary style="padding:12px 16px;cursor:pointer;font-weight:600;color:#1e293b;font-size:14px;list-style:none;display:flex;justify-content:space-between;align-items:center;">
+            Is my money safe? <i class="fas fa-chevron-down text-slate-400"></i>
+          </summary>
+          <div style="padding:10px 16px 14px;border-top:1px solid #f1f5f9;font-size:13px;color:#64748b;line-height:1.6;">
+            Yes. This is a testnet environment — no real money is involved. All funds are simulated testnet tokens locked in a smart contract escrow on Arc Testnet.
+          </div>
+        </details>
+        <details style="border:1px solid #e2e8f0;border-radius:10px;padding:0;overflow:hidden;">
+          <summary style="padding:12px 16px;cursor:pointer;font-weight:600;color:#1e293b;font-size:14px;list-style:none;display:flex;justify-content:space-between;align-items:center;">
+            Why does MetaMask show Arc Testnet? <i class="fas fa-chevron-down text-slate-400"></i>
+          </summary>
+          <div style="padding:10px 16px 14px;border-top:1px solid #f1f5f9;font-size:13px;color:#64748b;line-height:1.6;">
+            Shukly Store runs on Arc Testnet (Chain ID 5042002). When you connect, the network is added automatically via MetaMask's <code>wallet_addEthereumChain</code> API.
+          </div>
+        </details>
+        <details style="border:1px solid #e2e8f0;border-radius:10px;padding:0;overflow:hidden;">
+          <summary style="padding:12px 16px;cursor:pointer;font-weight:600;color:#1e293b;font-size:14px;list-style:none;display:flex;justify-content:space-between;align-items:center;">
+            What happens if a seller doesn't respond to a dispute? <i class="fas fa-chevron-down text-slate-400"></i>
+          </summary>
+          <div style="padding:10px 16px 14px;border-top:1px solid #f1f5f9;font-size:13px;color:#64748b;line-height:1.6;">
+            The auto-resolution system detects inactivity. If the seller doesn't respond within 48 hours, the system marks the dispute as auto-refundable to the buyer.
+          </div>
+        </details>
+        <details style="border:1px solid #e2e8f0;border-radius:10px;padding:0;overflow:hidden;">
+          <summary style="padding:12px 16px;cursor:pointer;font-weight:600;color:#1e293b;font-size:14px;list-style:none;display:flex;justify-content:space-between;align-items:center;">
+            Can I use Brave browser? <i class="fas fa-chevron-down text-slate-400"></i>
+          </summary>
+          <div style="padding:10px 16px 14px;border-top:1px solid #f1f5f9;font-size:13px;color:#64748b;line-height:1.6;">
+            Yes! Brave's built-in wallet and MetaMask extension both work. If you experience issues, try disabling Brave Shields for this site.
+          </div>
+        </details>
+      </div>
+    </div>
+
+    <!-- CTA -->
+    <div style="display:flex;flex-wrap:wrap;gap:12px;justify-content:center;padding:8px 0 24px;">
+      <a href="/marketplace" class="btn-primary"><i class="fas fa-shopping-bag mr-2"></i>Start Shopping</a>
+      <a href="/sell" class="btn-secondary"><i class="fas fa-store mr-2"></i>Start Selling</a>
+      <a href="/wallet" class="btn-secondary"><i class="fas fa-wallet mr-2"></i>Connect Wallet</a>
+    </div>
+
+  </div>
+  `)
+}
+
+// ─── PAGE: ADMIN ──────────────────────────────────────────────────────────
+function adminPage() {
+  return shell('Admin Panel', `
+  <div class="max-w-6xl mx-auto px-4 py-8" id="admin-root">
+
+    <!-- Access Blocked state (shown by default, JS removes if authorized) -->
+    <div id="admin-blocked" style="display:none;text-align:center;padding:80px 20px;">
+      <div style="width:64px;height:64px;border-radius:50%;background:#fee2e2;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;">
+        <i class="fas fa-ban" style="color:#dc2626;font-size:26px;"></i>
+      </div>
+      <h2 style="font-size:22px;font-weight:800;color:#1e293b;margin:0 0 8px;">Access Denied</h2>
+      <p style="color:#64748b;font-size:14px;margin:0 0 20px;">Your wallet is not authorized to access the admin panel.</p>
+      <a href="/" class="btn-secondary">← Return Home</a>
+    </div>
+
+    <!-- Loading state -->
+    <div id="admin-loading" style="text-align:center;padding:80px 20px;">
+      <div class="loading-spinner-lg mx-auto mb-4"></div>
+      <p class="text-slate-400">Checking authorization…</p>
+    </div>
+
+    <!-- Admin Panel (hidden until authorized) -->
+    <div id="admin-panel" style="display:none;">
+
+      <!-- Header -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:28px;flex-wrap:wrap;gap:12px;">
+        <div style="display:flex;align-items:center;gap:14px;">
+          <div style="width:48px;height:48px;background:linear-gradient(135deg,#dc2626,#991b1b);border-radius:14px;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(220,38,38,.3);">
+            <i class="fas fa-shield-alt" style="color:#fff;font-size:20px;"></i>
+          </div>
+          <div>
+            <h1 style="margin:0;font-size:22px;font-weight:900;color:#1e293b;">Admin Panel</h1>
+            <p style="margin:0;font-size:12px;color:#94a3b8;">Shukly Store · Restricted Access</p>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <span id="admin-wallet-badge" style="font-size:11px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;padding:5px 12px;font-family:monospace;color:#334155;"></span>
+          <span style="font-size:11px;background:#dcfce7;color:#15803d;border-radius:8px;padding:5px 12px;font-weight:700;">✓ Authorized</span>
+        </div>
+      </div>
+
+      <!-- Tab nav -->
+      <div style="display:flex;gap:4px;background:#f1f5f9;border-radius:12px;padding:4px;margin-bottom:24px;flex-wrap:wrap;">
+        <button onclick="adminTab('disputes')" id="atab-disputes" class="admin-tab active-tab"><i class="fas fa-gavel mr-1"></i>Disputes</button>
+        <button onclick="adminTab('products')" id="atab-products" class="admin-tab"><i class="fas fa-boxes mr-1"></i>Products</button>
+        <button onclick="adminTab('reports')" id="atab-reports" class="admin-tab"><i class="fas fa-flag mr-1"></i>Reports</button>
+        <button onclick="adminTab('security')" id="atab-security" class="admin-tab"><i class="fas fa-lock mr-1"></i>Security Log</button>
+        <button onclick="adminTab('whitelist')" id="atab-whitelist" class="admin-tab"><i class="fas fa-users mr-1"></i>Whitelist</button>
+      </div>
+
+      <!-- Tab: Disputes -->
+      <div id="atab-content-disputes">
+        <div class="card p-5">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+            <h2 style="font-size:16px;font-weight:700;color:#1e293b;margin:0;"><i class="fas fa-gavel text-red-500 mr-2"></i>All Disputes</h2>
+            <button onclick="adminLoadDisputes()" class="btn-secondary text-xs py-1.5"><i class="fas fa-sync mr-1"></i>Refresh</button>
+          </div>
+          <div id="admin-disputes-table">
+            <div style="text-align:center;padding:40px;color:#94a3b8;"><div class="loading-spinner-lg mx-auto mb-3"></div>Loading…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab: Products -->
+      <div id="atab-content-products" style="display:none;">
+        <div class="card p-5">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+            <h2 style="font-size:16px;font-weight:700;color:#1e293b;margin:0;"><i class="fas fa-boxes text-red-500 mr-2"></i>Product Management</h2>
+            <button onclick="adminLoadProducts()" class="btn-secondary text-xs py-1.5"><i class="fas fa-sync mr-1"></i>Refresh</button>
+          </div>
+          <div id="admin-products-table">
+            <div style="text-align:center;padding:40px;color:#94a3b8;"><div class="loading-spinner-lg mx-auto mb-3"></div>Loading…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab: Reports -->
+      <div id="atab-content-reports" style="display:none;">
+        <div class="card p-5">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+            <h2 style="font-size:16px;font-weight:700;color:#1e293b;margin:0;"><i class="fas fa-flag text-red-500 mr-2"></i>User Reports</h2>
+            <button onclick="adminLoadReports()" class="btn-secondary text-xs py-1.5"><i class="fas fa-sync mr-1"></i>Refresh</button>
+          </div>
+          <div id="admin-reports-table">
+            <div style="text-align:center;padding:40px;color:#94a3b8;"><div class="loading-spinner-lg mx-auto mb-3"></div>Loading…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab: Security Log -->
+      <div id="atab-content-security" style="display:none;">
+        <div class="card p-5">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+            <h2 style="font-size:16px;font-weight:700;color:#1e293b;margin:0;"><i class="fas fa-shield-alt text-red-500 mr-2"></i>Security Log</h2>
+            <button onclick="adminClearSecLog()" class="btn-secondary text-xs py-1.5 text-red-600"><i class="fas fa-trash mr-1"></i>Clear</button>
+          </div>
+          <div id="admin-security-log"></div>
+        </div>
+      </div>
+
+      <!-- Tab: Whitelist -->
+      <div id="atab-content-whitelist" style="display:none;">
+        <div class="card p-5">
+          <h2 style="font-size:16px;font-weight:700;color:#1e293b;margin:0 0 16px;"><i class="fas fa-users text-red-500 mr-2"></i>Admin Wallet Whitelist</h2>
+          <div id="admin-whitelist-list" style="margin-bottom:16px;"></div>
+          <div style="display:flex;gap:8px;">
+            <input id="admin-wl-input" class="input flex-1" placeholder="0x… wallet address" />
+            <button onclick="adminAddWhitelist()" class="btn-primary px-4"><i class="fas fa-plus mr-1"></i>Add</button>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /admin-panel -->
+  </div>
+
+  <style>
+  .admin-tab{padding:7px 16px;border:none;border-radius:9px;font-size:12px;font-weight:600;cursor:pointer;background:transparent;color:#64748b;transition:all .2s}
+  .admin-tab:hover{background:#fff;color:#334155}
+  .admin-tab.active-tab{background:#fff;color:#dc2626;box-shadow:0 2px 6px rgba(0,0,0,.08)}
+  .admin-tbl{width:100%;border-collapse:collapse;font-size:12px}
+  .admin-tbl th{background:#f8fafc;color:#64748b;font-weight:700;padding:8px 10px;text-align:left;border-bottom:2px solid #e2e8f0;text-transform:uppercase;font-size:11px}
+  .admin-tbl td{padding:10px;border-bottom:1px solid #f1f5f9;color:#334155;vertical-align:middle}
+  .admin-tbl tr:hover td{background:#fafafa}
+  .admin-action-btn{padding:4px 10px;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer}
+  .admin-refund-btn{background:#dbeafe;color:#1d4ed8}
+  .admin-release-btn{background:#dcfce7;color:#15803d}
+  .admin-remove-btn{background:#fee2e2;color:#dc2626}
+  .admin-flag-btn{background:#fef3c7;color:#92400e}
+  .admin-ban-btn{background:#fce7f3;color:#9d174d}
+  .admin-ignore-btn{background:#f1f5f9;color:#64748b}
+  .admin-sec-entry{display:flex;gap:10px;padding:10px 12px;border-bottom:1px solid #f1f5f9;font-size:12px}
+  .admin-sec-icon{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:12px}
+  </style>
+
+  <script>
+  var ADMIN_WHITELIST_KEY = 'rh_admin_whitelist';
+  var ADMIN_SECLOG_KEY    = 'rh_admin_seclog';
+  var ADMIN_REPORTS_KEY   = 'rh_admin_reports';
+  var _adminAuthorized    = false;
+
+  function getAdminWhitelist() {
+    try { return JSON.parse(localStorage.getItem(ADMIN_WHITELIST_KEY) || '[]'); } catch(e) { return []; }
+  }
+  function saveAdminWhitelist(list) { localStorage.setItem(ADMIN_WHITELIST_KEY, JSON.stringify(list)); }
+  function getSecLog() {
+    try { return JSON.parse(localStorage.getItem(ADMIN_SECLOG_KEY) || '[]'); } catch(e) { return []; }
+  }
+  function addSecLog(event, addr, detail) {
+    var log = getSecLog();
+    log.unshift({ ts: new Date().toISOString(), event: event, addr: addr || '—', detail: detail || '' });
+    if (log.length > 200) log = log.slice(0, 200);
+    localStorage.setItem(ADMIN_SECLOG_KEY, JSON.stringify(log));
+  }
+  function escH(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function shortA(a) { if(!a||a.length<10) return a||'—'; return a.slice(0,8)+'…'+a.slice(-6); }
+
+  function adminTab(tab) {
+    ['disputes','products','reports','security','whitelist'].forEach(function(t) {
+      var btn = document.getElementById('atab-'+t);
+      var con = document.getElementById('atab-content-'+t);
+      if(btn) btn.classList.toggle('active-tab', t===tab);
+      if(con) con.style.display = t===tab ? '' : 'none';
+    });
+    if(tab==='disputes') adminLoadDisputes();
+    if(tab==='products') adminLoadProducts();
+    if(tab==='reports')  adminLoadReports();
+    if(tab==='security') adminRenderSecLog();
+    if(tab==='whitelist') adminRenderWhitelist();
+  }
+
+  /* ── Disputes ── */
+  function adminLoadDisputes() {
+    var el = document.getElementById('admin-disputes-table');
+    if(!el) return;
+    var orders = [];
+    try { orders = JSON.parse(localStorage.getItem('rh_orders')||'[]'); } catch(e){}
+    var disputes = orders.filter(function(o){ return o.status==='dispute' || o.disputeResolution; });
+    var meta = {};
+    try { meta = JSON.parse(localStorage.getItem('rh_disputes_v2')||'{}'); } catch(e){}
+
+    if(!disputes.length) {
+      el.innerHTML = '<p style="text-align:center;color:#94a3b8;padding:30px;">No disputes found.</p>';
+      return;
+    }
+    var rows = disputes.map(function(d) {
+      var dm = meta[d.id] || {};
+      var status = dm.status || d.status || 'dispute';
+      var ev = {}; try { ev = JSON.parse(localStorage.getItem('rh_dispute_evidence')||'{}')[d.id]||{buyer:[],seller:[]}; } catch(e){ ev={buyer:[],seller:[]}; }
+      var bEv = (ev.buyer||[]).length, sEv = (ev.seller||[]).length;
+      return '<tr>' +
+        '<td style="font-family:monospace;">'+escH(d.id.slice(0,10))+'…</td>' +
+        '<td style="font-family:monospace;">'+escH(shortA(d.buyerAddress))+'</td>' +
+        '<td style="font-family:monospace;">'+escH(shortA(d.sellerAddress))+'</td>' +
+        '<td><span style="background:#fee2e2;color:#dc2626;font-size:10px;padding:3px 7px;border-radius:6px;font-weight:700;">'+escH(status)+'</span></td>' +
+        '<td>'+new Date(d.disputedAt||d.createdAt).toLocaleDateString()+'</td>' +
+        '<td>'+escH(String(bEv))+'/'+escH(String(sEv))+'</td>' +
+        '<td style="display:flex;gap:5px;flex-wrap:wrap;">' +
+        '<button class="admin-action-btn admin-refund-btn" onclick="adminResolveDispute(\''+escH(d.id)+'\',\'refund\')">Refund</button>' +
+        '<button class="admin-action-btn admin-release-btn" onclick="adminResolveDispute(\''+escH(d.id)+'\',\'release\')">Release</button>' +
+        '<button class="admin-action-btn admin-flag-btn" onclick="adminForceResolve(\''+escH(d.id)+'\')">Force</button>' +
+        '</td></tr>';
+    }).join('');
+    el.innerHTML = '<div style="overflow-x:auto;"><table class="admin-tbl"><thead><tr><th>Order</th><th>Buyer</th><th>Seller</th><th>Status</th><th>Date</th><th>Ev B/S</th><th>Actions</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  }
+
+  function adminResolveDispute(orderId, action) {
+    if(!confirm('Resolve dispute #'+orderId+' — action: '+action+'?')) return;
+    var orders = []; try { orders = JSON.parse(localStorage.getItem('rh_orders')||'[]'); } catch(e){}
+    var idx = orders.findIndex(function(o){ return o.id===orderId; });
+    if(idx<0) { alert('Order not found'); return; }
+    orders[idx].status='completed'; orders[idx].disputeResolution=action; orders[idx].resolvedAt=new Date().toISOString();
+    localStorage.setItem('rh_orders', JSON.stringify(orders));
+    var meta = {}; try { meta = JSON.parse(localStorage.getItem('rh_disputes_v2')||'{}'); } catch(e){}
+    if(meta[orderId]) { meta[orderId].status='resolved'; meta[orderId].resolution=action; meta[orderId].resolvedAt=new Date().toISOString(); localStorage.setItem('rh_disputes_v2', JSON.stringify(meta)); }
+    addSecLog('admin_resolve', _adminAddr, 'Resolved dispute '+orderId+' → '+action);
+    showToast('Dispute resolved: '+action, 'success');
+    adminLoadDisputes();
+  }
+
+  function adminForceResolve(orderId) {
+    var action = prompt('Force resolve — type "refund" or "release":');
+    if(action==='refund'||action==='release') adminResolveDispute(orderId, action);
+  }
+
+  /* ── Products ── */
+  function adminLoadProducts() {
+    var el = document.getElementById('admin-products-table');
+    if(!el) return;
+    el.innerHTML = '<div style="text-align:center;padding:20px;color:#94a3b8;">Loading products…</div>';
+    fetch('/api/products?limit=100').then(function(r){ return r.json(); }).then(function(data){
+      var products = Array.isArray(data.products) ? data.products : [];
+      if(!products.length) { el.innerHTML = '<p style="text-align:center;color:#94a3b8;padding:30px;">No products found.</p>'; return; }
+      var rows = products.map(function(p) {
+        return '<tr>' +
+          '<td>' + escH(p.id||'') + '</td>' +
+          '<td>' + escH((p.title||'').slice(0,30)) + '</td>' +
+          '<td style="font-family:monospace;">' + escH(shortA(p.seller_id)) + '</td>' +
+          '<td>' + escH(String(p.price||0)) + ' ' + escH(p.token||'USDC') + '</td>' +
+          '<td><span style="background:#' + (p.status==='active'?'dcfce7;color:#15803d':'fee2e2;color:#dc2626') + ';font-size:10px;padding:3px 7px;border-radius:6px;font-weight:700;">' + escH(p.status||'') + '</span></td>' +
+          '<td style="display:flex;gap:5px;flex-wrap:wrap;">' +
+          '<button class="admin-action-btn admin-remove-btn" onclick="adminRemoveProduct(\''+escH(p.id)+'\',\''+escH(p.seller_id)+'\')">Remove</button>' +
+          '<button class="admin-action-btn admin-flag-btn" onclick="adminFlagProduct(\''+escH(p.id)+'\')">Flag</button>' +
+          '<button class="admin-action-btn admin-ban-btn" onclick="adminBanSeller(\''+escH(p.seller_id)+'\')">Ban Seller</button>' +
+          '</td></tr>';
+      }).join('');
+      el.innerHTML = '<div style="overflow-x:auto;"><table class="admin-tbl"><thead><tr><th>ID</th><th>Title</th><th>Seller</th><th>Price</th><th>Status</th><th>Actions</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    }).catch(function(e){ el.innerHTML = '<p style="color:#dc2626;padding:20px;">Error loading products: '+escH(e.message)+'</p>'; });
+  }
+
+  function adminRemoveProduct(id, seller) {
+    if(!confirm('Remove product '+id+'?')) return;
+    var w = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
+    if(!w) { alert('Connect wallet'); return; }
+    fetch('/api/products/'+encodeURIComponent(id), { method:'DELETE', headers:{'Content-Type':'application/json'}, body:JSON.stringify({seller_id:w.address.toLowerCase()}) })
+      .then(function(r){ return r.json(); })
+      .then(function(d){ addSecLog('admin_remove_product', _adminAddr, 'Removed product '+id); showToast('Product removed', 'success'); adminLoadProducts(); })
+      .catch(function(e){ showToast('Error: '+e.message, 'error'); });
+  }
+
+  function adminFlagProduct(id) { addSecLog('admin_flag_product', _adminAddr, 'Flagged product '+id); showToast('Product flagged in security log', 'info'); }
+  function adminBanSeller(addr) { addSecLog('admin_ban_seller', _adminAddr, 'Banned seller '+addr); showToast('Seller ban logged: '+addr.slice(0,10)+'…', 'warning'); }
+
+  /* ── Reports ── */
+  function adminLoadReports() {
+    var el = document.getElementById('admin-reports-table');
+    if(!el) return;
+    var reports = []; try { reports = JSON.parse(localStorage.getItem(ADMIN_REPORTS_KEY)||'[]'); } catch(e){}
+    if(!reports.length) { el.innerHTML = '<p style="text-align:center;color:#94a3b8;padding:30px;">No reports found.</p>'; return; }
+    var rows = reports.map(function(r, i) {
+      return '<tr>' +
+        '<td>'+escH(r.type||'report')+'</td>' +
+        '<td>'+escH(r.target||'—')+'</td>' +
+        '<td style="font-family:monospace;">'+escH(shortA(r.reporter||''))+'</td>' +
+        '<td>'+escH((r.reason||'').slice(0,60))+'</td>' +
+        '<td>'+new Date(r.ts||0).toLocaleDateString()+'</td>' +
+        '<td style="display:flex;gap:5px;">' +
+        '<button class="admin-action-btn admin-ignore-btn" onclick="adminIgnoreReport('+i+')">Ignore</button>' +
+        '<button class="admin-action-btn admin-remove-btn" onclick="adminRemoveReport('+i+')">Remove</button>' +
+        '<button class="admin-action-btn admin-flag-btn" onclick="adminFlagReport('+i+')">Flag</button>' +
+        '</td></tr>';
+    }).join('');
+    el.innerHTML = '<div style="overflow-x:auto;"><table class="admin-tbl"><thead><tr><th>Type</th><th>Target</th><th>Reporter</th><th>Reason</th><th>Date</th><th>Actions</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  }
+
+  function adminIgnoreReport(i) {
+    var r = []; try { r = JSON.parse(localStorage.getItem(ADMIN_REPORTS_KEY)||'[]'); } catch(e){}
+    if(r[i]) { addSecLog('admin_ignore_report', _adminAddr, 'Ignored report '+i); r[i].status='ignored'; localStorage.setItem(ADMIN_REPORTS_KEY,JSON.stringify(r)); adminLoadReports(); showToast('Report ignored','info'); }
+  }
+  function adminRemoveReport(i) {
+    var r = []; try { r = JSON.parse(localStorage.getItem(ADMIN_REPORTS_KEY)||'[]'); } catch(e){}
+    r.splice(i,1); localStorage.setItem(ADMIN_REPORTS_KEY,JSON.stringify(r)); addSecLog('admin_remove_report',_adminAddr,'Removed report '+i); adminLoadReports(); showToast('Report removed','success');
+  }
+  function adminFlagReport(i) { addSecLog('admin_flag_report',_adminAddr,'Flagged report '+i); showToast('Report flagged','info'); }
+
+  /* ── Security Log ── */
+  function adminRenderSecLog() {
+    var el = document.getElementById('admin-security-log');
+    if(!el) return;
+    var log = getSecLog();
+    if(!log.length) { el.innerHTML = '<p style="text-align:center;color:#94a3b8;padding:30px;">No security events logged.</p>'; return; }
+    var typeColors = { admin_resolve:'#dcfce7/#15803d', admin_remove_product:'#fee2e2/#dc2626', admin_ban_seller:'#fce7f3/#9d174d', admin_flag_product:'#fef3c7/#92400e', unauthorized_access:'#fee2e2/#dc2626' };
+    el.innerHTML = log.map(function(entry) {
+      var colors = (typeColors[entry.event]||'#f1f5f9/#64748b').split('/');
+      return '<div class="admin-sec-entry">' +
+        '<div class="admin-sec-icon" style="background:'+colors[0]+';color:'+colors[1]+'"><i class="fas fa-shield-alt"></i></div>' +
+        '<div style="flex:1;">' +
+        '<div style="display:flex;justify-content:space-between;gap:8px;">' +
+        '<span style="font-weight:700;color:#1e293b;font-size:12px;">'+escH(entry.event)+'</span>' +
+        '<span style="font-size:10px;color:#94a3b8;">'+new Date(entry.ts).toLocaleString()+'</span></div>' +
+        '<div style="font-size:11px;color:#64748b;margin-top:2px;">'+escH(entry.addr)+' — '+escH(entry.detail)+'</div>' +
+        '</div></div>';
+    }).join('');
+  }
+  function adminClearSecLog() { if(confirm('Clear security log?')) { localStorage.removeItem(ADMIN_SECLOG_KEY); adminRenderSecLog(); showToast('Security log cleared','info'); } }
+
+  /* ── Whitelist ── */
+  function adminRenderWhitelist() {
+    var el = document.getElementById('admin-whitelist-list');
+    if(!el) return;
+    var list = getAdminWhitelist();
+    if(!list.length) { el.innerHTML = '<p style="color:#94a3b8;font-size:13px;">No addresses in whitelist yet.</p>'; return; }
+    el.innerHTML = list.map(function(addr, i) {
+      return '<div style="display:flex;align-items:center;justify-content:space-between;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px;margin-bottom:6px;">' +
+        '<code style="font-size:12px;color:#334155;">'+escH(addr)+'</code>' +
+        '<button onclick="adminRemoveWl('+i+')" style="background:#fee2e2;color:#dc2626;border:none;border-radius:6px;padding:3px 10px;font-size:11px;cursor:pointer;font-weight:700;">Remove</button>' +
+        '</div>';
+    }).join('');
+  }
+  function adminAddWhitelist() {
+    var inp = document.getElementById('admin-wl-input');
+    var addr = inp ? inp.value.trim().toLowerCase() : '';
+    if(!addr || !addr.startsWith('0x') || addr.length < 40) { showToast('Invalid address','error'); return; }
+    var list = getAdminWhitelist();
+    if(list.includes(addr)) { showToast('Already in whitelist','info'); return; }
+    list.push(addr); saveAdminWhitelist(list); if(inp) inp.value='';
+    addSecLog('admin_add_whitelist', _adminAddr, 'Added '+addr);
+    adminRenderWhitelist(); showToast('Address added to whitelist','success');
+  }
+  function adminRemoveWl(i) {
+    var list = getAdminWhitelist(); list.splice(i,1); saveAdminWhitelist(list);
+    addSecLog('admin_remove_whitelist', _adminAddr, 'Removed index '+i);
+    adminRenderWhitelist(); showToast('Address removed','info');
+  }
+
+  /* ── Init & Auth ── */
+  var _adminAddr = null;
+
+  document.addEventListener('DOMContentLoaded', function() {
+    var w = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
+    var addr = w && w.address ? w.address.toLowerCase() : null;
+    _adminAddr = addr;
+
+    // Ensure at least one default admin if whitelist is empty
+    var list = getAdminWhitelist();
+    // Check authorization
+    var authorized = addr && list.length > 0 && list.includes(addr);
+
+    document.getElementById('admin-loading').style.display = 'none';
+
+    if(!authorized) {
+      // Log unauthorized attempt
+      if(addr) addSecLog('unauthorized_access', addr, 'Attempted to access /admin');
+      document.getElementById('admin-blocked').style.display = '';
+      return;
+    }
+
+    _adminAuthorized = true;
+    document.getElementById('admin-panel').style.display = '';
+    var badge = document.getElementById('admin-wallet-badge');
+    if(badge) badge.textContent = addr.slice(0,10)+'…'+addr.slice(-6);
+    addSecLog('admin_login', addr, 'Admin panel accessed');
+    adminLoadDisputes();
+  });
   </script>
   `)
 }
