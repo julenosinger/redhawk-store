@@ -2215,8 +2215,8 @@ function navbar() {
       <a href="/sell" class="hidden sm:flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-colors">
         <i class="fas fa-plus-circle text-xs"></i> Sell
       </a>
-      <a href="/profile?tab=products" class="hidden sm:flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-colors">
-        <i class="fas fa-boxes text-xs"></i> My Products
+      <a href="/how-to-use" class="hidden sm:flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-colors">
+        <i class="fas fa-book text-xs"></i> How to Use
       </a>
       <a href="/about" class="hidden sm:flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-colors">
         <i class="fas fa-info-circle text-xs"></i> About Us
@@ -6636,444 +6636,561 @@ function ordersPage() {
 // ─── PAGE: ORDER DETAIL ─────────────────────────────────────────────────
 function orderDetailPage(id: string) {
   return shell(`Order ${id}`, `
-  <div class="max-w-3xl mx-auto px-4 py-8">
-    <div class="flex items-center gap-3 mb-6">
-      <a href="/orders" class="text-slate-400 hover:text-red-600"><i class="fas fa-arrow-left"></i></a>
-      <h1 class="text-2xl font-bold text-slate-800">Order <span class="font-mono">${id}</span></h1>
+  <!-- Top info banner -->
+  <div id="order-info-banner" style="background:linear-gradient(90deg,#eff6ff 0%,#dbeafe 100%);border-bottom:1px solid #bfdbfe;padding:10px 0;">
+    <div class="max-w-5xl mx-auto px-4 flex items-center gap-3">
+      <div class="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
+        <i class="fas fa-info-circle text-blue-600 text-xs"></i>
+      </div>
+      <p class="text-sm text-blue-800">
+        <strong>Buyer protection active.</strong> Your funds are locked in the Arc Network escrow contract until delivery is confirmed. If there's an issue, open a dispute to freeze funds permanently.
+      </p>
     </div>
-    <div id="order-detail-container">
-      <div class="card p-8 text-center">
-        <div class="loading-spinner-lg mx-auto mb-4"></div>
-        <p class="text-slate-400">Loading order from Arc Network…</p>
+  </div>
+
+  <div class="max-w-5xl mx-auto px-4 py-6">
+    <!-- Back + Title -->
+    <div class="flex items-center gap-3 mb-5">
+      <a href="/orders" class="w-8 h-8 rounded-lg bg-slate-100 hover:bg-red-50 hover:text-red-600 flex items-center justify-center text-slate-500 transition-colors">
+        <i class="fas fa-arrow-left text-sm"></i>
+      </a>
+      <div>
+        <h1 class="text-xl font-bold text-slate-800">Order Details</h1>
+        <p class="text-xs text-slate-400 font-mono">${id}</p>
+      </div>
+      <div id="order-role-badge" class="ml-auto"></div>
+    </div>
+
+    <!-- Horizontal stepper -->
+    <div class="card p-5 mb-5">
+      <div id="order-stepper" class="flex items-start justify-between gap-1 overflow-x-auto pb-1">
+        <!-- Rendered by JS -->
+        <div class="flex items-center gap-2 text-slate-400 text-sm"><div class="loading-spinner"></div> Loading…</div>
+      </div>
+    </div>
+
+    <!-- Special banners: rendered by JS -->
+    <div id="order-alert-banner" class="mb-5"></div>
+
+    <!-- Two-column layout -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      <!-- LEFT: on-chain details -->
+      <div class="lg:col-span-2 space-y-4">
+        <!-- Escrow amount highlight -->
+        <div id="order-escrow-highlight" class="card p-5" style="background:linear-gradient(135deg,#f0fdf4 0%,#dcfce7 100%);border:1.5px solid #86efac;"></div>
+
+        <!-- On-chain details card -->
+        <div class="card p-5">
+          <h2 class="font-bold text-slate-800 mb-4 flex items-center gap-2 text-sm">
+            <span class="w-7 h-7 rounded-lg bg-red-50 flex items-center justify-center"><i class="fas fa-link text-red-500 text-xs"></i></span>
+            On-Chain Details
+          </h2>
+          <div id="order-onchain-details" class="space-y-2.5 text-sm"></div>
+        </div>
+
+        <!-- Shipping info card -->
+        <div id="order-shipping-card" class="hidden card p-5"></div>
+
+        <!-- Action buttons row -->
+        <div id="order-actions-row" class="flex flex-wrap gap-3"></div>
+      </div>
+
+      <!-- RIGHT: sidebar cards -->
+      <div class="space-y-4">
+        <!-- Order Summary -->
+        <div class="card p-4">
+          <h3 class="font-bold text-slate-700 text-sm mb-3 flex items-center gap-2">
+            <i class="fas fa-receipt text-red-500 text-xs"></i> Order Summary
+          </h3>
+          <div id="order-summary-sidebar" class="space-y-2 text-sm"></div>
+        </div>
+
+        <!-- Escrow Protection -->
+        <div class="card p-4" style="background:#f8faff;border:1px solid #c7d2fe;">
+          <h3 class="font-bold text-indigo-700 text-sm mb-3 flex items-center gap-2">
+            <i class="fas fa-shield-alt text-indigo-500 text-xs"></i> Escrow Protection
+          </h3>
+          <ul class="text-xs text-indigo-800 space-y-2">
+            <li class="flex items-start gap-2"><i class="fas fa-check-circle text-indigo-400 mt-0.5"></i><span>Funds locked on Arc Network — no one can access them prematurely</span></li>
+            <li class="flex items-start gap-2"><i class="fas fa-check-circle text-indigo-400 mt-0.5"></i><span>Auto-refund if seller doesn't respond to a dispute</span></li>
+            <li class="flex items-start gap-2"><i class="fas fa-check-circle text-indigo-400 mt-0.5"></i><span>Immutable transaction history on-chain</span></li>
+          </ul>
+        </div>
+
+        <!-- Help & Support -->
+        <div class="card p-4" style="background:#fffbeb;border:1px solid #fde68a;">
+          <h3 class="font-bold text-amber-700 text-sm mb-3 flex items-center gap-2">
+            <i class="fas fa-question-circle text-amber-500 text-xs"></i> Help & Support
+          </h3>
+          <p class="text-xs text-amber-800 mb-3">Questions about escrow or disputes? Our guide covers all scenarios.</p>
+          <a href="/how-to-use" class="block text-center text-xs font-semibold bg-amber-100 hover:bg-amber-200 text-amber-800 rounded-lg px-3 py-2 transition-colors mb-2">
+            <i class="fas fa-book mr-1"></i> How Disputes Work
+          </a>
+          <a href="/disputes" class="block text-center text-xs font-semibold bg-white hover:bg-amber-50 text-amber-700 border border-amber-200 rounded-lg px-3 py-2 transition-colors">
+            <i class="fas fa-gavel mr-1"></i> My Disputes
+          </a>
+        </div>
+
+        <!-- Tips -->
+        <div class="card p-4" style="background:#f0fdf4;border:1px solid #bbf7d0;">
+          <h3 class="font-bold text-emerald-700 text-sm mb-2 flex items-center gap-2">
+            <i class="fas fa-lightbulb text-emerald-500 text-xs"></i> Tips
+          </h3>
+          <ul class="text-xs text-emerald-800 space-y-1.5">
+            <li><i class="fas fa-dot-circle text-emerald-400 mr-1"></i> Always verify tracking before confirming delivery</li>
+            <li><i class="fas fa-dot-circle text-emerald-400 mr-1"></i> Keep evidence (photos/messages) ready in case of dispute</li>
+            <li><i class="fas fa-dot-circle text-emerald-400 mr-1"></i> Disputes auto-resolve after 7 days of inactivity</li>
+          </ul>
+        </div>
       </div>
     </div>
   </div>
+
   <!-- Receipt Modal root -->
   <div id="receipt-modal-root"></div>
 
   <script>
-  function _orderDetailInit(){
-    var orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
-    var order=orders.find(function(o){ return o.id==='${id}'; });
-    var container=document.getElementById('order-detail-container');
+  // ── Stepper data ─────────────────────────────────────────────────────
+  var STEPS = [
+    { key:'escrow_pending',      label:'Pending',   icon:'fa-clock',         color:'amber'  },
+    { key:'escrow_locked',       label:'Locked',    icon:'fa-lock',          color:'blue'   },
+    { key:'shipped',             label:'Shipped',   icon:'fa-shipping-fast', color:'violet' },
+    { key:'delivery_confirmed',  label:'Confirmed', icon:'fa-check-circle',  color:'teal'   },
+    { key:'funds_released',      label:'Released',  icon:'fa-coins',         color:'green'  }
+  ];
+  var DISPUTE_STEP = { key:'dispute', label:'Disputed', icon:'fa-gavel', color:'red' };
+
+  var STEP_COLORS = {
+    amber:  { bg:'bg-amber-500',  ring:'ring-amber-300',  text:'text-amber-600',  light:'bg-amber-50'  },
+    blue:   { bg:'bg-blue-500',   ring:'ring-blue-300',   text:'text-blue-600',   light:'bg-blue-50'   },
+    violet: { bg:'bg-violet-500', ring:'ring-violet-300', text:'text-violet-600', light:'bg-violet-50' },
+    teal:   { bg:'bg-teal-500',   ring:'ring-teal-300',   text:'text-teal-600',   light:'bg-teal-50'   },
+    green:  { bg:'bg-green-500',  ring:'ring-green-300',  text:'text-green-600',  light:'bg-green-50'  },
+    red:    { bg:'bg-red-500',    ring:'ring-red-300',    text:'text-red-600',    light:'bg-red-50'    },
+    slate:  { bg:'bg-slate-200',  ring:'',               text:'text-slate-400',  light:'bg-slate-50'  }
+  };
+
+  /* ── Cross-browser sync: localStorage first, on-chain fallback ──────
+     Orders created in a different browser / after clearing data are
+     fetched from the Arc Network indexer so the page always works.
+  ─────────────────────────────────────────────────────────────────── */
+  async function _orderDetailInit(){
+    var orders = JSON.parse(localStorage.getItem('rh_orders')||'[]');
+    var order  = orders.find(function(o){ return o.id==='${id}'; });
+
     if(!order){
-      container.innerHTML='<div class="card p-8 text-center"><div class="empty-state"><i class="fas fa-box-open"></i><p class="font-medium text-slate-600">Order not found</p><a href="/orders" class="btn-primary mt-4 mx-auto">Back to Orders</a></div></div>';
+      // Show a subtle loading indicator while we check on-chain
+      var stepper = document.getElementById('order-stepper');
+      if(stepper) stepper.innerHTML = '<div class="flex items-center gap-2 text-slate-400 text-sm"><div class="loading-spinner"></div> Syncing from Arc Network…</div>';
+      try {
+        var _w = typeof getStoredWallet==='function' ? getStoredWallet() : null;
+        if(_w){
+          var _addr = encodeURIComponent(_w.address);
+          var _res = await fetch('/api/orders/on-chain?buyer='+_addr+'&seller='+_addr+'&limit=100');
+          if(_res.ok){
+            var _data = await _res.json();
+            var _chain = Array.isArray(_data.orders) ? _data.orders : [];
+            order = _chain.find(function(o){
+              return o.id==='${id}' || o.orderId==='${id}' ||
+                (o.txHash && o.txHash.toLowerCase()==='${id}'.toLowerCase()) ||
+                (o.fundTxHash && o.fundTxHash.toLowerCase()==='${id}'.toLowerCase());
+            });
+            if(order){
+              // Persist into localStorage so subsequent loads are instant
+              var _merged = orders.filter(function(x){ return x.id !== (order.id||order.orderId||''); });
+              _merged.push(order);
+              try { localStorage.setItem('rh_orders', JSON.stringify(_merged)); } catch(e){}
+            }
+          }
+        }
+      } catch(e){ console.warn('[orderDetail] on-chain sync failed:', e.message||e); }
+    }
+
+    if(!order){
+      _renderOrderNotFound();
       return;
     }
-    var wallet = typeof getStoredWallet==='function' ? getStoredWallet() : null;
-    var myAddr=wallet?wallet.address.toLowerCase():'';
-    var isSeller=order.sellerAddress&&order.sellerAddress.toLowerCase()===myAddr;
-    var isBuyer=order.buyerAddress&&order.buyerAddress.toLowerCase()===myAddr;
-    var statusSteps=['escrow_pending','escrow_locked','shipped','delivery_confirmed','funds_released'];
-    var statusIdx=Math.max(0,statusSteps.indexOf(order.status));
-    var explorerTxUrl=order.explorerUrl||('${ARC.explorer}/tx/'+(order.txHash||''));
 
-    // Build role-based action buttons
-    let actionBtns='';
-    var isDisputed=order.status==='dispute';
-    var isPending=order.status==='escrow_pending';
-    // ── SELLER ACTIONS ──────────────────────────────────────────────────
-    // Only the seller sees seller-specific actions; buyer NEVER sees Release Funds
+    var wallet  = typeof getStoredWallet==='function' ? getStoredWallet() : null;
+    var myAddr  = wallet ? wallet.address.toLowerCase() : '';
+    var isSeller = order.sellerAddress && order.sellerAddress.toLowerCase()===myAddr;
+    var isBuyer  = order.buyerAddress  && order.buyerAddress.toLowerCase()===myAddr;
+    var isDisputed = order.status==='dispute';
+    var explorerTxUrl = order.explorerUrl || ((window.ARC&&window.ARC.explorer||'https://testnet.arcscan.app')+'/tx/'+(order.txHash||''));
+    var explorerBase  = (window.ARC&&window.ARC.explorer)||'https://testnet.arcscan.app';
+
+    // ── Role badge ──────────────────────────────────────────────────
+    var roleBadge = document.getElementById('order-role-badge');
+    if(roleBadge){
+      if(isSeller)      roleBadge.innerHTML='<span class="px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200"><i class="fas fa-store mr-1"></i>Seller</span>';
+      else if(isBuyer)  roleBadge.innerHTML='<span class="px-3 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-800 border border-blue-200"><i class="fas fa-shopping-bag mr-1"></i>Buyer</span>';
+    }
+
+    // ── Stepper ─────────────────────────────────────────────────────
+    _renderStepper(order.status);
+
+    // ── Alert banner ────────────────────────────────────────────────
+    _renderAlertBanner(order);
+
+    // ── Escrow amount highlight ─────────────────────────────────────
+    _renderEscrowHighlight(order);
+
+    // ── On-chain details ────────────────────────────────────────────
+    _renderOnChainDetails(order, explorerBase);
+
+    // ── Shipping info ───────────────────────────────────────────────
+    _renderShippingCard(order, isBuyer, isSeller);
+
+    // ── Order summary sidebar ───────────────────────────────────────
+    _renderOrderSummary(order);
+
+    // ── Action buttons ──────────────────────────────────────────────
+    _renderActions(order, isBuyer, isSeller, isDisputed, explorerTxUrl);
+  }
+
+  function _renderOrderNotFound(){
+    var el = document.querySelector('.max-w-5xl');
+    if(!el) return;
+    el.innerHTML += '<div class="card p-10 text-center mt-6"><div class="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mx-auto mb-4"><i class="fas fa-box-open text-2xl text-slate-400"></i></div><p class="font-semibold text-slate-600 mb-4">Order not found in this browser.<br/><span class="text-xs text-slate-400 font-normal">Orders are stored in your browser. If you switched browsers or cleared data, orders won\'t appear here. Use Arc Explorer to verify on-chain.</span></p><div class="flex gap-3 justify-center"><a href="/orders" class="btn-secondary text-sm">← Back to Orders</a><a href="https://testnet.arcscan.app" target="_blank" class="btn-primary text-sm"><i class="fas fa-external-link-alt mr-1"></i> Arc Explorer</a></div></div>';
+  }
+
+  function _renderStepper(status){
+    var el = document.getElementById('order-stepper');
+    if(!el) return;
+
+    var isDisputed = status==='dispute';
+    var steps = isDisputed
+      ? [STEPS[0],STEPS[1],STEPS[2],DISPUTE_STEP]
+      : STEPS;
+
+    var currentIdx = isDisputed
+      ? steps.length-1
+      : Math.max(0, STEPS.findIndex(function(s){return s.key===status;}));
+
+    var html = '<div class="flex items-center w-full min-w-max gap-0">';
+    steps.forEach(function(step, i){
+      var done    = i < currentIdx;
+      var active  = i === currentIdx;
+      var c       = STEP_COLORS[done||active ? step.color : 'slate'];
+      var cirCls  = done||active ? c.bg+' text-white ring-2 '+c.ring : 'bg-slate-100 text-slate-400';
+
+      html += '<div class="flex flex-col items-center" style="min-width:72px;">';
+      html += '<div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm '+cirCls+' transition-all">';
+      html += done ? '<i class="fas fa-check text-xs"></i>' : '<i class="fas '+step.icon+' text-xs"></i>';
+      html += '</div>';
+      html += '<p class="text-xs font-semibold mt-1.5 text-center '+(active?c.text:'text-slate-400')+'">'+step.label+'</p>';
+      if(active) html += '<div class="w-1.5 h-1.5 rounded-full '+c.bg+' mt-1"></div>';
+      html += '</div>';
+
+      if(i < steps.length-1){
+        html += '<div class="flex-1 h-0.5 mb-5 '+(i<currentIdx?'bg-green-400':'bg-slate-200')+' min-w-[20px]"></div>';
+      }
+    });
+    html += '</div>';
+    el.innerHTML = html;
+  }
+
+  function _renderAlertBanner(order){
+    var el = document.getElementById('order-alert-banner');
+    if(!el) return;
+    var html = '';
+    if(order.status==='escrow_pending'){
+      html = '<div class="card p-4 flex items-start gap-3" style="background:#fffbeb;border:1.5px solid #fcd34d;">'+
+        '<i class="fas fa-exclamation-triangle text-amber-500 text-lg mt-0.5 shrink-0"></i>'+
+        '<div><h3 class="font-bold text-amber-800 mb-0.5">Escrow Pending</h3>'+
+        '<p class="text-amber-700 text-sm">Funds have not been deposited yet. Complete checkout or deploy the escrow contract first.</p>'+
+        '<a href="/deploy-escrow" class="text-xs text-amber-600 underline font-medium mt-1 inline-block">→ Deploy Escrow</a></div></div>';
+    } else if(order.status==='funds_released'){
+      html = '<div class="card p-5 text-center" style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1.5px solid #6ee7b7;">'+
+        '<div class="w-14 h-14 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-3">'+
+        '<i class="fas fa-check-circle text-3xl text-emerald-500"></i></div>'+
+        '<h3 class="text-lg font-bold text-emerald-800 mb-1">Order Complete!</h3>'+
+        '<p class="text-emerald-700 text-sm mb-3">Funds successfully released to the seller on Arc Network.</p>'+
+        (order.releaseTxHash?'<a href="'+(order.releaseTxUrl||'https://testnet.arcscan.app/tx/'+order.releaseTxHash)+'" target="_blank" class="text-xs font-mono text-emerald-600 underline block mb-3">'+order.releaseTxHash+'</a>':'')+
+        '<button onclick="showReceiptModalDetail()" class="btn-primary mx-auto text-sm"><i class="fas fa-receipt mr-1"></i>View & Download Receipt</button>'+
+        '</div>';
+    } else if(order.status==='dispute'){
+      html = '<div class="card p-4 flex items-start gap-3" style="background:#fef2f2;border:1.5px solid #fca5a5;">'+
+        '<i class="fas fa-lock text-red-500 text-lg mt-0.5 shrink-0"></i>'+
+        '<div><h3 class="font-bold text-red-800 mb-0.5">Dispute Open — Funds Locked</h3>'+
+        '<p class="text-red-700 text-sm">Escrow funds are frozen pending dispute resolution. View the dispute for updates.</p>'+
+        '<a href="/disputes" class="inline-flex items-center gap-1 mt-2 text-xs font-semibold bg-red-600 text-white px-3 py-1.5 rounded-lg hover:bg-red-700 transition-colors"><i class="fas fa-gavel"></i> View Dispute</a></div></div>';
+    }
+    el.innerHTML = html;
+  }
+
+  function _renderEscrowHighlight(order){
+    var el = document.getElementById('order-escrow-highlight');
+    if(!el) return;
+    var isLocked = order.status!=='escrow_pending' && order.status!=='funds_released';
+    var statusLabel = isLocked ? 'Funds locked in escrow' : (order.status==='funds_released'?'Released to seller':'Pending lock');
+    var statusColor = isLocked ? 'text-green-700' : (order.status==='funds_released'?'text-emerald-600':'text-amber-600');
+    var dotColor    = isLocked ? 'bg-green-500' : (order.status==='funds_released'?'bg-emerald-400':'bg-amber-400');
+    el.innerHTML =
+      '<div class="flex items-center justify-between gap-4 flex-wrap">'+
+      '<div>'+
+      '<p class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Escrow Amount</p>'+
+      '<p class="text-3xl font-extrabold text-slate-800">'+(order.amount||0)+' <span class="text-lg font-bold text-slate-500">'+(order.token||'USDC')+'</span></p>'+
+      '</div>'+
+      '<div class="flex items-center gap-2 px-4 py-2.5 rounded-xl '+statusColor+'" style="background:rgba(255,255,255,0.7);border:1px solid rgba(0,0,0,0.06);">'+
+      '<span class="w-2.5 h-2.5 rounded-full '+dotColor+' animate-pulse"></span>'+
+      '<span class="text-sm font-bold">'+statusLabel+'</span>'+
+      '</div></div>';
+  }
+
+  function _copyToClipboard(text, label){
+    navigator.clipboard.writeText(text).then(function(){
+      showToast((label||'Value')+' copied','success');
+    }).catch(function(){
+      var el=document.createElement('textarea');
+      el.value=text; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el);
+      showToast((label||'Value')+' copied','success');
+    });
+  }
+
+  function _hashRow(label, hash, url, colorClass){
+    colorClass = colorClass||'text-blue-600';
+    var short = hash ? (hash.slice(0,10)+'…'+hash.slice(-6)) : '—';
+    return '<div class="flex justify-between items-center gap-3 py-1.5 border-b border-slate-50">'+
+      '<span class="text-slate-500 text-xs font-medium shrink-0">'+label+'</span>'+
+      '<div class="flex items-center gap-1.5 min-w-0">'+
+      (url&&hash?'<a href="'+url+'" target="_blank" class="font-mono text-xs '+colorClass+' hover:underline truncate max-w-[160px]" title="'+hash+'">'+short+'</a>':
+       (hash?'<span class="font-mono text-xs text-slate-600 truncate max-w-[160px]" title="'+hash+'">'+short+'</span>':'<span class="text-xs text-slate-400">—</span>'))+
+      (hash?'<button onclick="_copyToClipboard(\''+hash.replace(/'/g,"\\'")+"','"+label+"')" class="text-slate-300 hover:text-slate-600 text-xs p-0.5 rounded" title="Copy"><i class=\"fas fa-copy\"></i></button>':'')+
+      '</div></div>';
+  }
+
+  function _renderOnChainDetails(order, explorerBase){
+    var el = document.getElementById('order-onchain-details');
+    if(!el) return;
+    var html = '';
+    html += _hashRow('Order ID', order.id, null, 'text-slate-700');
+    html += _hashRow('Escrow Contract', order.escrowContract, order.escrowContract?explorerBase+'/address/'+order.escrowContract:null);
+    if(order.orderId32) html += _hashRow('Order ID (bytes32)', order.orderId32, null, 'text-slate-600');
+    html += _hashRow('Create Tx', order.txHash&&!order.txHash.startsWith('PENDING_')?order.txHash:null, order.txHash&&!order.txHash.startsWith('PENDING_')?explorerBase+'/tx/'+order.txHash:null);
+    if(order.fundTxHash)           html += _hashRow('Fund Tx',            order.fundTxHash,           explorerBase+'/tx/'+order.fundTxHash,           'text-indigo-600');
+    if(order.confirmDeliveryTx)    html += _hashRow('Confirm Delivery Tx',order.confirmDeliveryTx,    order.confirmDeliveryUrl||explorerBase+'/tx/'+order.confirmDeliveryTx,'text-teal-600');
+    if(order.releaseTxHash)        html += _hashRow('Release Tx',         order.releaseTxHash,        order.releaseTxUrl||explorerBase+'/tx/'+order.releaseTxHash,         'text-emerald-600');
+    html += '<div class="flex justify-between items-center gap-3 py-1.5 border-b border-slate-50"><span class="text-slate-500 text-xs font-medium">Buyer</span><div class="flex items-center gap-1.5"><span class="font-mono text-xs text-slate-600" title="'+(order.buyerAddress||'')+'">'+((order.buyerAddress||'—').slice(0,10)+'…'+(order.buyerAddress||'—').slice(-6))+'</span>'+(order.buyerAddress?'<button onclick="_copyToClipboard(\''+order.buyerAddress+'\',\'Buyer address\')" class="text-slate-300 hover:text-slate-600 text-xs p-0.5 rounded"><i class="fas fa-copy"></i></button>':'')+'</div></div>';
+    html += '<div class="flex justify-between items-center gap-3 py-1.5 border-b border-slate-50"><span class="text-slate-500 text-xs font-medium">Seller</span><div class="flex items-center gap-1.5"><span class="font-mono text-xs text-slate-600" title="'+(order.sellerAddress||'')+'">'+((order.sellerAddress||'—').slice(0,10)+'…'+(order.sellerAddress||'—').slice(-6))+'</span>'+(order.sellerAddress?'<button onclick="_copyToClipboard(\''+order.sellerAddress+'\',\'Seller address\')" class="text-slate-300 hover:text-slate-600 text-xs p-0.5 rounded"><i class="fas fa-copy"></i></button>':'')+'</div></div>';
+    html += '<div class="flex justify-between py-1.5 border-b border-slate-50"><span class="text-slate-500 text-xs font-medium">Network</span><span class="text-xs font-semibold text-slate-700">Arc Testnet (Chain 5042002)</span></div>';
+    html += '<div class="flex justify-between py-1.5"><span class="text-slate-500 text-xs font-medium">Created</span><span class="text-xs text-slate-600">'+new Date(order.createdAt).toLocaleString()+'</span></div>';
+    el.innerHTML = html;
+  }
+
+  function _renderShippingCard(order, isBuyer, isSeller){
+    var card = document.getElementById('order-shipping-card');
+    if(!card) return;
+    if(!order.shippingInfo){ card.classList.add('hidden'); return; }
+    card.classList.remove('hidden');
+    var si = order.shippingInfo;
+    if(isBuyer){
+      card.style.background='#f0f9ff'; card.style.border='1px solid #bae6fd';
+      card.innerHTML='<h2 class="font-bold text-blue-800 mb-3 flex items-center gap-2 text-sm"><i class="fas fa-shipping-fast text-blue-500"></i> Shipping Information</h2>'+
+        '<div class="space-y-2 text-sm">'+
+        '<div class="flex justify-between"><span class="text-blue-700 font-medium text-xs">Carrier</span><span class="font-semibold text-slate-800 text-xs">'+si.carrier+'</span></div>'+
+        '<div class="flex justify-between"><span class="text-blue-700 font-medium text-xs">Tracking #</span><span class="font-mono text-xs text-slate-800">'+si.trackingNumber+'</span></div>'+
+        (si.trackingLink?'<div class="flex justify-between"><span class="text-blue-700 font-medium text-xs">Track Link</span><a href="'+si.trackingLink+'" target="_blank" class="text-blue-600 hover:underline text-xs break-all">'+si.trackingLink+'</a></div>':'')+
+        (si.notes?'<div class="flex justify-between"><span class="text-blue-700 font-medium text-xs">Notes</span><span class="text-slate-600 italic text-xs">'+si.notes+'</span></div>':'')+
+        '<div class="flex justify-between"><span class="text-blue-700 font-medium text-xs">Sent at</span><span class="text-xs text-slate-500">'+new Date(si.sentAt).toLocaleString()+'</span></div>'+
+        '</div>';
+    } else if(isSeller){
+      card.style.background='#fffbeb'; card.style.border='1px solid #fde68a';
+      card.innerHTML='<h2 class="font-bold text-amber-800 mb-3 flex items-center gap-2 text-sm"><i class="fas fa-shipping-fast text-amber-500"></i> Shipping Info Sent to Buyer</h2>'+
+        '<div class="space-y-2 text-sm">'+
+        '<div class="flex justify-between"><span class="text-amber-700 font-medium text-xs">Carrier</span><span class="font-semibold text-slate-800 text-xs">'+si.carrier+'</span></div>'+
+        '<div class="flex justify-between"><span class="text-amber-700 font-medium text-xs">Tracking #</span><span class="font-mono text-xs text-slate-800">'+si.trackingNumber+'</span></div>'+
+        (si.trackingLink?'<div><a href="'+si.trackingLink+'" target="_blank" class="text-blue-600 hover:underline text-xs">'+si.trackingLink+'</a></div>':'')+
+        '</div>';
+    }
+  }
+
+  function _renderOrderSummary(order){
+    var el = document.getElementById('order-summary-sidebar');
+    if(!el) return;
+    var statusLabels={
+      'escrow_pending':'Pending', 'escrow_locked':'Locked',
+      'shipped':'Shipped', 'delivery_confirmed':'Confirmed',
+      'funds_released':'Released', 'dispute':'Disputed'
+    };
+    var statusColors={
+      'escrow_pending':'text-amber-600 bg-amber-50','escrow_locked':'text-blue-600 bg-blue-50',
+      'shipped':'text-violet-600 bg-violet-50','delivery_confirmed':'text-teal-600 bg-teal-50',
+      'funds_released':'text-green-600 bg-green-50','dispute':'text-red-600 bg-red-50'
+    };
+    var sc = statusColors[order.status]||'text-slate-600 bg-slate-50';
+    el.innerHTML =
+      '<div class="flex justify-between items-center"><span class="text-slate-500 text-xs">Status</span><span class="text-xs font-bold px-2 py-0.5 rounded-full '+sc+'">'+(statusLabels[order.status]||order.status)+'</span></div>'+
+      '<div class="flex justify-between"><span class="text-slate-500 text-xs">Amount</span><span class="text-sm font-extrabold text-slate-800">'+(order.amount||0)+' '+(order.token||'USDC')+'</span></div>'+
+      '<div class="flex justify-between"><span class="text-slate-500 text-xs">Order ID</span><span class="font-mono text-xs text-slate-600 truncate max-w-[120px]">'+(order.id)+'</span></div>'+
+      '<div class="flex justify-between"><span class="text-slate-500 text-xs">Created</span><span class="text-xs text-slate-600">'+new Date(order.createdAt).toLocaleDateString()+'</span></div>'+
+      (order.productName?'<div class="flex justify-between"><span class="text-slate-500 text-xs">Product</span><span class="text-xs text-slate-700 truncate max-w-[130px]">'+order.productName+'</span></div>':'');
+  }
+
+  function _renderActions(order, isBuyer, isSeller, isDisputed, explorerTxUrl){
+    var el = document.getElementById('order-actions-row');
+    if(!el) return;
+    var html = '';
+
     if(isSeller){
       if(order.status==='escrow_pending')
-        // Funds not locked yet — warn seller
-        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm font-semibold"><i class="fas fa-clock"></i> Awaiting escrow lock by buyer</span>';
-
+        html+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm font-semibold"><i class="fas fa-clock"></i> Awaiting buyer to lock funds</span>';
       if(order.status==='escrow_locked')
-        // Funds locked — seller can now ship
-        actionBtns+='<button data-oid="'+order.id+'" data-status="shipped" class="update-status-btn btn-primary"><i class="fas fa-shipping-fast mr-1"></i> Mark as Shipped</button>';
-
+        html+='<button data-oid="'+order.id+'" data-status="shipped" class="update-status-btn btn-primary text-sm"><i class="fas fa-shipping-fast mr-1"></i> Mark as Shipped</button>';
       if(order.status==='shipped')
-        // Shipped — waiting for buyer to confirm delivery
-        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 text-sm font-semibold"><i class="fas fa-clock"></i> Waiting for buyer confirmation</span>';
-
+        html+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 text-sm font-semibold"><i class="fas fa-clock"></i> Waiting for buyer confirmation</span>';
       if(order.status==='delivery_confirmed'){
-        // Buyer confirmed delivery — seller CAN now release funds
         if(order.orderId32)
-          actionBtns+='<button data-oid="'+order.id+'" data-status="funds_released" class="update-status-btn btn-primary" style="background:linear-gradient(135deg,#16a34a,#15803d);"><i class="fas fa-coins mr-1"></i> Release Funds</button>';
+          html+='<button data-oid="'+order.id+'" data-status="funds_released" class="update-status-btn text-sm font-semibold px-5 py-2.5 rounded-lg text-white shadow-sm" style="background:linear-gradient(135deg,#16a34a,#15803d)"><i class="fas fa-coins mr-1"></i> Release Funds</button>';
         else
-          actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm font-semibold"><i class="fas fa-exclamation-triangle"></i> No on-chain escrow ID — cannot release</span>';
+          html+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm font-semibold"><i class="fas fa-exclamation-triangle"></i> No on-chain escrow ID</span>';
       }
-
       if(order.status==='funds_released')
-        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-semibold"><i class="fas fa-check-circle"></i> Funds released to you</span>';
-
-      if(isDisputed)
-        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm font-semibold"><i class="fas fa-lock"></i> Funds Locked — Dispute Active</span>';
+        html+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-semibold"><i class="fas fa-check-circle"></i> Funds released to you</span>';
     }
 
-    // ── BUYER ACTIONS ───────────────────────────────────────────────────
-    // Buyer sees ONLY: Confirm Delivery (when shipped)
-    // Buyer NEVER sees Release Funds — that is a seller-only action
     if(isBuyer){
       if(order.status==='escrow_locked')
-        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-green-50 border border-green-200 text-green-700 text-sm font-semibold"><i class="fas fa-lock"></i> Funds locked in escrow — waiting for shipping</span>';
-
+        html+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-green-50 border border-green-200 text-green-700 text-sm font-semibold"><i class="fas fa-lock"></i> Funds locked — awaiting shipment</span>';
       if(order.status==='shipped')
-        // Buyer confirms receipt of goods → calls confirmDelivery on-chain
-        actionBtns+='<button data-oid="'+order.id+'" data-status="delivery_confirmed" class="update-status-btn btn-secondary"><i class="fas fa-check-circle mr-1"></i> Confirm Delivery</button>';
-
+        html+='<button data-oid="'+order.id+'" data-status="delivery_confirmed" class="update-status-btn btn-primary text-sm"><i class="fas fa-check-circle mr-1"></i> Confirm Delivery</button>';
       if(order.status==='delivery_confirmed')
-        // Delivery confirmed — waiting for seller to release funds
-        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-green-50 border border-green-200 text-green-700 text-sm font-semibold"><i class="fas fa-check-circle"></i> Delivery confirmed — waiting for seller to release funds</span>';
-
+        html+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-green-50 border border-green-200 text-green-700 text-sm font-semibold"><i class="fas fa-check-circle"></i> Delivery confirmed — waiting for seller to release</span>';
       if(order.status==='funds_released')
-        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-semibold"><i class="fas fa-check-circle"></i> Order complete — funds released to seller</span>';
-
-      if(isDisputed)
-        actionBtns+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm font-semibold"><i class="fas fa-gavel"></i> Dispute Active — awaiting resolution</span>';
+        html+='<span class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-semibold"><i class="fas fa-check-circle"></i> Order complete</span>';
     }
 
-    container.innerHTML=
-      '<div class="space-y-6">'
-      // Role badge
-      +(isSeller ? '<div class="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm font-medium text-amber-800"><i class="fas fa-store"></i> You are the seller of this order</div>' : '')
-      +(isBuyer  ? '<div class="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-xl text-sm font-medium text-blue-800"><i class="fas fa-shopping-bag"></i> You are the buyer of this order</div>' : '')
-      // ── Escrow Pending warning banner ────────────────────────────
-      +(order.status==='escrow_pending'
-        ? '<div class="card p-5 bg-amber-50 border-amber-300">'
-          +'<div class="flex items-start gap-3">'
-          +'<i class="fas fa-exclamation-triangle text-amber-500 text-xl mt-0.5 shrink-0"></i>'
-          +'<div>'
-          +'<h3 class="font-bold text-amber-800 mb-1">Escrow Pending</h3>'
-          +'<p class="text-amber-700 text-sm">Funds have NOT been deposited into the escrow contract yet. '
-          +'The ShuklyEscrow contract may not be deployed or the checkout did not complete all steps.</p>'
-          +'<p class="text-amber-600 text-xs mt-2 font-medium">Go to <a href="/deploy-escrow" class="underline">Deploy Escrow</a> to set up the contract, then retry checkout.</p>'
-          +'</div></div></div>'
-        : '')
-      // ── Funds Released banner ────────────────────────────────────
-      +(order.status==='funds_released'
-        ? '<div class="card p-6 text-center bg-emerald-50 border-emerald-200">'
-          +'<div class="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-3">'
-          +'<i class="fas fa-check-circle text-3xl text-emerald-500"></i></div>'
-          +'<h3 class="text-xl font-bold text-emerald-800 mb-1">Funds Released!</h3>'
-          +'<p class="text-emerald-700 text-sm mb-3">Escrow completed on-chain. Funds transferred to seller on Arc Network.</p>'
-          +(order.releaseTxHash
-            ? '<p class="text-xs text-emerald-600 font-mono mb-4"><a href="'+(order.releaseTxUrl||('${ARC.explorer}/tx/'+order.releaseTxHash))+'" target="_blank" class="underline">'+order.releaseTxHash+'</a></p>'
-            : '')
-          +'<button onclick="showReceiptModalDetail()" class="btn-primary mx-auto"><i class="fas fa-receipt mr-2"></i>View & Download Receipt</button>'
-          +'</div>'
-        : '')
-      // Escrow Status
-      +'<div class="card p-6">'
-      +'<div class="flex items-center justify-between mb-4">'
-      +'<h2 class="font-bold text-slate-800 flex items-center gap-2"><i class="fas fa-route text-red-500"></i> Escrow Status (Arc Network)</h2>'
-      +'<span class="arc-badge"><i class="fas fa-network-wired text-xs"></i> Arc Testnet</span></div>'
-      +'<div class="flex items-center gap-2 overflow-x-auto">'
-      +['Pending','Locked','Shipped','Confirmed','Released'].map((s,i)=>
-          '<div class="flex items-center gap-2 shrink-0">'
-          +'<div class="flex flex-col items-center">'
-          +'<div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold '+(i<=statusIdx?'bg-green-500 text-white':'bg-slate-200 text-slate-400')+'">'
-          +(i<statusIdx?'<i class="fas fa-check text-xs"></i>':(i+1))+'</div>'
-          +'<p class="text-xs text-center mt-1 text-slate-400 w-14">'+s+'</p></div>'
-          +(i<4?'<div class="w-8 h-0.5 '+(i<statusIdx?'bg-green-500':'bg-slate-200')+' mb-4"></div>':'')
-          +'</div>'
-        ).join('')
-      +'</div></div>'
-      // Transaction Details
-      +'<div class="card p-6">'
-      +'<h2 class="font-bold text-slate-800 mb-4 flex items-center gap-2"><i class="fas fa-receipt text-red-500"></i> On-Chain Details</h2>'
-      +'<div class="space-y-3 text-sm">'
-      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Order ID</span><span class="font-mono font-medium text-right">'+order.id+'</span></div>'
-      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Escrow Contract</span><a href="'+('${ARC.explorer}'+'/address/'+(order.escrowContract||''))+'" target="_blank" class="font-mono text-xs text-blue-600 hover:underline text-right break-all">'+(order.escrowContract||'—')+'</a></div>'
-      +(order.orderId32 ? '<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Order ID (bytes32)</span><span class="font-mono text-xs text-right break-all">'+order.orderId32+'</span></div>' : '')
-      // createEscrow tx hash
-      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Create Tx</span>'
-      +(order.txHash && !order.txHash.startsWith('PENDING_')
-        ? '<a href="'+('${ARC.explorer}/tx/'+order.txHash)+'" target="_blank" class="font-mono text-xs text-blue-600 hover:underline text-right break-all">'+order.txHash+'</a>'
-        : '<span class="text-xs text-amber-600 font-medium flex items-center gap-1"><i class="fas fa-clock"></i> Not yet on-chain</span>')
-      +'</div>'
-      // fundEscrow tx hash
-      +(order.fundTxHash
-        ? '<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Fund Tx</span>'
-          +'<a href="'+'${ARC.explorer}/tx/'+order.fundTxHash+'" target="_blank" class="font-mono text-xs text-indigo-600 hover:underline text-right break-all">'+order.fundTxHash+'</a></div>'
-        : '')
-      // confirmDelivery tx hash
-      +(order.confirmDeliveryTx
-        ? '<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Confirm Delivery Tx</span>'
-          +'<a href="'+(order.confirmDeliveryUrl||'${ARC.explorer}/tx/'+order.confirmDeliveryTx)+'" target="_blank" class="font-mono text-xs text-blue-600 hover:underline text-right break-all">'+order.confirmDeliveryTx+'</a></div>'
-        : '')
-      // Release tx hash (takerDeliver) — only shown after release
-      +(order.releaseTxHash
-        ? '<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Release Tx</span>'
-          +'<a href="'+(order.releaseTxUrl||('${ARC.explorer}/tx/'+order.releaseTxHash))+'" target="_blank" class="font-mono text-xs text-emerald-600 hover:underline text-right break-all">'+order.releaseTxHash+'</a></div>'
-        : '')
-      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Buyer</span><span class="font-mono text-xs text-right break-all">'+(order.buyerAddress||'—')+'</span></div>'
-      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Seller</span><span class="font-mono text-xs text-right break-all">'+(order.sellerAddress||'—')+'</span></div>'
-      +'<div class="flex justify-between items-start gap-4"><span class="text-slate-500 shrink-0">Amount</span><span class="font-bold text-red-600">'+(order.amount||0)+' '+(order.token||'USDC')+'</span></div>'
-      +'<div class="flex justify-between"><span class="text-slate-500">Network</span><span class="font-medium">Arc Testnet (Chain 5042002)</span></div>'
-      +'<div class="flex justify-between"><span class="text-slate-500">Created</span><span>'+new Date(order.createdAt).toLocaleString()+'</span></div>'
-      +'</div></div>'
-      // Shipping Info — shown to buyer when available
-      +(isBuyer && order.shippingInfo
-        ? '<div class="card p-6" style="background:#f0f9ff;border:1px solid #bae6fd;">'
-          +'<h2 class="font-bold text-blue-800 mb-4 flex items-center gap-2"><i class="fas fa-shipping-fast text-blue-500"></i> Shipping Information</h2>'
-          +'<div class="space-y-3 text-sm">'
-          +'<div class="flex justify-between items-start gap-4"><span class="text-blue-700 shrink-0 font-medium">Carrier</span><span class="font-semibold text-slate-800">'+order.shippingInfo.carrier+'</span></div>'
-          +'<div class="flex justify-between items-start gap-4"><span class="text-blue-700 shrink-0 font-medium">Tracking #</span><span class="font-mono text-sm text-slate-800">'+order.shippingInfo.trackingNumber+'</span></div>'
-          +(order.shippingInfo.trackingLink
-            ? '<div class="flex justify-between items-start gap-4"><span class="text-blue-700 shrink-0 font-medium">Track Link</span><a href="'+order.shippingInfo.trackingLink+'" target="_blank" class="text-blue-600 hover:underline text-xs break-all">'+order.shippingInfo.trackingLink+'</a></div>'
-            : '')
-          +(order.shippingInfo.notes
-            ? '<div class="flex justify-between items-start gap-4"><span class="text-blue-700 shrink-0 font-medium">Notes</span><span class="text-slate-600 italic text-xs text-right">'+order.shippingInfo.notes+'</span></div>'
-            : '')
-          +'<div class="flex justify-between items-start gap-4"><span class="text-blue-700 shrink-0 font-medium">Sent at</span><span class="text-xs text-slate-500">'+new Date(order.shippingInfo.sentAt).toLocaleString()+'</span></div>'
-          +'</div></div>'
-        : '')
-      // Shipping Info — shown to seller (read-only view of what was sent)
-      +(isSeller && order.shippingInfo
-        ? '<div class="card p-6" style="background:#fffbeb;border:1px solid #fde68a;">'
-          +'<h2 class="font-bold text-amber-800 mb-4 flex items-center gap-2"><i class="fas fa-shipping-fast text-amber-500"></i> Shipping Info Sent to Buyer</h2>'
-          +'<div class="space-y-2 text-sm">'
-          +'<p class="text-slate-700"><strong>Carrier:</strong> '+order.shippingInfo.carrier+'</p>'
-          +'<p class="text-slate-700"><strong>Tracking #:</strong> <span class="font-mono">'+order.shippingInfo.trackingNumber+'</span></p>'
-          +(order.shippingInfo.trackingLink ? '<p class="text-slate-700"><strong>Link:</strong> <a href="'+order.shippingInfo.trackingLink+'" target="_blank" class="text-blue-600 hover:underline text-xs">'+order.shippingInfo.trackingLink+'</a></p>' : '')
-          +(order.shippingInfo.notes ? '<p class="text-slate-600 italic text-xs">'+order.shippingInfo.notes+'</p>' : '')
-          +'</div></div>'
-        : '')
-      // Actions
-      +'<div class="flex flex-wrap gap-3">'
-      +actionBtns
-      // Only show Open Dispute button if not already disputed AND user is buyer or seller
-      +((!isDisputed && (isBuyer||isSeller))
-        ?'<button data-oid="'+order.id+'" class="open-dispute-btn btn-secondary"><i class="fas fa-gavel mr-1"></i> Open Dispute</button>'
-        :(isDisputed?'<a href="/disputes" class="btn-secondary text-sm"><i class="fas fa-gavel mr-1"></i> View Dispute</a>':''))
-      +'<button onclick="showReceiptModalDetail()" class="btn-secondary text-sm"><i class="fas fa-receipt mr-1"></i> View Receipt</button>'
-      +'<a href="'+explorerTxUrl+'" target="_blank" class="btn-secondary text-sm"><i class="fas fa-external-link-alt mr-1"></i> Arc Explorer</a>'
-      +'</div>'
-      +'</div>';
-    // Attach event listeners for action buttons
-    document.querySelectorAll('.update-status-btn').forEach(function(b){
+    // Dispute button (primary red)
+    if(!isDisputed && (isBuyer||isSeller))
+      html+='<button data-oid="'+order.id+'" class="open-dispute-btn btn-secondary text-sm"><i class="fas fa-gavel mr-1"></i> Open Dispute</button>';
+
+    // Receipt + Explorer (secondary)
+    html+='<button onclick="showReceiptModalDetail()" class="btn-secondary text-sm"><i class="fas fa-receipt mr-1"></i> View Receipt</button>';
+    html+='<a href="'+explorerTxUrl+'" target="_blank" class="btn-secondary text-sm"><i class="fas fa-external-link-alt mr-1"></i> Arc Explorer</a>';
+
+    el.innerHTML = html;
+
+    // Attach listeners
+    el.querySelectorAll('.update-status-btn').forEach(function(b){
       b.addEventListener('click',function(){ updateOrderStatus(this.dataset.oid, this.dataset.status); });
     });
-    document.querySelectorAll('.open-dispute-btn').forEach(function(b){
+    el.querySelectorAll('.open-dispute-btn').forEach(function(b){
       b.addEventListener('click',function(){ openDisputeForm(this.dataset.oid); });
     });
-  } /* end _orderDetailInit */
+  }
 
   async function updateOrderStatus(id,s){
-    // If marking as shipped, show shipping info form first
     if(s==='shipped'){
       showShippingFormDetail(id);
       return;
     }
 
-    // ══════════════════════════════════════════════════════════════════
-    //  CONFIRM DELIVERY — BUYER calls confirmDelivery(orderId32)
-    //  Security: Only the buyer can confirm delivery.
-    //  This signals goods received; seller can now call releaseFunds.
-    // ══════════════════════════════════════════════════════════════════
     if(s==='delivery_confirmed'){
       const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
       const idx=orders.findIndex(o=>o.id===id);
       if(idx<0) return;
       const order=orders[idx];
-
       const btn=event && event.target;
       const origLabel='<i class="fas fa-check-circle mr-1"></i> Confirm Delivery';
       if(btn){ btn.disabled=true; btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Initialising…'; }
-
-      // ── ROLE CHECK: only the buyer can confirm delivery ────────────
       const _w0 = getStoredWallet();
-      if(!_w0){
-        showToast('Connect wallet to confirm delivery','error');
-        if(btn){ btn.disabled=false; btn.innerHTML=origLabel; }
-        return;
-      }
+      if(!_w0){ showToast('Connect wallet to confirm delivery','error'); if(btn){ btn.disabled=false; btn.innerHTML=origLabel; } return; }
       const _isBuyer0 = order.buyerAddress && order.buyerAddress.toLowerCase() === _w0.address.toLowerCase();
-      if(!_isBuyer0){
-        showToast('Only the buyer can confirm delivery','error');
-        console.error('[confirmDelivery] Role check failed — caller is not the buyer');
-        if(btn){ btn.disabled=false; btn.innerHTML=origLabel; }
-        return;
-      }
-
-      if(!order.orderId32){
-        showToast('No on-chain order ID found. Cannot confirm delivery.','error');
-        if(btn){ btn.disabled=false; btn.innerHTML=origLabel; }
-        return;
-      }
-
+      if(!_isBuyer0){ showToast('Only the buyer can confirm delivery','error'); if(btn){ btn.disabled=false; btn.innerHTML=origLabel; } return; }
+      if(!order.orderId32){ showToast('No on-chain order ID found.','error'); if(btn){ btn.disabled=false; btn.innerHTML=origLabel; } return; }
       try {
-        const w=_w0;  // reuse already-loaded wallet
-
+        const w=_w0;
         let provider, signer;
         if(w.type==='metamask' && window.ethereum){
           provider = new ethers.BrowserProvider(window.ethereum);
           const net = await provider.getNetwork();
-          if(net.chainId !== BigInt(window.ARC.chainId)){
-            showToast('Please switch MetaMask to Arc Testnet','warning');
-            if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return;
-          }
+          if(net.chainId !== BigInt(window.ARC.chainId)){ showToast('Please switch MetaMask to Arc Testnet','warning'); if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return; }
           signer = await provider.getSigner();
         } else if((w.type==='internal'||w.type==='imported') && w.privateKey && !w.privateKey.startsWith('[')){
           provider = new ethers.JsonRpcProvider(window.ARC.rpc);
           signer   = new ethers.Wallet(w.privateKey, provider);
-        } else {
-          showToast('Private key unavailable. Re-import wallet.','error');
-          if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return;
-        }
-
+        } else { showToast('Private key unavailable. Re-import wallet.','error'); if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return; }
         const escrowAddress = getEscrowAddress();
-        if(!escrowAddress || escrowAddress==='0x0000000000000000000000000000000000000000'){
-          showToast('Escrow contract not configured','error');
-          if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return;
-        }
-
+        if(!escrowAddress || escrowAddress==='0x0000000000000000000000000000000000000000'){ showToast('Escrow contract not configured','error'); if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return; }
         const escrowContract = new ethers.Contract(escrowAddress, ESCROW_ABI, signer);
         if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Confirming delivery…';
         showToast('Sending confirmDelivery on-chain…','info');
-
         const tx = await escrowContract.confirmDelivery(order.orderId32, { gasLimit: 150000 });
         showToast('Tx sent: '+tx.hash.slice(0,14)+'… Waiting…','info');
         const receipt = await tx.wait(1);
         if(!receipt || receipt.status===0) throw new Error('confirmDelivery reverted');
-
-        showToast('Delivery confirmed on-chain! Tx: '+tx.hash.slice(0,14)+'…','success');
-        orders[idx].status             = 'delivery_confirmed';
-        orders[idx].confirmDeliveryTx  = tx.hash;
-        orders[idx].confirmDeliveryUrl = window.ARC.explorer+'/tx/'+tx.hash;
-        orders[idx].updatedAt          = new Date().toISOString();
+        showToast('Delivery confirmed on-chain!','success');
+        orders[idx].status            = 'delivery_confirmed';
+        orders[idx].confirmDeliveryTx = tx.hash;
+        orders[idx].confirmDeliveryUrl= window.ARC.explorer+'/tx/'+tx.hash;
+        orders[idx].updatedAt         = new Date().toISOString();
         localStorage.setItem('rh_orders', JSON.stringify(orders));
         setTimeout(()=>location.reload(), 800);
       } catch(err){
-        const msg = err.code==='ACTION_REJECTED'||err.code===4001
-          ? 'Confirm delivery rejected by user'
-          : 'confirmDelivery error: '+(err.shortMessage||err.message||'');
+        const msg = err.code==='ACTION_REJECTED'||err.code===4001?'Confirm delivery rejected':'confirmDelivery error: '+(err.shortMessage||err.message||'');
         showToast(msg,'error');
         if(btn){ btn.disabled=false; btn.innerHTML=origLabel; }
       }
       return;
     }
 
-    // ══════════════════════════════════════════════════════════════════
-    //  RELEASE FUNDS — SELLER calls releaseFunds(orderId32) on ShuklyEscrow
-    //  Security: Only the seller can call this function.
-    //  Direct on-chain call — no Permit2, no relayer, no signature
-    //
-    //  Flow:
-    //   1. Seller calls releaseFunds(orderId32) on ShuklyEscrow
-    //   2. Contract releases locked tokens to seller
-    //   3. UI updates ONLY after tx is confirmed (receipt.status === 1)
-    //
-    //  "to" address = ShuklyEscrow contract — never directly to seller
-    // ══════════════════════════════════════════════════════════════════
     if(s==='funds_released'){
       const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
       const idx=orders.findIndex(o=>o.id===id);
       if(idx<0) return;
       const order=orders[idx];
-
       const btn=event && event.target;
       const origLabel='<i class="fas fa-coins mr-1"></i> Release Funds';
       if(btn){ btn.disabled=true; btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Initialising…'; }
-
-      // ── ROLE CHECK: only the seller can release funds ──────────────
       const _w = getStoredWallet();
-      if(!_w){
-        showToast('Connect wallet to release funds','error');
-        if(btn){ btn.disabled=false; btn.innerHTML=origLabel; }
-        return;
-      }
+      if(!_w){ showToast('Connect wallet to release funds','error'); if(btn){ btn.disabled=false; btn.innerHTML=origLabel; } return; }
       const _isSeller = order.sellerAddress && order.sellerAddress.toLowerCase() === _w.address.toLowerCase();
-      if(!_isSeller){
-        showToast('Only the seller can release funds from escrow','error');
-        console.error('[releaseFunds] Role check failed — caller is not the seller');
-        if(btn){ btn.disabled=false; btn.innerHTML=origLabel; }
-        return;
-      }
-
-      // ── STATUS CHECK: must be delivery_confirmed ───────────────────
-      if(order.status !== 'delivery_confirmed'){
-        showToast('Cannot release funds — buyer has not confirmed delivery yet','error');
-        if(btn){ btn.disabled=false; btn.innerHTML=origLabel; }
-        return;
-      }
-
-      if(!order.orderId32){
-        showToast(
-          'This order was not locked on-chain (no orderId32). ' +
-          'Funds were never deposited into the escrow contract — nothing to release.',
-          'error'
-        );
-        if(btn){ btn.disabled=false; btn.innerHTML=origLabel; }
-        return;
-      }
-
+      if(!_isSeller){ showToast('Only the seller can release funds','error'); if(btn){ btn.disabled=false; btn.innerHTML=origLabel; } return; }
+      if(order.status !== 'delivery_confirmed'){ showToast('Buyer has not confirmed delivery yet','error'); if(btn){ btn.disabled=false; btn.innerHTML=origLabel; } return; }
+      if(!order.orderId32){ showToast('No on-chain escrow ID — nothing to release.','error'); if(btn){ btn.disabled=false; btn.innerHTML=origLabel; } return; }
       try {
-        // ── Connect wallet ─────────────────────────────────────────
         const w=getStoredWallet();
-        if(!w){ showToast('Connect wallet to release funds','error'); if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return; }
-
         let provider, signer;
         if(w.type==='metamask' && window.ethereum){
           provider = new ethers.BrowserProvider(window.ethereum);
           const net = await provider.getNetwork();
-          if(net.chainId !== BigInt(window.ARC.chainId)){
-            showToast('Please switch MetaMask to Arc Testnet (Chain 5042002)','warning');
-            if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return;
-          }
+          if(net.chainId !== BigInt(window.ARC.chainId)){ showToast('Please switch MetaMask to Arc Testnet','warning'); if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return; }
           signer = await provider.getSigner();
         } else if((w.type==='internal'||w.type==='imported') && w.privateKey && !w.privateKey.startsWith('[')){
           provider = new ethers.JsonRpcProvider(window.ARC.rpc);
           signer   = new ethers.Wallet(w.privateKey, provider);
-        } else {
-          showToast('Private key unavailable. Re-import wallet to release funds.','error');
-          if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return;
-        }
-
-        // ── Get escrow contract ────────────────────────────────────
+        } else { showToast('Private key unavailable.','error'); if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return; }
         const escrowAddress = getEscrowAddress();
-        if(!escrowAddress || escrowAddress==='0x0000000000000000000000000000000000000000'){
-          showToast('Escrow contract not configured. Visit /deploy-escrow.','error');
-          if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return;
-        }
-
+        if(!escrowAddress || escrowAddress==='0x0000000000000000000000000000000000000000'){ showToast('Escrow contract not configured.','error'); if(btn){btn.disabled=false;btn.innerHTML=origLabel;} return; }
         const escrowContract = new ethers.Contract(escrowAddress, ESCROW_ABI, signer);
-
-        // ── Call releaseFunds(orderId32) — no permit, no signature ──
         if(btn) btn.innerHTML='<span class="loading-spinner inline-block mr-2"></span>Sending to escrow…';
         showToast('Broadcasting releaseFunds to ShuklyEscrow…','info');
-
         const txResponse = await escrowContract.releaseFunds(order.orderId32, { gasLimit: 200000 });
         showToast('Tx sent! Waiting for confirmation… '+txResponse.hash.slice(0,14)+'…','info');
-
-        // Wait for on-chain confirmation before updating UI
         const receipt = await txResponse.wait(1);
-        if(!receipt || receipt.status === 0){
-          throw new Error('releaseFunds reverted on-chain. Check escrow state (must be CONFIRMED).');
-        }
-
+        if(!receipt || receipt.status === 0) throw new Error('releaseFunds reverted on-chain.');
         const releaseTxHash = txResponse.hash;
         showToast('Funds released! Tx: '+releaseTxHash.slice(0,14)+'…','success');
-
-        // ── Update order status ONLY after confirmed receipt ───────
-        orders[idx].status         = 'funds_released';
-        orders[idx].releaseTxHash  = releaseTxHash;
-        orders[idx].releaseTxUrl   = window.ARC.explorer+'/tx/'+releaseTxHash;
-        orders[idx].updatedAt      = new Date().toISOString();
+        orders[idx].status        = 'funds_released';
+        orders[idx].releaseTxHash = releaseTxHash;
+        orders[idx].releaseTxUrl  = window.ARC.explorer+'/tx/'+releaseTxHash;
+        orders[idx].updatedAt     = new Date().toISOString();
         localStorage.setItem('rh_orders', JSON.stringify(orders));
         setTimeout(()=>location.reload(), 800);
-
       } catch(err){
-        const msg = err.code==='ACTION_REJECTED'||err.code===4001
-          ? 'Release rejected by user'
-          : 'Release error: '+(err.shortMessage||err.message||'');
-        showToast(msg, 'error');
+        const msg = err.code==='ACTION_REJECTED'||err.code===4001?'Release rejected':'Release error: '+(err.shortMessage||err.message||'');
+        showToast(msg,'error');
         if(btn){ btn.disabled=false; btn.innerHTML=origLabel; }
       }
       return;
     }
 
-    // ── Default: update status locally (shipped, completed, etc.) ──
     const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
     const i=orders.findIndex(o=>o.id===id);
     if(i>=0){
-      orders[i].status=s;
-      orders[i].updatedAt=new Date().toISOString();
+      orders[i].status=s; orders[i].updatedAt=new Date().toISOString();
       localStorage.setItem('rh_orders',JSON.stringify(orders));
-      const labels={'shipped':'Order marked as shipped!','completed':'Delivery confirmed!'};
-      showToast(labels[s]||'Status updated','success');
+      showToast('Status updated','success');
       setTimeout(()=>location.reload(),800);
     }
   }
@@ -7085,8 +7202,7 @@ function orderDetailPage(id: string) {
       '<div id="ship-overlay-d" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;">'+
       '<div style="background:#fff;border-radius:16px;box-shadow:0 25px 60px rgba(0,0,0,0.3);width:100%;max-width:480px;max-height:90vh;overflow-y:auto;">'+
       '<div style="display:flex;align-items:center;justify-content:space-between;padding:20px 20px 14px;border-bottom:1px solid #f1f5f9;">'+
-      '<div style="display:flex;align-items:center;gap:10px;">'+
-      '<div style="width:36px;height:36px;border-radius:8px;background:#fef2f2;display:flex;align-items:center;justify-content:center;"><i class="fas fa-shipping-fast" style="color:#ef4444;"></i></div>'+
+      '<div style="display:flex;align-items:center;gap:10px;"><div style="width:36px;height:36px;border-radius:8px;background:#fef2f2;display:flex;align-items:center;justify-content:center;"><i class="fas fa-shipping-fast" style="color:#ef4444;"></i></div>'+
       '<div><p style="font-weight:700;color:#1e293b;margin:0;font-size:15px;">Shipping Information</p>'+
       '<p style="font-size:11px;color:#94a3b8;margin:0;">Order '+orderId+'</p></div></div>'+
       '<button id="ship-close-d" style="width:32px;height:32px;border:none;background:#f8fafc;border-radius:8px;cursor:pointer;font-size:18px;color:#64748b;">&times;</button>'+
@@ -7103,7 +7219,7 @@ function orderDetailPage(id: string) {
       '</div>'+
       '<div style="padding:14px 20px;border-top:1px solid #f1f5f9;display:flex;gap:8px;justify-content:flex-end;">'+
       '<button id="ship-cancel-d" style="padding:8px 16px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;color:#64748b;font-size:13px;cursor:pointer;">Cancel</button>'+
-      '<button id="ship-confirm-d" style="padding:8px 20px;border:none;border-radius:8px;background:#dc2626;color:#fff;font-size:13px;font-weight:600;cursor:pointer;"><i class="fas fa-paper-plane" style="margin-right:6px;"></i>Send Shipping Info to Buyer</button>'+
+      '<button id="ship-confirm-d" style="padding:8px 20px;border:none;border-radius:8px;background:#dc2626;color:#fff;font-size:13px;font-weight:600;cursor:pointer;"><i class="fas fa-paper-plane" style="margin-right:6px;"></i>Send Shipping Info</button>'+
       '</div></div></div>';
     function closeD(){ root.innerHTML=''; }
     document.getElementById('ship-close-d').onclick=closeD;
@@ -7119,34 +7235,29 @@ function orderDetailPage(id: string) {
       var orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
       var i=orders.findIndex(function(o){return o.id===orderId;});
       if(i>=0){
-        orders[i].status='shipped';
-        orders[i].shippedAt=new Date().toISOString();
+        orders[i].status='shipped'; orders[i].shippedAt=new Date().toISOString();
         orders[i].updatedAt=new Date().toISOString();
         orders[i].shippingInfo={trackingNumber:tracking,carrier:carrier,trackingLink:link||null,notes:notes||null,sentAt:new Date().toISOString()};
         localStorage.setItem('rh_orders',JSON.stringify(orders));
-        closeD();
-        showToast('Shipping info sent to buyer! Order marked as shipped.','success');
+        closeD(); showToast('Shipping info sent!','success');
         setTimeout(function(){location.reload();},800);
       }
     };
   }
+
   function openDisputeForm(id){
     var ordersRaw=JSON.parse(localStorage.getItem('rh_orders')||'[]');
     var order=ordersRaw.find(function(o){return o.id===id;});
     if(!order){showToast('Order not found','error');return;}
-    // Access control: only buyer or seller
     var wallet=typeof getStoredWallet==='function'?getStoredWallet():null;
     var myAddr=wallet?wallet.address.toLowerCase():'';
     var isBuyerOrSeller=(order.buyerAddress&&order.buyerAddress.toLowerCase()===myAddr)||(order.sellerAddress&&order.sellerAddress.toLowerCase()===myAddr);
     if(!isBuyerOrSeller){showToast('Only the buyer or seller can open a dispute','error');return;}
-
     var root=document.getElementById('receipt-modal-root');
     if(!root)return;
     root.innerHTML=
       '<div id="dispute-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;">'+
       '<div style="background:#fff;border-radius:16px;box-shadow:0 25px 60px rgba(0,0,0,0.3);width:100%;max-width:560px;max-height:92vh;overflow-y:auto;">'+
-
-      // ── Header
       '<div style="display:flex;align-items:center;justify-content:space-between;padding:20px 20px 14px;border-bottom:1px solid #f1f5f9;">'+
       '<div style="display:flex;align-items:center;gap:10px;">'+
       '<div style="width:38px;height:38px;border-radius:10px;background:#fee2e2;display:flex;align-items:center;justify-content:center;"><i class="fas fa-gavel" style="color:#dc2626;font-size:16px;"></i></div>'+
@@ -7154,77 +7265,42 @@ function orderDetailPage(id: string) {
       '<p style="font-size:11px;color:#94a3b8;margin:0;">Order '+id+' &bull; Funds will remain locked</p></div></div>'+
       '<button id="disp-close" style="width:32px;height:32px;border:none;background:#f8fafc;border-radius:8px;cursor:pointer;font-size:18px;color:#64748b;">&times;</button>'+
       '</div>'+
-
-      // ── Fund-lock notice
       '<div style="margin:16px 20px 0;padding:12px 14px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;display:flex;gap:10px;align-items:flex-start;">'+
       '<i class="fas fa-lock" style="color:#dc2626;margin-top:2px;flex-shrink:0;"></i>'+
-      '<div style="font-size:13px;color:#7f1d1d;"><strong>Funds will remain locked.</strong> While a dispute is open, USDC/EURC stays in the Arc Network escrow contract. No release or transfer is possible until the dispute is resolved.</div>'+
+      '<div style="font-size:13px;color:#7f1d1d;"><strong>Funds will remain locked.</strong> While a dispute is open, USDC/EURC stays in the Arc Network escrow contract.</div>'+
       '</div>'+
-
-      // ── Form body
       '<div style="padding:20px;display:flex;flex-direction:column;gap:16px;">'+
-
-      // Description textarea
-      '<div>'+
-      '<label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em;">Description <span style="color:#dc2626;">*</span></label>'+
-      '<textarea id="disp-desc" rows="4" placeholder="Describe your issue in detail. Include dates, what was expected, and what actually happened..." style="width:100%;padding:10px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;resize:vertical;box-sizing:border-box;font-family:inherit;"></textarea>'+
-      '</div>'+
-
-      // File upload
-      '<div>'+
-      '<label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em;">Evidence Files <span style="font-weight:400;text-transform:none;letter-spacing:0;">(images &amp; PDFs, optional)</span></label>'+
-      '<div id="disp-dropzone" style="border:2px dashed #e2e8f0;border-radius:10px;padding:24px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s;">'+
+      '<div><label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em;">Description <span style="color:#dc2626;">*</span></label>'+
+      '<textarea id="disp-desc" rows="4" placeholder="Describe your issue in detail. Include dates, what was expected, and what actually happened..." style="width:100%;padding:10px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;resize:vertical;box-sizing:border-box;font-family:inherit;"></textarea></div>'+
+      '<div><label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em;">Evidence Files <span style="font-weight:400;text-transform:none;letter-spacing:0;">(optional)</span></label>'+
+      '<div id="disp-dropzone" style="border:2px dashed #e2e8f0;border-radius:10px;padding:24px;text-align:center;cursor:pointer;">'+
       '<i class="fas fa-cloud-upload-alt" style="font-size:28px;color:#94a3b8;display:block;margin-bottom:8px;"></i>'+
-      '<p style="font-size:13px;color:#64748b;margin:0;">Click to choose files or drag &amp; drop here</p>'+
-      '<p style="font-size:11px;color:#94a3b8;margin:4px 0 0;">Accepted: PNG, JPG, PDF &bull; Up to 5 files &bull; 10 MB each</p>'+
-      '</div>'+
+      '<p style="font-size:13px;color:#64748b;margin:0;">Click to choose files or drag &amp; drop</p>'+
+      '<p style="font-size:11px;color:#94a3b8;margin:4px 0 0;">PNG, JPG, PDF &bull; Up to 5 files &bull; 10 MB each</p></div>'+
       '<input id="disp-file-input" type="file" multiple accept="image/png,image/jpeg,application/pdf" style="display:none;">'+
-      '<ul id="disp-file-list" style="margin:8px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;"></ul>'+
+      '<ul id="disp-file-list" style="margin:8px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;"></ul></div>'+
       '</div>'+
-
-      '</div>'+
-
-      // ── Footer buttons
       '<div style="padding:14px 20px;border-top:1px solid #f1f5f9;display:flex;gap:8px;justify-content:flex-end;">'+
       '<button id="disp-cancel" style="padding:9px 18px;border:1.5px solid #e2e8f0;border-radius:8px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:600;cursor:pointer;">Cancel</button>'+
       '<button id="disp-submit" style="padding:9px 22px;border:none;border-radius:8px;background:#dc2626;color:#fff;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:7px;"><i class="fas fa-gavel"></i> Submit Dispute</button>'+
-      '</div>'+
-
-      '</div></div>';
-
-    // ── Selected files state
+      '</div></div></div>';
     var selectedFiles=[];
-
-    // ── Dropzone styling
     var dz=document.getElementById('disp-dropzone');
     dz.addEventListener('click',function(){ document.getElementById('disp-file-input').click(); });
     dz.addEventListener('dragover',function(e){e.preventDefault();this.style.borderColor='#dc2626';this.style.background='#fff5f5';});
     dz.addEventListener('dragleave',function(){this.style.borderColor='#e2e8f0';this.style.background='';});
-    dz.addEventListener('drop',function(e){
-      e.preventDefault();this.style.borderColor='#e2e8f0';this.style.background='';
-      addFiles(Array.from(e.dataTransfer.files));
-    });
-
-    // ── File input change
-    document.getElementById('disp-file-input').addEventListener('change',function(){
-      addFiles(Array.from(this.files));
-      this.value=''; // reset so same file can be re-added after remove
-    });
-
+    dz.addEventListener('drop',function(e){ e.preventDefault();this.style.borderColor='#e2e8f0';this.style.background=''; addFiles(Array.from(e.dataTransfer.files)); });
+    document.getElementById('disp-file-input').addEventListener('change',function(){ addFiles(Array.from(this.files)); this.value=''; });
     function addFiles(files){
       var allowed=['image/png','image/jpeg','application/pdf'];
       files.forEach(function(f){
-        if(!allowed.includes(f.type)){showToast('Only PNG, JPG, and PDF files are accepted','error');return;}
-        if(f.size>10*1024*1024){showToast(f.name+' exceeds the 10 MB limit','error');return;}
-        if(selectedFiles.length>=5){showToast('Maximum 5 files per dispute','error');return;}
-        // Prevent duplicates by name+size
-        var dup=selectedFiles.some(function(x){return x.name===f.name&&x.size===f.size;});
-        if(dup){showToast(f.name+' is already added','info');return;}
+        if(!allowed.includes(f.type)){showToast('Only PNG, JPG, PDF accepted','error');return;}
+        if(f.size>10*1024*1024){showToast(f.name+' exceeds 10 MB','error');return;}
+        if(selectedFiles.length>=5){showToast('Max 5 files','error');return;}
+        if(selectedFiles.some(function(x){return x.name===f.name&&x.size===f.size;})){showToast(f.name+' already added','info');return;}
         selectedFiles.push(f);
-      });
-      renderFileList();
+      }); renderFileList();
     }
-
     function renderFileList(){
       var ul=document.getElementById('disp-file-list');
       if(!ul)return;
@@ -7233,111 +7309,49 @@ function orderDetailPage(id: string) {
         var size=(f.size/1024)<1024?(Math.round(f.size/1024)+'KB'):(Math.round(f.size/1024/10.24)/100+' MB');
         return '<li style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:7px;">'+
           '<i class="fas '+icon+'" style="color:#64748b;font-size:14px;flex-shrink:0;"></i>'+
-          '<span style="flex:1;font-size:12px;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+escapeHtml(f.name)+'</span>'+
+          '<span style="flex:1;font-size:12px;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+f.name+'</span>'+
           '<span style="font-size:11px;color:#94a3b8;flex-shrink:0;">'+size+'</span>'+
-          '<button data-idx="'+i+'" class="disp-remove-file" style="width:22px;height:22px;border:none;background:transparent;cursor:pointer;color:#94a3b8;font-size:14px;flex-shrink:0;padding:0;" title="Remove">&times;</button>'+
+          '<button data-idx="'+i+'" class="disp-remove-file" style="width:22px;height:22px;border:none;background:transparent;cursor:pointer;color:#94a3b8;font-size:14px;flex-shrink:0;padding:0;">&times;</button>'+
           '</li>';
       }).join('');
       ul.querySelectorAll('.disp-remove-file').forEach(function(btn){
-        btn.addEventListener('click',function(){
-          selectedFiles.splice(parseInt(this.dataset.idx),1);
-          renderFileList();
-        });
+        btn.addEventListener('click',function(){ selectedFiles.splice(parseInt(this.dataset.idx),1); renderFileList(); });
       });
     }
-
-    // ── escapeHtml helper (local scope)
-    function escapeHtml(s){
-      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-    }
-
-    // ── Read files as Data URLs for local storage
-    function readFileAsDataURL(file){
-      return new Promise(function(resolve){
-        var r=new FileReader();
-        r.onload=function(e){resolve({name:file.name,type:file.type,size:file.size,dataUrl:e.target.result});};
-        r.readAsDataURL(file);
-      });
-    }
-
-    // ── Close handlers
+    function readFileAsDataURL(file){ return new Promise(function(resolve){ var r=new FileReader(); r.onload=function(e){resolve({name:file.name,type:file.type,size:file.size,dataUrl:e.target.result});}; r.readAsDataURL(file); }); }
     function closeDisputeModal(){root.innerHTML='';}
     document.getElementById('disp-close').onclick=closeDisputeModal;
     document.getElementById('disp-cancel').onclick=closeDisputeModal;
     document.getElementById('dispute-overlay').addEventListener('click',function(e){if(e.target===this)closeDisputeModal();});
-
-    // ── Submit
     document.getElementById('disp-submit').onclick=async function(){
       var desc=document.getElementById('disp-desc').value.trim();
-      if(!desc){showToast('Please describe your issue before submitting','error');document.getElementById('disp-desc').focus();return;}
-
-      var btn=this;
-      btn.disabled=true;
-      btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Saving…';
-
+      if(!desc){showToast('Please describe your issue','error');return;}
+      var btn=this; btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Saving…';
       try{
-        // Read all files as Data URLs (stored locally — IPFS integration point)
         var fileRecords=await Promise.all(selectedFiles.map(readFileAsDataURL));
-
-        // Save evidence object
-        var evidence={
-          orderId:id,
-          submittedBy:myAddr,
-          submittedAt:new Date().toISOString(),
-          description:desc,
-          files:fileRecords.map(function(f){return{name:f.name,type:f.type,size:f.size,dataUrl:f.dataUrl};})
-          // NOTE: In a production deployment, replace dataUrl with an IPFS hash/URL
-          // by uploading via: https://api.pinata.cloud/pinning/pinFileToIPFS or web3.storage
-        };
-
-        // Persist evidence to localStorage (key: rh_dispute_evidence)
+        var evidence={orderId:id,submittedBy:myAddr,submittedAt:new Date().toISOString(),description:desc,files:fileRecords.map(function(f){return{name:f.name,type:f.type,size:f.size,dataUrl:f.dataUrl};})};
         var allEvidence=JSON.parse(localStorage.getItem('rh_dispute_evidence')||'{}');
         if(!allEvidence[id])allEvidence[id]=[];
         allEvidence[id].push(evidence);
         localStorage.setItem('rh_dispute_evidence',JSON.stringify(allEvidence));
-
-        // Update order status to 'dispute' and lock funds
         var orders2=JSON.parse(localStorage.getItem('rh_orders')||'[]');
         var idx=orders2.findIndex(function(o){return o.id===id;});
-        if(idx>=0){
-          orders2[idx].status='dispute';
-          orders2[idx].disputedAt=new Date().toISOString();
-          orders2[idx].disputeLockedFunds=true;   // explicit fund-lock flag
-          orders2[idx].disputeEvidenceCount=(orders2[idx].disputeEvidenceCount||0)+1;
-          localStorage.setItem('rh_orders',JSON.stringify(orders2));
-        }
-
+        if(idx>=0){ orders2[idx].status='dispute'; orders2[idx].disputedAt=new Date().toISOString(); orders2[idx].disputeLockedFunds=true; orders2[idx].disputeEvidenceCount=(orders2[idx].disputeEvidenceCount||0)+1; localStorage.setItem('rh_orders',JSON.stringify(orders2)); }
         closeDisputeModal();
-        showToast('Dispute opened — funds remain locked in Arc escrow. Evidence saved.','success');
+        showToast('Dispute opened — funds remain locked in Arc escrow.','success');
         setTimeout(function(){location.reload();},900);
-
-      }catch(e){
-        console.error('[dispute]',e);
-        showToast('Error saving dispute. Please try again.','error');
-        btn.disabled=false;
-        btn.innerHTML='<i class="fas fa-gavel"></i> Submit Dispute';
-      }
+      }catch(e){ console.error('[dispute]',e); showToast('Error saving dispute.','error'); btn.disabled=false; btn.innerHTML='<i class="fas fa-gavel"></i> Submit Dispute'; }
     };
   }
 
-  function showReceiptModalDetail(){
-    // Delegate to the shared showReceiptModal function
-    showReceiptModal('${id}');
-  }
-  /* Bootstrap — same IIFE pattern as orders.js (no setTimeout) */
+  function showReceiptModalDetail(){ showReceiptModal('${id}'); }
+
   (function(){
     function _run(){
-      if(!document.getElementById('order-detail-container')){
-        document.addEventListener('DOMContentLoaded', _orderDetailInit);
-        return;
-      }
+      if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',_orderDetailInit); return; }
       _orderDetailInit();
     }
-    if(document.readyState==='loading'){
-      document.addEventListener('DOMContentLoaded', _run);
-    } else {
-      _run();
-    }
+    if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',_run); } else { _run(); }
   })();
   </script>
   `)
@@ -8309,7 +8323,30 @@ function profilePage() {
           <div><label class="block text-sm font-medium text-slate-700 mb-1">Price *</label><input type="number" id="pedit-price" class="input" placeholder="0.00" step="0.01" min="0.01" required/></div>
           <div><label class="block text-sm font-medium text-slate-700 mb-1">Token</label><select id="pedit-token" class="select"><option value="USDC">USDC</option><option value="EURC">EURC</option></select></div>
         </div>
-        <div><label class="block text-sm font-medium text-slate-700 mb-1">Image URL</label><input type="url" id="pedit-image" class="input" placeholder="https://…"/></div>
+        <!-- Image section with upload + URL -->
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Product Image</label>
+          <!-- Preview -->
+          <div id="pedit-img-preview-wrap" class="mb-2 hidden">
+            <div class="relative inline-block">
+              <img id="pedit-img-preview" src="" alt="Preview" class="w-full max-h-48 object-cover rounded-lg border border-slate-200"/>
+              <button type="button" onclick="peditClearImage()" class="absolute top-1 right-1 w-6 h-6 bg-slate-800/70 text-white rounded-full text-xs flex items-center justify-center hover:bg-red-600 transition-colors" title="Remove image">&times;</button>
+            </div>
+          </div>
+          <!-- Drop zone -->
+          <div id="pedit-drop-zone" onclick="document.getElementById('pedit-file-input').click()"
+               class="border-2 border-dashed border-slate-200 rounded-xl p-5 text-center cursor-pointer hover:border-red-400 hover:bg-red-50/30 transition-colors mb-2">
+            <i class="fas fa-cloud-upload-alt text-2xl text-slate-300 mb-2 block"></i>
+            <p class="text-sm text-slate-500">Click to upload image <span class="text-xs text-slate-400">(JPEG, PNG — max 5 MB)</span></p>
+          </div>
+          <input type="file" id="pedit-file-input" accept="image/jpeg,image/png" class="hidden"/>
+          <div class="flex items-center gap-2 my-1">
+            <div class="flex-1 h-px bg-slate-100"></div>
+            <span class="text-xs text-slate-400">or paste URL</span>
+            <div class="flex-1 h-px bg-slate-100"></div>
+          </div>
+          <input type="url" id="pedit-image" class="input" placeholder="https://example.com/image.jpg" oninput="peditSyncUrlPreview(this.value)"/>
+        </div>
         <div class="flex gap-3 pt-2">
           <button type="submit" id="pedit-save-btn" class="btn-primary flex-1"><i class="fas fa-save mr-1"></i> Save Changes</button>
           <button type="button" onclick="profCloseEdit()" class="btn-secondary flex-1">Cancel</button>
@@ -8730,21 +8767,88 @@ function profilePage() {
   }
 
   // ── Edit modal ────────────────────────────────────────────────────
+  // ── Image upload helpers for edit modal ─────────────────────────────
+  var _peditImageDataUrl = null; // holds base64 data URL if file was uploaded
+
+  function peditShowPreview(src){
+    var wrap = document.getElementById('pedit-img-preview-wrap');
+    var img  = document.getElementById('pedit-img-preview');
+    var zone = document.getElementById('pedit-drop-zone');
+    if(!src){ peditClearImage(); return; }
+    if(wrap) wrap.classList.remove('hidden');
+    if(img)  img.src = src;
+    if(zone) zone.classList.add('hidden');
+  }
+  function peditClearImage(){
+    _peditImageDataUrl = null;
+    var wrap = document.getElementById('pedit-img-preview-wrap');
+    var img  = document.getElementById('pedit-img-preview');
+    var zone = document.getElementById('pedit-drop-zone');
+    var urlInput = document.getElementById('pedit-image');
+    if(wrap) wrap.classList.add('hidden');
+    if(img)  img.src = '';
+    if(zone) zone.classList.remove('hidden');
+    if(urlInput) urlInput.value = '';
+  }
+  function peditSyncUrlPreview(url){
+    _peditImageDataUrl = null; // URL takes precedence over file
+    if(url && url.startsWith('http')){ peditShowPreview(url); }
+    else if(!url){ var wrap=document.getElementById('pedit-img-preview-wrap'); if(wrap) wrap.classList.add('hidden'); document.getElementById('pedit-drop-zone').classList.remove('hidden'); }
+  }
+  function peditInitFileInput(){
+    var inp = document.getElementById('pedit-file-input');
+    if(!inp || inp._peditBound) return;
+    inp._peditBound = true;
+    inp.addEventListener('change', function(){
+      var file = this.files[0];
+      if(!file) return;
+      if(!['image/jpeg','image/png'].includes(file.type)){ showToast('Only JPEG and PNG images accepted','error'); return; }
+      if(file.size > 5*1024*1024){ showToast('Image must be under 5 MB','error'); return; }
+      var reader = new FileReader();
+      reader.onload = function(e){
+        _peditImageDataUrl = e.target.result;
+        document.getElementById('pedit-image').value = '';
+        peditShowPreview(_peditImageDataUrl);
+      };
+      reader.readAsDataURL(file);
+    });
+    // Drag and drop on drop zone
+    var zone = document.getElementById('pedit-drop-zone');
+    if(zone){
+      zone.addEventListener('dragover', function(e){ e.preventDefault(); this.style.borderColor='#dc2626'; this.style.background='rgba(220,38,38,.03)'; });
+      zone.addEventListener('dragleave', function(){ this.style.borderColor=''; this.style.background=''; });
+      zone.addEventListener('drop', function(e){
+        e.preventDefault(); this.style.borderColor=''; this.style.background='';
+        var file = e.dataTransfer.files[0];
+        if(!file) return;
+        if(!['image/jpeg','image/png'].includes(file.type)){ showToast('Only JPEG and PNG images accepted','error'); return; }
+        if(file.size > 5*1024*1024){ showToast('Image must be under 5 MB','error'); return; }
+        var reader = new FileReader();
+        reader.onload = function(ev){ _peditImageDataUrl = ev.target.result; document.getElementById('pedit-image').value=''; peditShowPreview(_peditImageDataUrl); };
+        reader.readAsDataURL(file);
+      });
+    }
+  }
+
   function profOpenEdit(productId) {
     var wallet=(typeof getStoredWallet==='function')?getStoredWallet():null;
     if(!wallet){showToast('Connect wallet first','error');return;}
     var p=_profProducts.find(function(x){return x.id===productId;});
     if(!p){showToast('Product not found','error');return;}
     if(p.seller_id.toLowerCase()!==wallet.address.toLowerCase()){showToast('Unauthorized','error');return;}
+    _peditImageDataUrl = null;
     document.getElementById('pedit-id').value=p.id;
     document.getElementById('pedit-title').value=p.title||'';
     document.getElementById('pedit-description').value=p.description||'';
     document.getElementById('pedit-price').value=p.price||'';
     document.getElementById('pedit-token').value=p.token||'USDC';
     document.getElementById('pedit-image').value=p.image||'';
+    // Show current image preview if available
+    if(p.image){ peditShowPreview(p.image); } else { peditClearImage(); }
     document.getElementById('prof-edit-modal').style.display='flex';
+    peditInitFileInput();
   }
-  function profCloseEdit() { document.getElementById('prof-edit-modal').style.display='none'; }
+  function profCloseEdit() { document.getElementById('prof-edit-modal').style.display='none'; peditClearImage(); }
 
   async function profSaveProduct(e) {
     e.preventDefault();
@@ -8755,7 +8859,8 @@ function profilePage() {
     var desc=document.getElementById('pedit-description').value.trim();
     var price=parseFloat(document.getElementById('pedit-price').value);
     var token=document.getElementById('pedit-token').value;
-    var image=document.getElementById('pedit-image').value.trim();
+    var urlInput=document.getElementById('pedit-image').value.trim();
+    var image=(_peditImageDataUrl || urlInput || '');
     if(!title||!desc||isNaN(price)||price<=0){showToast('Please fill in all required fields correctly','error');return;}
     var btn=document.getElementById('pedit-save-btn');
     btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin mr-1"></i> Saving\u2026';
