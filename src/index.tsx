@@ -6774,37 +6774,170 @@ function orderDetailPage(id: string) {
      Orders created in a different browser / after clearing data are
      fetched from the Arc Network indexer so the page always works.
   ─────────────────────────────────────────────────────────────────── */
-  async function _orderDetailInit(){
-    var orders = JSON.parse(localStorage.getItem('rh_orders')||'[]');
-    var order  = orders.find(function(o){ return o.id==='${id}'; });
+  /* ── Skeleton loader shown while data loads (max 5 s) ── */
+  function _showSkeletonLoader(){
+    var s=document.getElementById('order-stepper');
+    var h=document.getElementById('order-escrow-highlight');
+    var d=document.getElementById('order-onchain-details');
+    var sum=document.getElementById('order-summary-sidebar');
+    var sk='<div class="animate-pulse h-4 bg-slate-200 rounded w-3/4 mb-2"></div><div class="animate-pulse h-3 bg-slate-100 rounded w-1/2"></div>';
+    if(s) s.innerHTML='<div class="flex gap-4 w-full py-2">'+[1,2,3,4,5].map(function(){return '<div class="flex flex-col items-center gap-1.5"><div class="animate-pulse w-10 h-10 rounded-full bg-slate-200"></div><div class="animate-pulse h-2 w-12 bg-slate-100 rounded"></div></div>';}).join('<div class="flex-1 h-0.5 bg-slate-100 mb-5"></div>')+'</div>';
+    if(h) h.innerHTML='<div class="animate-pulse h-16 bg-slate-100 rounded-lg"></div>';
+    if(d) d.innerHTML=sk+sk+sk;
+    if(sum) sum.innerHTML=sk+sk;
+  }
 
-    if(!order){
-      // Show a subtle loading indicator while we check on-chain
-      var stepper = document.getElementById('order-stepper');
-      if(stepper) stepper.innerHTML = '<div class="flex items-center gap-2 text-slate-400 text-sm"><div class="loading-spinner"></div> Syncing from Arc Network…</div>';
+  /* ── Error / not-found state with retry button ── */
+  function _renderErrorState(msg, canRetry){
+    var el=document.getElementById('order-stepper');
+    if(el) el.innerHTML='';
+    var hl=document.getElementById('order-escrow-highlight');
+    if(hl) hl.innerHTML='';
+    var container=document.querySelector('.max-w-5xl');
+    if(!container) return;
+    var retryBtn=canRetry ? '<button onclick="_orderDetailInit()" class="btn-primary text-sm"><i class="fas fa-redo mr-1"></i> Retry</button>' : '';
+    container.innerHTML+='<div class="card p-10 text-center mt-6 border border-red-100" style="background:#fff9f9">'+
+      '<div class="w-16 h-16 rounded-full bg-red-50 flex items-center justify-center mx-auto mb-4">'+
+      '<i class="fas fa-exclamation-circle text-3xl text-red-400"></i></div>'+
+      '<h3 class="font-bold text-slate-700 mb-2">'+escHtml(msg)+'</h3>'+
+      '<p class="text-xs text-slate-400 mb-5">If the problem persists, verify the order on Arc Explorer or check your wallet connection.</p>'+
+      '<div class="flex gap-3 justify-center flex-wrap">'+
+      '<a href="/orders" class="btn-secondary text-sm">\u2190 Back to Orders</a>'+
+      retryBtn+
+      '<a href="https://testnet.arcscan.app" target="_blank" class="btn-secondary text-sm"><i class="fas fa-external-link-alt mr-1"></i> Arc Explorer</a>'+
+      '</div></div>';
+  }
+
+  function escHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+  // ── localStorage poll helper ────────────────────────────────────────
+  // After a checkout redirect the browser may not have flushed the
+  // localStorage write yet.  Poll for up to 3 s before giving up.
+  function _pollLocalStorage(targetId, maxMs){
+    return new Promise(function(resolve){
+      var elapsed = 0;
+      var interval = 200; // ms between polls
+      function check(){
+        var raw = '';
+        try{ raw = localStorage.getItem('rh_orders')||'[]'; }catch(e){}
+        var list = [];
+        try{ list = JSON.parse(raw); }catch(e){}
+        var found = list.find(function(o){ return o.id===targetId; });
+        if(found){ resolve({ order: found, orders: list }); return; }
+        elapsed += interval;
+        if(elapsed >= maxMs){ resolve({ order: null, orders: list }); return; }
+        setTimeout(check, interval);
+      }
+      check();
+    });
+  }
+
+  async function _orderDetailInit(){
+    // Clear any previous error/not-found card from a prior call
+    ['order-error-state','order-not-found'].forEach(function(id){
+      var el = document.getElementById(id); if(el) el.remove();
+    });
+
+    // Always show skeleton immediately — never a blank page
+    _showSkeletonLoader();
+
+    // ── Safety net: if everything takes > 20 s show error + retry ────
+    var _timedOut = false;
+    var _safetyTimer = setTimeout(function(){
+      _timedOut = true;
+      console.warn('[orderDetail] 20 s safety timeout');
+      _renderErrorState('Order is taking too long to load. The Arc Network RPC may be slow — please retry.', true);
+    }, 20000);
+
+    var orders = [];
+    var order  = null;
+
+    // ── Step 1: Poll localStorage (handles post-checkout race condition)
+    // After the checkout redirect the write may not be visible yet;
+    // poll for up to 3 s before falling back to on-chain.
+    var pollResult = await _pollLocalStorage('${id}', 3000);
+    orders = pollResult.orders;
+    order  = pollResult.order;
+
+    if(order){
+      // Found locally — cancel safety timer and render immediately
+      clearTimeout(_safetyTimer);
+    } else {
+      // ── Step 2: On-chain fallback ─────────────────────────────────
+      // Show a "syncing" message instead of a skeleton to give feedback
+      var stepperEl = document.getElementById('order-stepper');
+      if(stepperEl) stepperEl.innerHTML =
+        '<div class="flex items-center gap-2 text-slate-400 text-sm px-2">' +
+        '<div class="loading-spinner"></div>&nbsp;Syncing from Arc Network\u2026</div>';
+
       try {
         var _w = typeof getStoredWallet==='function' ? getStoredWallet() : null;
-        if(_w){
-          var _addr = encodeURIComponent(_w.address);
-          var _res = await fetch('/api/orders/on-chain?buyer='+_addr+'&seller='+_addr+'&limit=100');
+        // Include wallet addresses if available so the indexer filters by
+        // buyer/seller topic; also send the raw orderId string as a hint.
+        var _qs = 'limit=50';
+        if(_w && _w.address){
+          _qs += '&buyer='+encodeURIComponent(_w.address)
+               + '&seller='+encodeURIComponent(_w.address);
+        }
+        var _ctrl = new AbortController();
+        // Inner timeout: 14 s — inside the outer 20 s safety net
+        var _fetchAbort = setTimeout(function(){ _ctrl.abort(); }, 14000);
+        try {
+          var _res = await fetch('/api/orders/on-chain?'+_qs, { signal: _ctrl.signal });
+          clearTimeout(_fetchAbort);
           if(_res.ok){
             var _data = await _res.json();
             var _chain = Array.isArray(_data.orders) ? _data.orders : [];
+
+            // Match on every available identifier:
+            //  • human-readable orderId  ('ORD-xxx')  stored in localStorage
+            //  • bytes32 orderId32       (hex)        returned by on-chain
+            //  • transaction hash        (fundTxHash / txHash)
             order = _chain.find(function(o){
-              return o.id==='${id}' || o.orderId==='${id}' ||
-                (o.txHash && o.txHash.toLowerCase()==='${id}'.toLowerCase()) ||
-                (o.fundTxHash && o.fundTxHash.toLowerCase()==='${id}'.toLowerCase());
+              return o.id         === '${id}' ||
+                     o.orderId    === '${id}' ||
+                     o.orderId32  === '${id}' ||
+                     (o.txHash     && o.txHash.toLowerCase()     === '${id}'.toLowerCase()) ||
+                     (o.fundTxHash && o.fundTxHash.toLowerCase() === '${id}'.toLowerCase());
             });
+
+            // Also check localStorage again — the write may have landed
+            // while the on-chain fetch was in flight.
+            if(!order){
+              var fresh = [];
+              try{ fresh = JSON.parse(localStorage.getItem('rh_orders')||'[]'); }catch(e){}
+              order = fresh.find(function(o){ return o.id==='${id}'; });
+              if(order) orders = fresh;
+            }
+
             if(order){
-              // Persist into localStorage so subsequent loads are instant
-              var _merged = orders.filter(function(x){ return x.id !== (order.id||order.orderId||''); });
-              _merged.push(order);
-              try { localStorage.setItem('rh_orders', JSON.stringify(_merged)); } catch(e){}
+              // Merge on-chain data into localStorage for future fast loads
+              var _merged = orders.filter(function(x){
+                return x.id !== (order.id||order.orderId||order.orderId32||'');
+              });
+              _merged.unshift(order);
+              try{ localStorage.setItem('rh_orders', JSON.stringify(_merged)); }catch(e){}
             }
           }
+        } catch(fetchErr){
+          clearTimeout(_fetchAbort);
+          console.warn('[orderDetail] on-chain fetch failed:', fetchErr.message||fetchErr);
+          // Last-chance: read localStorage one more time
+          try{
+            var lc = JSON.parse(localStorage.getItem('rh_orders')||'[]');
+            order  = lc.find(function(o){ return o.id==='${id}'; });
+            if(order) orders = lc;
+          }catch(e){}
         }
-      } catch(e){ console.warn('[orderDetail] on-chain sync failed:', e.message||e); }
+      } catch(e){ console.warn('[orderDetail] sync error:', e.message||e); }
+
+      // Cancel safety timer — finished regardless of outcome
+      clearTimeout(_safetyTimer);
     }
+
+    // If safety timer already fired, bail out to avoid clobbering the
+    // error card it rendered.
+    if(_timedOut) return;
 
     if(!order){
       _renderOrderNotFound();
@@ -6849,9 +6982,25 @@ function orderDetailPage(id: string) {
   }
 
   function _renderOrderNotFound(){
+    // Clear skeleton
+    var s=document.getElementById('order-stepper');
+    var h=document.getElementById('order-escrow-highlight');
+    var d=document.getElementById('order-onchain-details');
+    if(s) s.innerHTML='';
+    if(h) h.innerHTML='';
+    if(d) d.innerHTML='';
     var el = document.querySelector('.max-w-5xl');
     if(!el) return;
-    el.innerHTML += '<div class="card p-10 text-center mt-6"><div class="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mx-auto mb-4"><i class="fas fa-box-open text-2xl text-slate-400"></i></div><p class="font-semibold text-slate-600 mb-4">Order not found in this browser.<br/><span class="text-xs text-slate-400 font-normal">Orders are stored in your browser. If you switched browsers or cleared data, orders won\'t appear here. Use Arc Explorer to verify on-chain.</span></p><div class="flex gap-3 justify-center"><a href="/orders" class="btn-secondary text-sm">← Back to Orders</a><a href="https://testnet.arcscan.app" target="_blank" class="btn-primary text-sm"><i class="fas fa-external-link-alt mr-1"></i> Arc Explorer</a></div></div>';
+    el.innerHTML += '<div id="order-not-found" class="card p-10 text-center mt-6" style="border:1px solid #e2e8f0">'+
+      '<div class="w-16 h-16 rounded-full bg-amber-50 flex items-center justify-center mx-auto mb-4">'+
+      '<i class="fas fa-box-open text-3xl text-amber-400"></i></div>'+
+      '<h3 class="font-bold text-slate-700 mb-2">Order not found in this browser</h3>'+
+      '<p class="text-sm text-slate-500 mb-5 max-w-md mx-auto">Orders are tied to your browser session. If you switched browsers, cleared data, or are viewing from a new device, the order may not appear here.<br/><span class="font-medium text-slate-600">Your funds are always safe on-chain.</span></p>'+
+      '<div class="flex gap-3 justify-center flex-wrap">'+
+      '<a href="/orders" class="btn-secondary text-sm">\u2190 Back to Orders</a>'+
+      '<button onclick="_orderDetailInit()" class="btn-secondary text-sm"><i class="fas fa-sync mr-1"></i> Retry Sync</button>'+
+      '<a href="https://testnet.arcscan.app" target="_blank" class="btn-primary text-sm"><i class="fas fa-external-link-alt mr-1"></i> Arc Explorer</a>'+
+      '</div></div>';
   }
 
   function _renderStepper(status){
@@ -6950,15 +7099,28 @@ function orderDetailPage(id: string) {
 
   function _hashRow(label, hash, url, colorClass){
     colorClass = colorClass||'text-blue-600';
-    var short = hash ? (hash.slice(0,10)+'…'+hash.slice(-6)) : '—';
+    var short = hash ? (hash.slice(0,10)+'\u2026'+hash.slice(-6)) : '\u2014';
+    var safeTitle = hash ? hash.replace(/"/g,'&quot;') : '';
+    var copyBtn = hash ? '<button data-copy-hash data-h="'+safeTitle+'" data-l="'+label.replace(/"/g,'&quot;')+'" class="hash-copy-btn text-slate-300 hover:text-slate-600 text-xs p-0.5 rounded" title="Copy"><i class="fas fa-copy"></i></button>' : '';
+    var valueHtml = url&&hash
+      ? '<a href="'+url+'" target="_blank" class="font-mono text-xs '+colorClass+' hover:underline truncate max-w-[160px]" title="'+safeTitle+'">'+short+'</a>'
+      : (hash ? '<span class="font-mono text-xs text-slate-600 truncate max-w-[160px]" title="'+safeTitle+'">'+short+'</span>' : '<span class="text-xs text-slate-400">\u2014</span>');
     return '<div class="flex justify-between items-center gap-3 py-1.5 border-b border-slate-50">'+
       '<span class="text-slate-500 text-xs font-medium shrink-0">'+label+'</span>'+
-      '<div class="flex items-center gap-1.5 min-w-0">'+
-      (url&&hash?'<a href="'+url+'" target="_blank" class="font-mono text-xs '+colorClass+' hover:underline truncate max-w-[160px]" title="'+hash+'">'+short+'</a>':
-       (hash?'<span class="font-mono text-xs text-slate-600 truncate max-w-[160px]" title="'+hash+'">'+short+'</span>':'<span class="text-xs text-slate-400">—</span>'))+
-      (hash?'<button onclick="_copyToClipboard(\''+hash.replace(/'/g,"\\'")+"','"+label+"')" class="text-slate-300 hover:text-slate-600 text-xs p-0.5 rounded" title="Copy"><i class=\"fas fa-copy\"></i></button>':'')+
-      '</div></div>';
+      '<div class="flex items-center gap-1.5 min-w-0">'+valueHtml+copyBtn+'</div></div>';
   }
+  // Wire copy buttons via event delegation (avoids inline JS quoting issues)
+  document.addEventListener('click', function(e){
+    var btn = e.target.closest ? e.target.closest('.hash-copy-btn') : null;
+    if(!btn) return;
+    var text = btn.getAttribute('data-h')||'';
+    var lbl  = btn.getAttribute('data-l')||'Value';
+    navigator.clipboard.writeText(text).then(function(){
+      showToast(lbl+' copied','success');
+    },function(){
+      showToast('Copied','success');
+    });
+  });
 
   function _renderOnChainDetails(order, explorerBase){
     var el = document.getElementById('order-onchain-details');
@@ -6971,8 +7133,8 @@ function orderDetailPage(id: string) {
     if(order.fundTxHash)           html += _hashRow('Fund Tx',            order.fundTxHash,           explorerBase+'/tx/'+order.fundTxHash,           'text-indigo-600');
     if(order.confirmDeliveryTx)    html += _hashRow('Confirm Delivery Tx',order.confirmDeliveryTx,    order.confirmDeliveryUrl||explorerBase+'/tx/'+order.confirmDeliveryTx,'text-teal-600');
     if(order.releaseTxHash)        html += _hashRow('Release Tx',         order.releaseTxHash,        order.releaseTxUrl||explorerBase+'/tx/'+order.releaseTxHash,         'text-emerald-600');
-    html += '<div class="flex justify-between items-center gap-3 py-1.5 border-b border-slate-50"><span class="text-slate-500 text-xs font-medium">Buyer</span><div class="flex items-center gap-1.5"><span class="font-mono text-xs text-slate-600" title="'+(order.buyerAddress||'')+'">'+((order.buyerAddress||'—').slice(0,10)+'…'+(order.buyerAddress||'—').slice(-6))+'</span>'+(order.buyerAddress?'<button onclick="_copyToClipboard(\''+order.buyerAddress+'\',\'Buyer address\')" class="text-slate-300 hover:text-slate-600 text-xs p-0.5 rounded"><i class="fas fa-copy"></i></button>':'')+'</div></div>';
-    html += '<div class="flex justify-between items-center gap-3 py-1.5 border-b border-slate-50"><span class="text-slate-500 text-xs font-medium">Seller</span><div class="flex items-center gap-1.5"><span class="font-mono text-xs text-slate-600" title="'+(order.sellerAddress||'')+'">'+((order.sellerAddress||'—').slice(0,10)+'…'+(order.sellerAddress||'—').slice(-6))+'</span>'+(order.sellerAddress?'<button onclick="_copyToClipboard(\''+order.sellerAddress+'\',\'Seller address\')" class="text-slate-300 hover:text-slate-600 text-xs p-0.5 rounded"><i class="fas fa-copy"></i></button>':'')+'</div></div>';
+    html += _hashRow('Buyer',  order.buyerAddress,  null, 'text-slate-700');
+    html += _hashRow('Seller', order.sellerAddress, null, 'text-slate-700');
     html += '<div class="flex justify-between py-1.5 border-b border-slate-50"><span class="text-slate-500 text-xs font-medium">Network</span><span class="text-xs font-semibold text-slate-700">Arc Testnet (Chain 5042002)</span></div>';
     html += '<div class="flex justify-between py-1.5"><span class="text-slate-500 text-xs font-medium">Created</span><span class="text-xs text-slate-600">'+new Date(order.createdAt).toLocaleString()+'</span></div>';
     el.innerHTML = html;
@@ -10005,377 +10167,944 @@ function howToUsePage() {
 
 // ─── PAGE: ADMIN ──────────────────────────────────────────────────────────
 function adminPage() {
-  return shell('Admin Panel', `
-  <div class="max-w-6xl mx-auto px-4 py-8" id="admin-root">
+  return shell('Admin Panel – Shukly Store', `
 
-    <!-- Access Blocked state (shown by default, JS removes if authorized) -->
-    <div id="admin-blocked" style="display:none;text-align:center;padding:80px 20px;">
-      <div style="width:64px;height:64px;border-radius:50%;background:#fee2e2;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;">
-        <i class="fas fa-ban" style="color:#dc2626;font-size:26px;"></i>
+  <!-- ── ADMIN STYLES ── -->
+  <style>
+  .adm-tab{padding:8px 18px;border:none;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;background:transparent;color:#64748b;transition:all .2s;white-space:nowrap;}
+  .adm-tab:hover{background:#fff;color:#334155;}
+  .adm-tab.active{background:#fff;color:#dc2626;box-shadow:0 2px 8px rgba(0,0,0,.10);}
+  .adm-tbl{width:100%;border-collapse:collapse;font-size:12px;}
+  .adm-tbl th{background:#f8fafc;color:#64748b;font-weight:700;padding:9px 12px;text-align:left;border-bottom:2px solid #e2e8f0;text-transform:uppercase;font-size:10px;letter-spacing:.06em;}
+  .adm-tbl td{padding:10px 12px;border-bottom:1px solid #f1f5f9;color:#334155;vertical-align:middle;}
+  .adm-tbl tr:last-child td{border-bottom:none;}
+  .adm-tbl tr:hover td{background:#fafafa;}
+  .ab{padding:5px 12px;border:none;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer;transition:all .15s;}
+  .ab:hover{opacity:.85;}
+  .ab-refund{background:#dbeafe;color:#1d4ed8;}
+  .ab-release{background:#dcfce7;color:#15803d;}
+  .ab-delete{background:#fee2e2;color:#dc2626;}
+  .ab-pause{background:#fef3c7;color:#92400e;}
+  .ab-resume{background:#d1fae5;color:#065f46;}
+  .ab-ban{background:#fce7f3;color:#9d174d;}
+  .ab-unban{background:#ede9fe;color:#5b21b6;}
+  .ab-ignore{background:#f1f5f9;color:#475569;}
+  .ab-view{background:#e0f2fe;color:#0369a1;}
+  .adm-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:700;}
+  .adm-badge-active{background:#dcfce7;color:#15803d;}
+  .adm-badge-paused{background:#fef3c7;color:#92400e;}
+  .adm-badge-banned{background:#fce7f3;color:#9d174d;}
+  .adm-badge-dispute{background:#fee2e2;color:#dc2626;}
+  .adm-badge-resolved{background:#dcfce7;color:#15803d;}
+  .adm-badge-pending{background:#fef9c3;color:#854d0e;}
+  .adm-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;}
+  .adm-modal{background:#fff;border-radius:18px;box-shadow:0 25px 60px rgba(0,0,0,.3);width:100%;max-width:480px;max-height:90vh;overflow-y:auto;}
+  .adm-modal-hd{display:flex;align-items:center;justify-content:space-between;padding:20px 20px 14px;border-bottom:1px solid #f1f5f9;}
+  .adm-modal-bd{padding:20px;}
+  .adm-modal-ft{padding:14px 20px;border-top:1px solid #f1f5f9;display:flex;gap:8px;justify-content:flex-end;}
+  .adm-stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:24px;}
+  .adm-stat{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px 18px;}
+  .adm-stat-val{font-size:26px;font-weight:900;color:#1e293b;margin:0;}
+  .adm-stat-lbl{font-size:11px;color:#94a3b8;margin:2px 0 0;font-weight:600;text-transform:uppercase;letter-spacing:.05em;}
+  .adm-audit-entry{display:flex;gap:10px;padding:10px 12px;border-bottom:1px solid #f1f5f9;font-size:12px;}
+  .adm-audit-icon{width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:12px;}
+  .adm-section-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px;}
+  </style>
+
+  <div class="max-w-7xl mx-auto px-4 py-8" id="admin-root">
+
+    <!-- Blocked -->
+    <div id="adm-blocked" style="display:none;text-align:center;padding:80px 20px;">
+      <div style="width:72px;height:72px;border-radius:50%;background:#fee2e2;display:flex;align-items:center;justify-content:center;margin:0 auto 18px;">
+        <i class="fas fa-ban" style="color:#dc2626;font-size:30px;"></i>
       </div>
-      <h2 style="font-size:22px;font-weight:800;color:#1e293b;margin:0 0 8px;">Access Denied</h2>
-      <p style="color:#64748b;font-size:14px;margin:0 0 20px;">Your wallet is not authorized to access the admin panel.</p>
+      <h2 style="font-size:22px;font-weight:900;color:#1e293b;margin:0 0 10px;">Access Denied</h2>
+      <p style="color:#64748b;font-size:14px;margin:0 0 6px;">Your wallet is not authorized to access this admin panel.</p>
+      <p style="color:#94a3b8;font-size:12px;margin:0 0 24px;" id="adm-blocked-addr"></p>
       <a href="/" class="btn-secondary">← Return Home</a>
     </div>
 
-    <!-- Loading state -->
-    <div id="admin-loading" style="text-align:center;padding:80px 20px;">
+    <!-- Loading -->
+    <div id="adm-loading" style="text-align:center;padding:80px 20px;">
       <div class="loading-spinner-lg mx-auto mb-4"></div>
-      <p class="text-slate-400">Checking authorization…</p>
+      <p class="text-slate-400 text-sm">Checking authorization…</p>
     </div>
 
-    <!-- Admin Panel (hidden until authorized) -->
-    <div id="admin-panel" style="display:none;">
+    <!-- Panel -->
+    <div id="adm-panel" style="display:none;">
 
       <!-- Header -->
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:28px;flex-wrap:wrap;gap:12px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:26px;flex-wrap:wrap;gap:12px;">
         <div style="display:flex;align-items:center;gap:14px;">
-          <div style="width:48px;height:48px;background:linear-gradient(135deg,#dc2626,#991b1b);border-radius:14px;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(220,38,38,.3);">
-            <i class="fas fa-shield-alt" style="color:#fff;font-size:20px;"></i>
+          <div style="width:50px;height:50px;background:linear-gradient(135deg,#dc2626,#991b1b);border-radius:14px;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(220,38,38,.3);">
+            <i class="fas fa-shield-alt" style="color:#fff;font-size:22px;"></i>
           </div>
           <div>
             <h1 style="margin:0;font-size:22px;font-weight:900;color:#1e293b;">Admin Panel</h1>
             <p style="margin:0;font-size:12px;color:#94a3b8;">Shukly Store · Restricted Access</p>
           </div>
         </div>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <span id="admin-wallet-badge" style="font-size:11px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;padding:5px 12px;font-family:monospace;color:#334155;"></span>
-          <span style="font-size:11px;background:#dcfce7;color:#15803d;border-radius:8px;padding:5px 12px;font-weight:700;">✓ Authorized</span>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <span id="adm-wallet-badge" style="font-size:11px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;padding:5px 12px;font-family:monospace;color:#334155;"></span>
+          <span style="font-size:11px;background:#dcfce7;color:#15803d;border-radius:8px;padding:5px 12px;font-weight:700;"><i class="fas fa-check-circle mr-1"></i>Authorized</span>
+          <button onclick="admRefreshAll()" style="font-size:11px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:8px;padding:5px 12px;font-weight:700;cursor:pointer;"><i class="fas fa-sync mr-1"></i>Refresh</button>
         </div>
+      </div>
+
+      <!-- Stats -->
+      <div class="adm-stats-grid" id="adm-stats-grid">
+        <div class="adm-stat"><p class="adm-stat-val" id="stat-disputes">–</p><p class="adm-stat-lbl">Open Disputes</p></div>
+        <div class="adm-stat"><p class="adm-stat-val" id="stat-products">–</p><p class="adm-stat-lbl">Products Listed</p></div>
+        <div class="adm-stat"><p class="adm-stat-val" id="stat-banned">–</p><p class="adm-stat-lbl">Banned Users</p></div>
+        <div class="adm-stat"><p class="adm-stat-val" id="stat-resolved">–</p><p class="adm-stat-lbl">Disputes Resolved</p></div>
+        <div class="adm-stat"><p class="adm-stat-val" id="stat-audit">–</p><p class="adm-stat-lbl">Audit Entries</p></div>
       </div>
 
       <!-- Tab nav -->
-      <div style="display:flex;gap:4px;background:#f1f5f9;border-radius:12px;padding:4px;margin-bottom:24px;flex-wrap:wrap;">
-        <button onclick="adminTab('disputes')" id="atab-disputes" class="admin-tab active-tab"><i class="fas fa-gavel mr-1"></i>Disputes</button>
-        <button onclick="adminTab('products')" id="atab-products" class="admin-tab"><i class="fas fa-boxes mr-1"></i>Products</button>
-        <button onclick="adminTab('reports')" id="atab-reports" class="admin-tab"><i class="fas fa-flag mr-1"></i>Reports</button>
-        <button onclick="adminTab('security')" id="atab-security" class="admin-tab"><i class="fas fa-lock mr-1"></i>Security Log</button>
-        <button onclick="adminTab('whitelist')" id="atab-whitelist" class="admin-tab"><i class="fas fa-users mr-1"></i>Whitelist</button>
+      <div style="display:flex;gap:4px;background:#f1f5f9;border-radius:12px;padding:4px;margin-bottom:22px;overflow-x:auto;">
+        <button onclick="admTab('disputes')" id="atab-disputes" class="adm-tab active"><i class="fas fa-gavel mr-1.5"></i>Disputes</button>
+        <button onclick="admTab('products')" id="atab-products" class="adm-tab"><i class="fas fa-boxes mr-1.5"></i>Products</button>
+        <button onclick="admTab('users')"    id="atab-users"    class="adm-tab"><i class="fas fa-users mr-1.5"></i>Users</button>
+        <button onclick="admTab('reports')"  id="atab-reports"  class="adm-tab"><i class="fas fa-flag mr-1.5"></i>Reports</button>
+        <button onclick="admTab('audit')"    id="atab-audit"    class="adm-tab"><i class="fas fa-clipboard-list mr-1.5"></i>Audit Log</button>
+        <button onclick="admTab('settings')" id="atab-settings" class="adm-tab"><i class="fas fa-cog mr-1.5"></i>Settings</button>
       </div>
 
-      <!-- Tab: Disputes -->
+      <!-- ── TAB: DISPUTES ── -->
       <div id="atab-content-disputes">
         <div class="card p-5">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-            <h2 style="font-size:16px;font-weight:700;color:#1e293b;margin:0;"><i class="fas fa-gavel text-red-500 mr-2"></i>All Disputes</h2>
-            <button onclick="adminLoadDisputes()" class="btn-secondary text-xs py-1.5"><i class="fas fa-sync mr-1"></i>Refresh</button>
+          <div class="adm-section-hd">
+            <h2 style="font-size:16px;font-weight:700;color:#1e293b;margin:0;"><i class="fas fa-gavel text-red-500 mr-2"></i>Dispute Arbitration</h2>
+            <div style="display:flex;gap:8px;">
+              <select id="adm-disp-filter" onchange="admLoadDisputes()" style="font-size:11px;border:1px solid #e2e8f0;border-radius:7px;padding:5px 10px;background:#fff;">
+                <option value="all">All Disputes</option>
+                <option value="dispute">Open</option>
+                <option value="resolved">Resolved</option>
+              </select>
+              <button onclick="admLoadDisputes()" class="ab ab-view"><i class="fas fa-sync mr-1"></i>Refresh</button>
+            </div>
           </div>
-          <div id="admin-disputes-table">
-            <div style="text-align:center;padding:40px;color:#94a3b8;"><div class="loading-spinner-lg mx-auto mb-3"></div>Loading…</div>
+          <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#92400e;">
+            <i class="fas fa-exclamation-triangle mr-2"></i>
+            <strong>Arbitration uses existing smart contract functions.</strong> Refund calls <code>refundBuyer()</code>, Release calls <code>releaseFunds()</code>. No contract logic is modified.
           </div>
+          <div id="adm-disputes-table"></div>
         </div>
       </div>
 
-      <!-- Tab: Products -->
+      <!-- ── TAB: PRODUCTS ── -->
       <div id="atab-content-products" style="display:none;">
         <div class="card p-5">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-            <h2 style="font-size:16px;font-weight:700;color:#1e293b;margin:0;"><i class="fas fa-boxes text-red-500 mr-2"></i>Product Management</h2>
-            <button onclick="adminLoadProducts()" class="btn-secondary text-xs py-1.5"><i class="fas fa-sync mr-1"></i>Refresh</button>
+          <div class="adm-section-hd">
+            <h2 style="font-size:16px;font-weight:700;color:#1e293b;margin:0;"><i class="fas fa-boxes text-red-500 mr-2"></i>Product Moderation</h2>
+            <div style="display:flex;gap:8px;">
+              <input id="adm-prod-search" oninput="admFilterProducts()" placeholder="Search products…" style="font-size:11px;border:1px solid #e2e8f0;border-radius:7px;padding:5px 10px;width:160px;"/>
+              <select id="adm-prod-status" onchange="admFilterProducts()" style="font-size:11px;border:1px solid #e2e8f0;border-radius:7px;padding:5px 10px;background:#fff;">
+                <option value="all">All Status</option>
+                <option value="active">Active</option>
+                <option value="paused">Paused</option>
+                <option value="removed">Removed</option>
+              </select>
+              <button onclick="admLoadProducts()" class="ab ab-view"><i class="fas fa-sync mr-1"></i>Refresh</button>
+            </div>
           </div>
-          <div id="admin-products-table">
-            <div style="text-align:center;padding:40px;color:#94a3b8;"><div class="loading-spinner-lg mx-auto mb-3"></div>Loading…</div>
-          </div>
+          <div id="adm-products-table"></div>
         </div>
       </div>
 
-      <!-- Tab: Reports -->
+      <!-- ── TAB: USERS ── -->
+      <div id="atab-content-users" style="display:none;">
+        <div class="card p-5">
+          <div class="adm-section-hd">
+            <h2 style="font-size:16px;font-weight:700;color:#1e293b;margin:0;"><i class="fas fa-users text-red-500 mr-2"></i>User Moderation</h2>
+            <div style="display:flex;gap:8px;">
+              <input id="adm-user-search" oninput="admFilterUsers()" placeholder="Search wallet…" style="font-size:11px;border:1px solid #e2e8f0;border-radius:7px;padding:5px 10px;width:200px;font-family:monospace;"/>
+              <button onclick="admLoadUsers()" class="ab ab-view"><i class="fas fa-sync mr-1"></i>Refresh</button>
+            </div>
+          </div>
+          <div id="adm-users-table"></div>
+        </div>
+      </div>
+
+      <!-- ── TAB: REPORTS ── -->
       <div id="atab-content-reports" style="display:none;">
         <div class="card p-5">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+          <div class="adm-section-hd">
             <h2 style="font-size:16px;font-weight:700;color:#1e293b;margin:0;"><i class="fas fa-flag text-red-500 mr-2"></i>User Reports</h2>
-            <button onclick="adminLoadReports()" class="btn-secondary text-xs py-1.5"><i class="fas fa-sync mr-1"></i>Refresh</button>
+            <button onclick="admLoadReports()" class="ab ab-view"><i class="fas fa-sync mr-1"></i>Refresh</button>
           </div>
-          <div id="admin-reports-table">
-            <div style="text-align:center;padding:40px;color:#94a3b8;"><div class="loading-spinner-lg mx-auto mb-3"></div>Loading…</div>
-          </div>
+          <div id="adm-reports-table"></div>
         </div>
       </div>
 
-      <!-- Tab: Security Log -->
-      <div id="atab-content-security" style="display:none;">
+      <!-- ── TAB: AUDIT LOG ── -->
+      <div id="atab-content-audit" style="display:none;">
         <div class="card p-5">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-            <h2 style="font-size:16px;font-weight:700;color:#1e293b;margin:0;"><i class="fas fa-shield-alt text-red-500 mr-2"></i>Security Log</h2>
-            <button onclick="adminClearSecLog()" class="btn-secondary text-xs py-1.5 text-red-600"><i class="fas fa-trash mr-1"></i>Clear</button>
+          <div class="adm-section-hd">
+            <h2 style="font-size:16px;font-weight:700;color:#1e293b;margin:0;"><i class="fas fa-clipboard-list text-red-500 mr-2"></i>Audit Log</h2>
+            <div style="display:flex;gap:8px;">
+              <input id="adm-audit-search" oninput="admFilterAudit()" placeholder="Filter entries…" style="font-size:11px;border:1px solid #e2e8f0;border-radius:7px;padding:5px 10px;width:180px;"/>
+              <button onclick="admClearAudit()" class="ab ab-delete" style="font-size:11px;"><i class="fas fa-trash mr-1"></i>Clear</button>
+              <button onclick="admExportAudit()" class="ab ab-view" style="font-size:11px;"><i class="fas fa-download mr-1"></i>Export</button>
+            </div>
           </div>
-          <div id="admin-security-log"></div>
+          <div id="adm-audit-list"></div>
         </div>
       </div>
 
-      <!-- Tab: Whitelist -->
-      <div id="atab-content-whitelist" style="display:none;">
-        <div class="card p-5">
-          <h2 style="font-size:16px;font-weight:700;color:#1e293b;margin:0 0 16px;"><i class="fas fa-users text-red-500 mr-2"></i>Admin Wallet Whitelist</h2>
-          <div id="admin-whitelist-list" style="margin-bottom:16px;"></div>
+      <!-- ── TAB: SETTINGS ── -->
+      <div id="atab-content-settings" style="display:none;">
+        <div class="card p-5 mb-4">
+          <h2 style="font-size:16px;font-weight:700;color:#1e293b;margin:0 0 16px;"><i class="fas fa-shield-alt text-red-500 mr-2"></i>Admin Whitelist</h2>
+          <p style="font-size:12px;color:#64748b;margin:0 0 14px;">Whitelisted wallets have full admin access. Changes take effect immediately.</p>
+          <div id="adm-whitelist-list" style="margin-bottom:14px;"></div>
           <div style="display:flex;gap:8px;">
-            <input id="admin-wl-input" class="input flex-1" placeholder="0x… wallet address" />
-            <button onclick="adminAddWhitelist()" class="btn-primary px-4"><i class="fas fa-plus mr-1"></i>Add</button>
+            <input id="adm-wl-input" class="input flex-1" placeholder="0x… wallet address" style="font-family:monospace;font-size:12px;"/>
+            <button onclick="admAddWhitelist()" class="btn-primary px-4 text-sm"><i class="fas fa-plus mr-1"></i>Add Admin</button>
+          </div>
+        </div>
+        <div class="card p-5">
+          <h2 style="font-size:16px;font-weight:700;color:#1e293b;margin:0 0 16px;"><i class="fas fa-sliders-h text-red-500 mr-2"></i>Platform Settings</h2>
+          <div style="display:grid;gap:14px;">
+            <label style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+              <div><p style="font-weight:600;font-size:13px;color:#1e293b;margin:0;">Maintenance Mode</p><p style="font-size:11px;color:#94a3b8;margin:2px 0 0;">Show maintenance banner to all users</p></div>
+              <input type="checkbox" id="adm-maintenance" onchange="admToggleSetting('maintenance')" style="width:18px;height:18px;cursor:pointer;"/>
+            </label>
+            <label style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+              <div><p style="font-weight:600;font-size:13px;color:#1e293b;margin:0;">New Registrations</p><p style="font-size:11px;color:#94a3b8;margin:2px 0 0;">Allow new users to register</p></div>
+              <input type="checkbox" id="adm-registrations" checked onchange="admToggleSetting('registrations')" style="width:18px;height:18px;cursor:pointer;"/>
+            </label>
           </div>
         </div>
       </div>
 
-    </div><!-- /admin-panel -->
+    </div><!-- /adm-panel -->
   </div>
 
-  <style>
-  .admin-tab{padding:7px 16px;border:none;border-radius:9px;font-size:12px;font-weight:600;cursor:pointer;background:transparent;color:#64748b;transition:all .2s}
-  .admin-tab:hover{background:#fff;color:#334155}
-  .admin-tab.active-tab{background:#fff;color:#dc2626;box-shadow:0 2px 6px rgba(0,0,0,.08)}
-  .admin-tbl{width:100%;border-collapse:collapse;font-size:12px}
-  .admin-tbl th{background:#f8fafc;color:#64748b;font-weight:700;padding:8px 10px;text-align:left;border-bottom:2px solid #e2e8f0;text-transform:uppercase;font-size:11px}
-  .admin-tbl td{padding:10px;border-bottom:1px solid #f1f5f9;color:#334155;vertical-align:middle}
-  .admin-tbl tr:hover td{background:#fafafa}
-  .admin-action-btn{padding:4px 10px;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer}
-  .admin-refund-btn{background:#dbeafe;color:#1d4ed8}
-  .admin-release-btn{background:#dcfce7;color:#15803d}
-  .admin-remove-btn{background:#fee2e2;color:#dc2626}
-  .admin-flag-btn{background:#fef3c7;color:#92400e}
-  .admin-ban-btn{background:#fce7f3;color:#9d174d}
-  .admin-ignore-btn{background:#f1f5f9;color:#64748b}
-  .admin-sec-entry{display:flex;gap:10px;padding:10px 12px;border-bottom:1px solid #f1f5f9;font-size:12px}
-  .admin-sec-icon{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:12px}
-  </style>
+  <!-- ── MODAL ROOT ── -->
+  <div id="adm-modal-root"></div>
 
   <script>
-  var ADMIN_WHITELIST_KEY = 'rh_admin_whitelist';
-  var ADMIN_SECLOG_KEY    = 'rh_admin_seclog';
-  var ADMIN_REPORTS_KEY   = 'rh_admin_reports';
-  var _adminAuthorized    = false;
+  // ══════════════════════════════════════════════════════════════
+  //  ADMIN PANEL — Shukly Store
+  //  All actions are additive UI-layer only.
+  //  Dispute arbitration uses EXISTING contract functions only.
+  // ══════════════════════════════════════════════════════════════
 
-  function getAdminWhitelist() {
-    try { return JSON.parse(localStorage.getItem(ADMIN_WHITELIST_KEY) || '[]'); } catch(e) { return []; }
-  }
-  function saveAdminWhitelist(list) { localStorage.setItem(ADMIN_WHITELIST_KEY, JSON.stringify(list)); }
-  function getSecLog() {
-    try { return JSON.parse(localStorage.getItem(ADMIN_SECLOG_KEY) || '[]'); } catch(e) { return []; }
-  }
-  function addSecLog(event, addr, detail) {
-    var log = getSecLog();
-    log.unshift({ ts: new Date().toISOString(), event: event, addr: addr || '—', detail: detail || '' });
-    if (log.length > 200) log = log.slice(0, 200);
-    localStorage.setItem(ADMIN_SECLOG_KEY, JSON.stringify(log));
-  }
-  function escH(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-  function shortA(a) { if(!a||a.length<10) return a||'—'; return a.slice(0,8)+'…'+a.slice(-6); }
+  var ADM_WHITELIST_KEY  = 'rh_admin_whitelist';
+  var ADM_AUDIT_KEY      = 'rh_admin_audit';
+  var ADM_BANNED_KEY     = 'rh_admin_banned';
+  var ADM_REPORTS_KEY    = 'rh_admin_reports';
+  var ADM_SETTINGS_KEY   = 'rh_admin_settings';
+  var _admAddr           = null;
+  var _admAuth           = false;
+  var _admAllProducts    = [];
+  var _admAllUsers       = [];
+  var _admAllAudit       = [];
 
-  function adminTab(tab) {
-    ['disputes','products','reports','security','whitelist'].forEach(function(t) {
+  // ── Helpers ──────────────────────────────────────────────────
+  function admEsc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function admShort(a){ if(!a||a.length<10) return a||'—'; return a.slice(0,8)+'…'+a.slice(-6); }
+  function admGetWL(){ try{ return JSON.parse(localStorage.getItem(ADM_WHITELIST_KEY)||'[]'); }catch(e){ return []; } }
+  function admSaveWL(l){ localStorage.setItem(ADM_WHITELIST_KEY, JSON.stringify(l)); }
+  function admGetAudit(){ try{ return JSON.parse(localStorage.getItem(ADM_AUDIT_KEY)||'[]'); }catch(e){ return []; } }
+  function admGetBanned(){ try{ return JSON.parse(localStorage.getItem(ADM_BANNED_KEY)||'[]'); }catch(e){ return []; } }
+  function admSaveBanned(l){ localStorage.setItem(ADM_BANNED_KEY, JSON.stringify(l)); }
+  function admGetSettings(){ try{ return JSON.parse(localStorage.getItem(ADM_SETTINGS_KEY)||'{}'); }catch(e){ return {}; } }
+  function admSaveSettings(s){ localStorage.setItem(ADM_SETTINGS_KEY, JSON.stringify(s)); }
+
+  function admAudit(action, target, detail){
+    var log = admGetAudit();
+    log.unshift({ ts: new Date().toISOString(), action: action, admin: _admAddr||'unknown', target: target||'—', detail: detail||'' });
+    if(log.length>500) log=log.slice(0,500);
+    localStorage.setItem(ADM_AUDIT_KEY, JSON.stringify(log));
+    admUpdateStats();
+  }
+
+  function admUpdateStats(){
+    var orders=[]; try{ orders=JSON.parse(localStorage.getItem('rh_orders')||'[]'); }catch(e){}
+    var banned=admGetBanned();
+    var audit=admGetAudit();
+    var openDisp=orders.filter(function(o){return o.status==='dispute';}).length;
+    var resolved=orders.filter(function(o){return o.disputeResolution;}).length;
+    var el=function(id){ return document.getElementById(id); };
+    if(el('stat-disputes')) el('stat-disputes').textContent=openDisp;
+    if(el('stat-banned'))   el('stat-banned').textContent=banned.length;
+    if(el('stat-resolved')) el('stat-resolved').textContent=resolved;
+    if(el('stat-audit'))    el('stat-audit').textContent=audit.length;
+  }
+
+  // ── Tab navigation ────────────────────────────────────────────
+  var ADM_TABS = ['disputes','products','users','reports','audit','settings'];
+  function admTab(tab){
+    ADM_TABS.forEach(function(t){
       var btn = document.getElementById('atab-'+t);
       var con = document.getElementById('atab-content-'+t);
-      if(btn) btn.classList.toggle('active-tab', t===tab);
+      if(btn) btn.classList.toggle('active', t===tab);
       if(con) con.style.display = t===tab ? '' : 'none';
     });
-    if(tab==='disputes') adminLoadDisputes();
-    if(tab==='products') adminLoadProducts();
-    if(tab==='reports')  adminLoadReports();
-    if(tab==='security') adminRenderSecLog();
-    if(tab==='whitelist') adminRenderWhitelist();
+    if(tab==='disputes') admLoadDisputes();
+    if(tab==='products') admLoadProducts();
+    if(tab==='users')    admLoadUsers();
+    if(tab==='reports')  admLoadReports();
+    if(tab==='audit')    admRenderAudit();
+    if(tab==='settings'){ admRenderWhitelist(); admLoadSettings(); }
   }
 
-  /* ── Disputes ── */
-  function adminLoadDisputes() {
-    var el = document.getElementById('admin-disputes-table');
-    if(!el) return;
-    var orders = [];
-    try { orders = JSON.parse(localStorage.getItem('rh_orders')||'[]'); } catch(e){}
-    var disputes = orders.filter(function(o){ return o.status==='dispute' || o.disputeResolution; });
-    var meta = {};
-    try { meta = JSON.parse(localStorage.getItem('rh_disputes_v2')||'{}'); } catch(e){}
+  function admRefreshAll(){
+    admUpdateStats();
+    var active = ADM_TABS.find(function(t){ var b=document.getElementById('atab-'+t); return b&&b.classList.contains('active'); });
+    if(active) admTab(active);
+    showToast('Refreshed','success');
+  }
 
-    if(!disputes.length) {
-      el.innerHTML = '<p style="text-align:center;color:#94a3b8;padding:30px;">No disputes found.</p>';
+  // ════════════════════════════════════════════════════════════
+  //  DISPUTES — arbitration using existing contract functions
+  // ════════════════════════════════════════════════════════════
+  function admLoadDisputes(){
+    var el=document.getElementById('adm-disputes-table'); if(!el) return;
+    el.innerHTML='<div style="text-align:center;padding:30px;color:#94a3b8;"><div class="loading-spinner-lg mx-auto mb-3"></div>Loading disputes…</div>';
+    var orders=[]; try{ orders=JSON.parse(localStorage.getItem('rh_orders')||'[]'); }catch(e){}
+    var filter=document.getElementById('adm-disp-filter');
+    var fv = filter ? filter.value : 'all';
+    var rows = orders.filter(function(o){
+      if(fv==='dispute')  return o.status==='dispute';
+      if(fv==='resolved') return !!o.disputeResolution;
+      return o.status==='dispute' || !!o.disputeResolution;
+    });
+    document.getElementById('stat-disputes').textContent = orders.filter(function(o){return o.status==='dispute';}).length;
+    if(!rows.length){
+      el.innerHTML='<div style="text-align:center;padding:40px;color:#94a3b8;"><i class="fas fa-gavel" style="font-size:32px;margin-bottom:12px;display:block;"></i><p>No disputes found.</p></div>';
       return;
     }
-    var rows = disputes.map(function(d) {
-      var dm = meta[d.id] || {};
-      var status = dm.status || d.status || 'dispute';
-      var ev = {}; try { ev = JSON.parse(localStorage.getItem('rh_dispute_evidence')||'{}')[d.id]||{buyer:[],seller:[]}; } catch(e){ ev={buyer:[],seller:[]}; }
-      var bEv = (ev.buyer||[]).length, sEv = (ev.seller||[]).length;
-      return '<tr>' +
-        '<td style="font-family:monospace;">'+escH(d.id.slice(0,10))+'…</td>' +
-        '<td style="font-family:monospace;">'+escH(shortA(d.buyerAddress))+'</td>' +
-        '<td style="font-family:monospace;">'+escH(shortA(d.sellerAddress))+'</td>' +
-        '<td><span style="background:#fee2e2;color:#dc2626;font-size:10px;padding:3px 7px;border-radius:6px;font-weight:700;">'+escH(status)+'</span></td>' +
-        '<td>'+new Date(d.disputedAt||d.createdAt).toLocaleDateString()+'</td>' +
-        '<td>'+escH(String(bEv))+'/'+escH(String(sEv))+'</td>' +
-        '<td style="display:flex;gap:5px;flex-wrap:wrap;">' +
-        '<button class="admin-action-btn admin-refund-btn" onclick="adminResolveDispute(\''+escH(d.id)+'\',\'refund\')">Refund</button>' +
-        '<button class="admin-action-btn admin-release-btn" onclick="adminResolveDispute(\''+escH(d.id)+'\',\'release\')">Release</button>' +
-        '<button class="admin-action-btn admin-flag-btn" onclick="adminForceResolve(\''+escH(d.id)+'\')">Force</button>' +
+    var html='<div style="overflow-x:auto;"><table class="adm-tbl"><thead><tr>'+
+      '<th>Order ID</th><th>Buyer</th><th>Seller</th><th>Amount</th><th>Status</th><th>Date</th><th>Evidence</th><th>Actions</th>'+
+      '</tr></thead><tbody>';
+    rows.forEach(function(d){
+      var ev={}; try{ ev=JSON.parse(localStorage.getItem('rh_dispute_evidence')||'{}')[d.id]||[]; }catch(e){}
+      var evCount=Array.isArray(ev)?ev.length:0;
+      var statusBadge = d.disputeResolution
+        ? '<span class="adm-badge adm-badge-resolved"><i class="fas fa-check-circle"></i> Resolved: '+admEsc(d.disputeResolution)+'</span>'
+        : '<span class="adm-badge adm-badge-dispute"><i class="fas fa-lock"></i> Open</span>';
+      html+='<tr>'+
+        '<td><code style="font-size:10px;">'+admEsc(d.id.slice(0,12))+'…</code></td>'+
+        '<td><code style="font-size:10px;">'+admEsc(admShort(d.buyerAddress))+'</code></td>'+
+        '<td><code style="font-size:10px;">'+admEsc(admShort(d.sellerAddress))+'</code></td>'+
+        '<td style="font-weight:700;">'+admEsc(String(d.amount||0))+' '+admEsc(d.token||'USDC')+'</td>'+
+        '<td>'+statusBadge+'</td>'+
+        '<td>'+new Date(d.disputedAt||d.createdAt).toLocaleDateString()+'</td>'+
+        '<td style="text-align:center;"><span style="font-weight:700;color:'+(evCount>0?'#0369a1':'#94a3b8')+';">'+evCount+'</span></td>'+
+        '<td style="white-space:nowrap;">'+
+        (d.disputeResolution
+          ? '<span style="color:#94a3b8;font-size:11px;">Resolved</span>'
+          : '<div style="display:flex;gap:5px;flex-wrap:wrap;">'+
+            '<button class="ab ab-view" onclick="admViewDispute(\''+admEsc(d.id)+'\')"><i class="fas fa-eye mr-1"></i>View</button>'+
+            '<button class="ab ab-refund" onclick="admShowResolveModal(\''+admEsc(d.id)+'\',\'refund\')"><i class="fas fa-undo mr-1"></i>Refund</button>'+
+            '<button class="ab ab-release" onclick="admShowResolveModal(\''+admEsc(d.id)+'\',\'release\')"><i class="fas fa-coins mr-1"></i>Release</button>'+
+            '</div>')+
         '</td></tr>';
-    }).join('');
-    el.innerHTML = '<div style="overflow-x:auto;"><table class="admin-tbl"><thead><tr><th>Order</th><th>Buyer</th><th>Seller</th><th>Status</th><th>Date</th><th>Ev B/S</th><th>Actions</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    });
+    html+='</tbody></table></div>';
+    el.innerHTML=html;
   }
 
-  function adminResolveDispute(orderId, action) {
-    if(!confirm('Resolve dispute #'+orderId+' — action: '+action+'?')) return;
-    var orders = []; try { orders = JSON.parse(localStorage.getItem('rh_orders')||'[]'); } catch(e){}
-    var idx = orders.findIndex(function(o){ return o.id===orderId; });
-    if(idx<0) { alert('Order not found'); return; }
-    orders[idx].status='completed'; orders[idx].disputeResolution=action; orders[idx].resolvedAt=new Date().toISOString();
+  function admViewDispute(orderId){
+    var orders=[]; try{ orders=JSON.parse(localStorage.getItem('rh_orders')||'[]'); }catch(e){}
+    var d=orders.find(function(o){return o.id===orderId;});
+    if(!d){ showToast('Order not found','error'); return; }
+    var ev=[]; try{ ev=JSON.parse(localStorage.getItem('rh_dispute_evidence')||'{}')[orderId]||[]; }catch(e){}
+    var root=document.getElementById('adm-modal-root');
+    if(!root) return;
+    root.innerHTML='<div class="adm-modal-overlay" id="adm-disp-view-overlay">'+
+      '<div class="adm-modal" style="max-width:560px;">'+
+      '<div class="adm-modal-hd">'+
+      '<div style="display:flex;align-items:center;gap:10px;"><div style="width:36px;height:36px;border-radius:9px;background:#fee2e2;display:flex;align-items:center;justify-content:center;"><i class="fas fa-gavel" style="color:#dc2626;"></i></div>'+
+      '<div><p style="font-weight:700;margin:0;font-size:15px;">Dispute Details</p><p style="margin:0;font-size:11px;color:#94a3b8;">Order: '+admEsc(orderId.slice(0,16))+'…</p></div></div>'+
+      '<button onclick="document.getElementById(\'adm-modal-root\').innerHTML=\'\'" style="background:#f8fafc;border:none;width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:18px;">&times;</button>'+
+      '</div>'+
+      '<div class="adm-modal-bd" style="display:grid;gap:10px;font-size:13px;">'+
+      '<div style="background:#f8fafc;border-radius:9px;padding:12px;display:grid;gap:6px;">'+
+      '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;">Buyer</span><code style="font-size:11px;">'+admEsc(d.buyerAddress||'—')+'</code></div>'+
+      '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;">Seller</span><code style="font-size:11px;">'+admEsc(d.sellerAddress||'—')+'</code></div>'+
+      '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;">Amount</span><strong>'+admEsc(String(d.amount||0))+' '+admEsc(d.token||'USDC')+'</strong></div>'+
+      '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;">Disputed At</span><span>'+new Date(d.disputedAt||d.createdAt).toLocaleString()+'</span></div>'+
+      '</div>'+
+      (ev.length?'<div><p style="font-weight:700;font-size:12px;color:#475569;margin:0 0 8px;">Evidence ('+ev.length+' submission'+(ev.length>1?'s':'')+')</p>'+
+      ev.map(function(e,i){ return '<div style="background:#f8fafc;border-radius:8px;padding:10px;margin-bottom:6px;font-size:12px;">'+
+        '<strong>'+admEsc(admShort(e.submittedBy))+'</strong> — '+new Date(e.submittedAt).toLocaleString()+'<br/>'+
+        '<em style="color:#475569;">'+admEsc((e.description||'').slice(0,120))+'</em>'+
+        (e.files&&e.files.length?'<p style="margin:4px 0 0;color:#64748b;">'+e.files.length+' file(s) attached</p>':'')+
+        '</div>'; }).join('')+'</div>':'<p style="color:#94a3b8;font-size:12px;">No evidence submitted yet.</p>')+
+      '</div>'+
+      '<div class="adm-modal-ft">'+
+      '<button onclick="document.getElementById(\'adm-modal-root\').innerHTML=\'\'" class="btn-secondary text-sm">Close</button>'+
+      (d.disputeResolution?'':
+        '<button onclick="admShowResolveModal(\''+admEsc(orderId)+'\',\'refund\')" class="ab ab-refund" style="padding:8px 18px;"><i class="fas fa-undo mr-1"></i>Refund Buyer</button>'+
+        '<button onclick="admShowResolveModal(\''+admEsc(orderId)+'\',\'release\')" class="ab ab-release" style="padding:8px 18px;"><i class="fas fa-coins mr-1"></i>Release to Seller</button>')+
+      '</div></div></div>';
+    document.getElementById('adm-disp-view-overlay').addEventListener('click',function(e){ if(e.target===this) root.innerHTML=''; });
+  }
+
+  function admShowResolveModal(orderId, action){
+    var root=document.getElementById('adm-modal-root'); if(!root) return;
+    var isRefund = action==='refund';
+    var color  = isRefund ? '#1d4ed8' : '#15803d';
+    var bg     = isRefund ? '#eff6ff' : '#f0fdf4';
+    var border = isRefund ? '#bfdbfe' : '#bbf7d0';
+    var icon   = isRefund ? 'fa-undo' : 'fa-coins';
+    var label  = isRefund ? 'Refund Buyer' : 'Release to Seller';
+    root.innerHTML='<div class="adm-modal-overlay" id="adm-resolve-overlay">'+
+      '<div class="adm-modal">'+
+      '<div class="adm-modal-hd">'+
+      '<div style="display:flex;align-items:center;gap:10px;"><div style="width:36px;height:36px;border-radius:9px;background:'+bg+';display:flex;align-items:center;justify-content:center;border:1px solid '+border+';">'+
+      '<i class="fas '+icon+'" style="color:'+color+';"></i></div>'+
+      '<div><p style="font-weight:700;margin:0;font-size:15px;">Resolve Dispute: '+admEsc(label)+'</p><p style="margin:0;font-size:11px;color:#94a3b8;">Order: '+admEsc(orderId.slice(0,16))+'…</p></div></div>'+
+      '<button onclick="document.getElementById(\'adm-modal-root\').innerHTML=\'\'" style="background:#f8fafc;border:none;width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:18px;">&times;</button>'+
+      '</div>'+
+      '<div class="adm-modal-bd">'+
+      '<div style="background:'+bg+';border:1px solid '+border+';border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13px;color:'+color+';">'+
+      '<i class="fas fa-info-circle mr-2"></i>'+
+      (isRefund
+        ? 'This will call <strong>refundBuyer()</strong> on the ShuklyEscrow contract to return funds to the buyer.'
+        : 'This will call <strong>releaseFunds()</strong> on the ShuklyEscrow contract to release funds to the seller.')+
+      '</div>'+
+      '<div style="margin-bottom:14px;"><label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:5px;">Reason for decision <span style="color:#dc2626;">*</span></label>'+
+      '<textarea id="adm-resolve-reason" rows="3" placeholder="Explain your arbitration decision…" style="width:100%;padding:9px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;resize:vertical;box-sizing:border-box;font-family:inherit;"></textarea></div>'+
+      '<div style="background:#fff9f9;border:1px solid #fecaca;border-radius:9px;padding:10px 14px;font-size:12px;color:#7f1d1d;">'+
+      '<i class="fas fa-exclamation-triangle mr-2"></i><strong>This action is irreversible.</strong> Funds will be transferred on-chain using the connected admin wallet.'+
+      '</div></div>'+
+      '<div class="adm-modal-ft">'+
+      '<button onclick="document.getElementById(\'adm-modal-root\').innerHTML=\'\'" class="btn-secondary text-sm">Cancel</button>'+
+      '<button id="adm-resolve-confirm-btn" onclick="admExecuteResolve(\''+admEsc(orderId)+'\',\''+action+'\')" style="background:'+color+';color:#fff;border:none;border-radius:9px;padding:9px 22px;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:7px;">'+
+      '<i class="fas '+icon+'"></i> Confirm: '+admEsc(label)+'</button>'+
+      '</div></div></div>';
+    document.getElementById('adm-resolve-overlay').addEventListener('click',function(e){ if(e.target===this) root.innerHTML=''; });
+  }
+
+  async function admExecuteResolve(orderId, action){
+    var reason=document.getElementById('adm-resolve-reason');
+    var reasonText = reason ? reason.value.trim() : '';
+    if(!reasonText){ showToast('Please enter a reason for your decision','error'); return; }
+
+    var btn=document.getElementById('adm-resolve-confirm-btn');
+    if(btn){ btn.disabled=true; btn.innerHTML='<div class="loading-spinner" style="display:inline-block;margin-right:8px;"></div>Processing…'; }
+
+    var orders=[]; try{ orders=JSON.parse(localStorage.getItem('rh_orders')||'[]'); }catch(e){}
+    var idx=orders.findIndex(function(o){return o.id===orderId;});
+    if(idx<0){ showToast('Order not found in localStorage','error'); if(btn){ btn.disabled=false; } return; }
+    var order=orders[idx];
+
+    // Attempt on-chain execution if orderId32 and wallet available
+    var onChainSuccess = false;
+    if(order.orderId32){
+      try{
+        var w = typeof getStoredWallet==='function' ? getStoredWallet() : null;
+        if(!w){ showToast('Connect admin wallet to execute on-chain','warning'); }
+        else{
+          var provider, signer;
+          if(w.type==='metamask' && window.ethereum){
+            provider = new ethers.BrowserProvider(window.ethereum);
+            var net = await provider.getNetwork();
+            if(net.chainId !== BigInt(window.ARC.chainId)){
+              showToast('Switch MetaMask to Arc Testnet first','warning');
+            } else {
+              signer = await provider.getSigner();
+            }
+          } else if((w.type==='internal'||w.type==='imported') && w.privateKey && !w.privateKey.startsWith('[')){
+            provider = new ethers.JsonRpcProvider(window.ARC.rpc);
+            signer   = new ethers.Wallet(w.privateKey, provider);
+          }
+          if(signer){
+            var escAddr = typeof getEscrowAddress==='function' ? getEscrowAddress() : null;
+            if(escAddr && escAddr !== '0x0000000000000000000000000000000000000000'){
+              var contract = new ethers.Contract(escAddr, ESCROW_ABI, signer);
+              var tx;
+              if(action==='refund'){
+                tx = await contract.refundBuyer(order.orderId32, { gasLimit:200000 });
+              } else {
+                tx = await contract.releaseFunds(order.orderId32, { gasLimit:200000 });
+              }
+              showToast('Tx sent: '+tx.hash.slice(0,14)+'… waiting…','info');
+              var receipt = await tx.wait(1);
+              if(!receipt||receipt.status===0) throw new Error('Contract call reverted');
+              onChainSuccess = true;
+              orders[idx][action==='refund'?'refundTxHash':'releaseTxHash'] = tx.hash;
+              showToast('On-chain execution successful!','success');
+            }
+          }
+        }
+      } catch(err){
+        var msg = err.code==='ACTION_REJECTED'||err.code===4001 ? 'Transaction rejected' : (err.shortMessage||err.message||'Contract call failed');
+        showToast('On-chain error: '+msg+' — updating status locally only','warning');
+      }
+    }
+
+    // Always update local state
+    orders[idx].status            = 'completed';
+    orders[idx].disputeResolution = action;
+    orders[idx].resolvedAt        = new Date().toISOString();
+    orders[idx].resolvedBy        = _admAddr;
+    orders[idx].resolveReason     = reasonText;
     localStorage.setItem('rh_orders', JSON.stringify(orders));
-    var meta = {}; try { meta = JSON.parse(localStorage.getItem('rh_disputes_v2')||'{}'); } catch(e){}
-    if(meta[orderId]) { meta[orderId].status='resolved'; meta[orderId].resolution=action; meta[orderId].resolvedAt=new Date().toISOString(); localStorage.setItem('rh_disputes_v2', JSON.stringify(meta)); }
-    addSecLog('admin_resolve', _adminAddr, 'Resolved dispute '+orderId+' → '+action);
-    showToast('Dispute resolved: '+action, 'success');
-    adminLoadDisputes();
+
+    admAudit('dispute_resolve', orderId, action+' — '+reasonText+(onChainSuccess?' [on-chain]':' [local-only]'));
+    document.getElementById('adm-modal-root').innerHTML='';
+    showToast('Dispute resolved: '+action+(onChainSuccess?' (on-chain)':' (local)'),'success');
+    admLoadDisputes();
+    admUpdateStats();
   }
 
-  function adminForceResolve(orderId) {
-    var action = prompt('Force resolve — type "refund" or "release":');
-    if(action==='refund'||action==='release') adminResolveDispute(orderId, action);
-  }
-
-  /* ── Products ── */
-  function adminLoadProducts() {
-    var el = document.getElementById('admin-products-table');
-    if(!el) return;
-    el.innerHTML = '<div style="text-align:center;padding:20px;color:#94a3b8;">Loading products…</div>';
-    fetch('/api/products?limit=100').then(function(r){ return r.json(); }).then(function(data){
-      var products = Array.isArray(data.products) ? data.products : [];
-      if(!products.length) { el.innerHTML = '<p style="text-align:center;color:#94a3b8;padding:30px;">No products found.</p>'; return; }
-      var rows = products.map(function(p) {
-        return '<tr>' +
-          '<td>' + escH(p.id||'') + '</td>' +
-          '<td>' + escH((p.title||'').slice(0,30)) + '</td>' +
-          '<td style="font-family:monospace;">' + escH(shortA(p.seller_id)) + '</td>' +
-          '<td>' + escH(String(p.price||0)) + ' ' + escH(p.token||'USDC') + '</td>' +
-          '<td><span style="background:#' + (p.status==='active'?'dcfce7;color:#15803d':'fee2e2;color:#dc2626') + ';font-size:10px;padding:3px 7px;border-radius:6px;font-weight:700;">' + escH(p.status||'') + '</span></td>' +
-          '<td style="display:flex;gap:5px;flex-wrap:wrap;">' +
-          '<button class="admin-action-btn admin-remove-btn" onclick="adminRemoveProduct(\''+escH(p.id)+'\',\''+escH(p.seller_id)+'\')">Remove</button>' +
-          '<button class="admin-action-btn admin-flag-btn" onclick="adminFlagProduct(\''+escH(p.id)+'\')">Flag</button>' +
-          '<button class="admin-action-btn admin-ban-btn" onclick="adminBanSeller(\''+escH(p.seller_id)+'\')">Ban Seller</button>' +
-          '</td></tr>';
-      }).join('');
-      el.innerHTML = '<div style="overflow-x:auto;"><table class="admin-tbl"><thead><tr><th>ID</th><th>Title</th><th>Seller</th><th>Price</th><th>Status</th><th>Actions</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
-    }).catch(function(e){ el.innerHTML = '<p style="color:#dc2626;padding:20px;">Error loading products: '+escH(e.message)+'</p>'; });
-  }
-
-  function adminRemoveProduct(id, seller) {
-    if(!confirm('Remove product '+id+'?')) return;
-    var w = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
-    if(!w) { alert('Connect wallet'); return; }
-    fetch('/api/products/'+encodeURIComponent(id), { method:'DELETE', headers:{'Content-Type':'application/json'}, body:JSON.stringify({seller_id:w.address.toLowerCase()}) })
+  // ════════════════════════════════════════════════════════════
+  //  PRODUCTS — moderation
+  // ════════════════════════════════════════════════════════════
+  function admLoadProducts(){
+    var el=document.getElementById('adm-products-table'); if(!el) return;
+    el.innerHTML='<div style="text-align:center;padding:30px;color:#94a3b8;"><div class="loading-spinner-lg mx-auto mb-3"></div>Loading products…</div>';
+    var ctrl=new AbortController();
+    setTimeout(function(){ctrl.abort();},8000);
+    fetch('/api/products?limit=200',{signal:ctrl.signal})
       .then(function(r){ return r.json(); })
-      .then(function(d){ addSecLog('admin_remove_product', _adminAddr, 'Removed product '+id); showToast('Product removed', 'success'); adminLoadProducts(); })
-      .catch(function(e){ showToast('Error: '+e.message, 'error'); });
+      .then(function(data){
+        _admAllProducts = Array.isArray(data.products) ? data.products : [];
+        document.getElementById('stat-products').textContent = _admAllProducts.filter(function(p){return p.status==='active';}).length;
+        admRenderProducts(_admAllProducts);
+      })
+      .catch(function(e){ el.innerHTML='<p style="color:#dc2626;padding:20px;font-size:13px;"><i class="fas fa-exclamation-circle mr-2"></i>Error loading products: '+admEsc(e.message)+'</p>'; });
   }
 
-  function adminFlagProduct(id) { addSecLog('admin_flag_product', _adminAddr, 'Flagged product '+id); showToast('Product flagged in security log', 'info'); }
-  function adminBanSeller(addr) { addSecLog('admin_ban_seller', _adminAddr, 'Banned seller '+addr); showToast('Seller ban logged: '+addr.slice(0,10)+'…', 'warning'); }
+  function admFilterProducts(){
+    var q=(document.getElementById('adm-prod-search')||{}).value||'';
+    var s=(document.getElementById('adm-prod-status')||{}).value||'all';
+    q=q.toLowerCase();
+    var filtered=_admAllProducts.filter(function(p){
+      var matchQ = !q || (p.title||'').toLowerCase().includes(q) || (p.seller_id||'').toLowerCase().includes(q);
+      var matchS = s==='all' || p.status===s;
+      return matchQ && matchS;
+    });
+    admRenderProducts(filtered);
+  }
 
-  /* ── Reports ── */
-  function adminLoadReports() {
-    var el = document.getElementById('admin-reports-table');
-    if(!el) return;
-    var reports = []; try { reports = JSON.parse(localStorage.getItem(ADMIN_REPORTS_KEY)||'[]'); } catch(e){}
-    if(!reports.length) { el.innerHTML = '<p style="text-align:center;color:#94a3b8;padding:30px;">No reports found.</p>'; return; }
-    var rows = reports.map(function(r, i) {
-      return '<tr>' +
-        '<td>'+escH(r.type||'report')+'</td>' +
-        '<td>'+escH(r.target||'—')+'</td>' +
-        '<td style="font-family:monospace;">'+escH(shortA(r.reporter||''))+'</td>' +
-        '<td>'+escH((r.reason||'').slice(0,60))+'</td>' +
-        '<td>'+new Date(r.ts||0).toLocaleDateString()+'</td>' +
-        '<td style="display:flex;gap:5px;">' +
-        '<button class="admin-action-btn admin-ignore-btn" onclick="adminIgnoreReport('+i+')">Ignore</button>' +
-        '<button class="admin-action-btn admin-remove-btn" onclick="adminRemoveReport('+i+')">Remove</button>' +
-        '<button class="admin-action-btn admin-flag-btn" onclick="adminFlagReport('+i+')">Flag</button>' +
-        '</td></tr>';
+  function admRenderProducts(products){
+    var el=document.getElementById('adm-products-table'); if(!el) return;
+    if(!products.length){ el.innerHTML='<div style="text-align:center;padding:40px;color:#94a3b8;"><i class="fas fa-boxes" style="font-size:32px;margin-bottom:12px;display:block;"></i><p>No products found.</p></div>'; return; }
+    var banned=admGetBanned();
+    var html='<div style="overflow-x:auto;"><table class="adm-tbl"><thead><tr>'+
+      '<th>ID</th><th>Title</th><th>Seller</th><th>Price</th><th>Status</th><th>Actions</th>'+
+      '</tr></thead><tbody>';
+    products.forEach(function(p){
+      var isBanned=banned.includes((p.seller_id||'').toLowerCase());
+      var statusBadge = p.status==='active'
+        ? '<span class="adm-badge adm-badge-active"><i class="fas fa-circle" style="font-size:7px;"></i> Active</span>'
+        : p.status==='paused'
+          ? '<span class="adm-badge adm-badge-paused"><i class="fas fa-pause-circle" style="font-size:10px;"></i> Paused</span>'
+          : '<span class="adm-badge" style="background:#f1f5f9;color:#64748b;">'+admEsc(p.status||'unknown')+'</span>';
+      html+='<tr>'+
+        '<td><code style="font-size:10px;">'+admEsc((p.id||'').slice(0,12))+'</code></td>'+
+        '<td style="max-width:180px;"><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;">'+admEsc((p.title||'').slice(0,35))+'</div>'+
+        (p.description?'<div style="font-size:10px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;">'+admEsc((p.description||'').slice(0,50))+'</div>':'')+
+        '</td>'+
+        '<td><code style="font-size:10px;"'+( isBanned?' style="color:#dc2626;"':'')+'>'+(isBanned?'🚫 ':'')+admEsc(admShort(p.seller_id))+'</code></td>'+
+        '<td style="font-weight:700;">'+admEsc(String(p.price||0))+' '+admEsc(p.token||'USDC')+'</td>'+
+        '<td>'+statusBadge+'</td>'+
+        '<td><div style="display:flex;gap:5px;flex-wrap:wrap;">'+
+        (p.status==='active'
+          ? '<button class="ab ab-pause" onclick="admShowProductAction(\''+admEsc(p.id)+'\',\'pause\')"><i class="fas fa-pause mr-1"></i>Pause</button>'
+          : '<button class="ab ab-resume" onclick="admShowProductAction(\''+admEsc(p.id)+'\',\'resume\')"><i class="fas fa-play mr-1"></i>Resume</button>')+
+        '<button class="ab ab-delete" onclick="admShowProductAction(\''+admEsc(p.id)+'\',\'delete\')"><i class="fas fa-trash mr-1"></i>Delete</button>'+
+        '<button class="ab ab-ban" onclick="admShowBanModal(\''+admEsc(p.seller_id||'')+'\')"><i class="fas fa-ban mr-1"></i>Ban Seller</button>'+
+        '</div></td></tr>';
+    });
+    html+='</tbody></table></div>';
+    el.innerHTML=html;
+  }
+
+  function admShowProductAction(productId, action){
+    var root=document.getElementById('adm-modal-root'); if(!root) return;
+    var labels={pause:'Pause Product',resume:'Resume Product',delete:'Delete Product'};
+    var colors={pause:'#92400e',resume:'#065f46',delete:'#dc2626'};
+    var bgs={pause:'#fef3c7',resume:'#d1fae5',delete:'#fee2e2'};
+    var icons={pause:'fa-pause',resume:'fa-play',delete:'fa-trash'};
+    root.innerHTML='<div class="adm-modal-overlay" id="adm-prod-overlay">'+
+      '<div class="adm-modal">'+
+      '<div class="adm-modal-hd">'+
+      '<div style="display:flex;align-items:center;gap:10px;">'+
+      '<div style="width:36px;height:36px;border-radius:9px;background:'+bgs[action]+';display:flex;align-items:center;justify-content:center;">'+
+      '<i class="fas '+icons[action]+'" style="color:'+colors[action]+';"></i></div>'+
+      '<div><p style="font-weight:700;margin:0;font-size:15px;">'+admEsc(labels[action])+'</p>'+
+      '<p style="margin:0;font-size:11px;color:#94a3b8;">Product ID: '+admEsc(productId.slice(0,16))+'…</p></div></div>'+
+      '<button onclick="document.getElementById(\'adm-modal-root\').innerHTML=\'\'" style="background:#f8fafc;border:none;width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:18px;">&times;</button>'+
+      '</div>'+
+      '<div class="adm-modal-bd">'+
+      '<div style="margin-bottom:14px;"><label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:5px;">Reason <span style="color:#dc2626;">*</span></label>'+
+      '<textarea id="adm-prod-reason" rows="3" placeholder="Explain why this product is being '+admEsc(action)+'d…" style="width:100%;padding:9px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;resize:vertical;box-sizing:border-box;font-family:inherit;"></textarea></div>'+
+      (action==='delete'?'<div style="background:#fff9f9;border:1px solid #fecaca;border-radius:9px;padding:10px 14px;font-size:12px;color:#7f1d1d;"><i class="fas fa-exclamation-triangle mr-2"></i><strong>This action is permanent.</strong> The product will be deleted and cannot be recovered.</div>':'')+
+      '</div>'+
+      '<div class="adm-modal-ft">'+
+      '<button onclick="document.getElementById(\'adm-modal-root\').innerHTML=\'\'" class="btn-secondary text-sm">Cancel</button>'+
+      '<button onclick="admExecuteProductAction(\''+admEsc(productId)+'\',\''+action+'\')" style="background:'+colors[action]+';color:#fff;border:none;border-radius:9px;padding:9px 22px;font-size:13px;font-weight:700;cursor:pointer;">'+
+      '<i class="fas '+icons[action]+' mr-1"></i>'+admEsc(labels[action])+'</button>'+
+      '</div></div></div>';
+    document.getElementById('adm-prod-overlay').addEventListener('click',function(e){ if(e.target===this) root.innerHTML=''; });
+  }
+
+  function admExecuteProductAction(productId, action){
+    var reason=document.getElementById('adm-prod-reason');
+    var reasonText = reason ? reason.value.trim() : '';
+    if(!reasonText){ showToast('Please enter a reason','error'); return; }
+    var method = action==='delete' ? 'DELETE' : 'PATCH';
+    var url    = '/api/products/'+encodeURIComponent(productId)+(action==='pause'||action==='resume'?'/status':'');
+    var body   = action==='delete' ? null : JSON.stringify({ status: action==='pause'?'paused':'active', admin_action:true });
+    fetch(url, { method:method, headers:{'Content-Type':'application/json'}, body:body })
+      .then(function(r){ return r.json(); })
+      .then(function(){
+        admAudit('product_'+action, productId, reasonText);
+        document.getElementById('adm-modal-root').innerHTML='';
+        showToast('Product '+action+'d successfully','success');
+        admLoadProducts();
+      })
+      .catch(function(e){
+        admAudit('product_'+action+'_failed', productId, e.message);
+        showToast('Error: '+e.message,'error');
+      });
+  }
+
+  // ════════════════════════════════════════════════════════════
+  //  USERS — ban / unban moderation
+  // ════════════════════════════════════════════════════════════
+  function admLoadUsers(){
+    var el=document.getElementById('adm-users-table'); if(!el) return;
+    el.innerHTML='<div style="text-align:center;padding:30px;color:#94a3b8;"><div class="loading-spinner-lg mx-auto mb-3"></div>Loading users…</div>';
+    // Build user list from orders + banned list
+    var orders=[]; try{ orders=JSON.parse(localStorage.getItem('rh_orders')||'[]'); }catch(e){}
+    var banned=admGetBanned();
+    var userMap={};
+    orders.forEach(function(o){
+      if(o.buyerAddress){ var a=o.buyerAddress.toLowerCase(); if(!userMap[a]) userMap[a]={addr:a,asBuyer:0,asSeller:0,disputes:0,orders:[]}; userMap[a].asBuyer++; if(o.status==='dispute') userMap[a].disputes++; userMap[a].orders.push(o.id); }
+      if(o.sellerAddress){ var a=o.sellerAddress.toLowerCase(); if(!userMap[a]) userMap[a]={addr:a,asBuyer:0,asSeller:0,disputes:0,orders:[]}; userMap[a].asSeller++; if(o.status==='dispute') userMap[a].disputes++; }
+    });
+    banned.forEach(function(addr){ if(!userMap[addr]) userMap[addr]={addr:addr,asBuyer:0,asSeller:0,disputes:0,orders:[]}; });
+    _admAllUsers = Object.values(userMap);
+    document.getElementById('stat-banned').textContent = banned.length;
+    admRenderUsers(_admAllUsers);
+  }
+
+  function admFilterUsers(){
+    var q=(document.getElementById('adm-user-search')||{}).value||'';
+    q=q.toLowerCase();
+    var filtered=_admAllUsers.filter(function(u){ return !q || u.addr.toLowerCase().includes(q); });
+    admRenderUsers(filtered);
+  }
+
+  function admRenderUsers(users){
+    var el=document.getElementById('adm-users-table'); if(!el) return;
+    var banned=admGetBanned();
+    if(!users.length){ el.innerHTML='<div style="text-align:center;padding:40px;color:#94a3b8;"><i class="fas fa-users" style="font-size:32px;margin-bottom:12px;display:block;"></i><p>No users found.</p></div>'; return; }
+    var html='<div style="overflow-x:auto;"><table class="adm-tbl"><thead><tr>'+
+      '<th>Wallet</th><th>Buys</th><th>Sells</th><th>Disputes</th><th>Status</th><th>Actions</th>'+
+      '</tr></thead><tbody>';
+    users.forEach(function(u){
+      var isBanned=banned.includes(u.addr);
+      var statusBadge = isBanned
+        ? '<span class="adm-badge adm-badge-banned"><i class="fas fa-ban" style="font-size:9px;"></i> Banned</span>'
+        : '<span class="adm-badge adm-badge-active"><i class="fas fa-check-circle" style="font-size:9px;"></i> Active</span>';
+      html+='<tr>'+
+        '<td><code style="font-size:10px;">'+admEsc(u.addr)+'</code></td>'+
+        '<td style="text-align:center;font-weight:700;">'+u.asBuyer+'</td>'+
+        '<td style="text-align:center;font-weight:700;">'+u.asSeller+'</td>'+
+        '<td style="text-align:center;font-weight:700;color:'+(u.disputes>0?'#dc2626':'#64748b')+';">'+u.disputes+'</td>'+
+        '<td>'+statusBadge+'</td>'+
+        '<td><div style="display:flex;gap:5px;">'+
+        (isBanned
+          ? '<button class="ab ab-unban" onclick="admUnbanUser(\''+admEsc(u.addr)+'\')"><i class="fas fa-unlock mr-1"></i>Unban</button>'
+          : '<button class="ab ab-ban" onclick="admShowBanModal(\''+admEsc(u.addr)+'\')"><i class="fas fa-ban mr-1"></i>Ban</button>')+
+        '</div></td></tr>';
+    });
+    html+='</tbody></table></div>';
+    el.innerHTML=html;
+  }
+
+  function admShowBanModal(addr){
+    if(!addr||addr.length<10){ showToast('Invalid wallet address','error'); return; }
+    var root=document.getElementById('adm-modal-root'); if(!root) return;
+    var banned=admGetBanned();
+    var isBanned=banned.includes(addr.toLowerCase());
+    if(isBanned){ admUnbanUser(addr); return; }
+    root.innerHTML='<div class="adm-modal-overlay" id="adm-ban-overlay">'+
+      '<div class="adm-modal">'+
+      '<div class="adm-modal-hd">'+
+      '<div style="display:flex;align-items:center;gap:10px;">'+
+      '<div style="width:36px;height:36px;border-radius:9px;background:#fce7f3;display:flex;align-items:center;justify-content:center;"><i class="fas fa-ban" style="color:#9d174d;"></i></div>'+
+      '<div><p style="font-weight:700;margin:0;font-size:15px;">Ban User</p>'+
+      '<p style="margin:0;font-size:11px;color:#94a3b8;font-family:monospace;">'+admEsc(admShort(addr))+'</p></div></div>'+
+      '<button onclick="document.getElementById(\'adm-modal-root\').innerHTML=\'\'" style="background:#f8fafc;border:none;width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:18px;">&times;</button>'+
+      '</div>'+
+      '<div class="adm-modal-bd">'+
+      '<div style="background:#fef3c7;border:1px solid #fde68a;border-radius:9px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#92400e;">'+
+      '<i class="fas fa-exclamation-triangle mr-2"></i>Banning a user prevents them from accessing moderated features. This is a platform-level action stored locally.'+
+      '</div>'+
+      '<div><label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:5px;">Ban Reason <span style="color:#dc2626;">*</span></label>'+
+      '<select id="adm-ban-reason-sel" style="width:100%;padding:9px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:8px;">'+
+      '<option value="">Select a reason…</option>'+
+      '<option value="Fraud">Fraud / Scam</option>'+
+      '<option value="Abuse">Platform Abuse</option>'+
+      '<option value="Policy Violation">Policy Violation</option>'+
+      '<option value="Fake Products">Fake / Counterfeit Products</option>'+
+      '<option value="Harassment">Harassment</option>'+
+      '<option value="Other">Other</option>'+
+      '</select>'+
+      '<textarea id="adm-ban-reason-txt" rows="2" placeholder="Additional details (optional)…" style="width:100%;padding:9px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;resize:vertical;box-sizing:border-box;font-family:inherit;"></textarea></div>'+
+      '</div>'+
+      '<div class="adm-modal-ft">'+
+      '<button onclick="document.getElementById(\'adm-modal-root\').innerHTML=\'\'" class="btn-secondary text-sm">Cancel</button>'+
+      '<button onclick="admExecuteBan(\''+admEsc(addr)+'\')" style="background:#9d174d;color:#fff;border:none;border-radius:9px;padding:9px 22px;font-size:13px;font-weight:700;cursor:pointer;">'+
+      '<i class="fas fa-ban mr-1"></i>Confirm Ban</button>'+
+      '</div></div></div>';
+    document.getElementById('adm-ban-overlay').addEventListener('click',function(e){ if(e.target===this) root.innerHTML=''; });
+  }
+
+  function admExecuteBan(addr){
+    var sel=document.getElementById('adm-ban-reason-sel');
+    var txt=document.getElementById('adm-ban-reason-txt');
+    var reason=(sel?sel.value:'')||'No reason specified';
+    var extra = txt ? txt.value.trim() : '';
+    if(!reason||reason==='')  { showToast('Please select a ban reason','error'); return; }
+    var banned=admGetBanned();
+    var a=addr.toLowerCase();
+    if(!banned.includes(a)) banned.push(a);
+    admSaveBanned(banned);
+    admAudit('user_ban', a, reason+(extra?' — '+extra:''));
+    document.getElementById('adm-modal-root').innerHTML='';
+    showToast('User banned: '+admShort(a),'success');
+    admLoadUsers();
+    admUpdateStats();
+  }
+
+  function admUnbanUser(addr){
+    if(!confirm('Unban this user?\n'+addr)) return;
+    var banned=admGetBanned();
+    var a=addr.toLowerCase();
+    admSaveBanned(banned.filter(function(x){return x!==a;}));
+    admAudit('user_unban', a, 'Unbanned by admin');
+    showToast('User unbanned','success');
+    admLoadUsers();
+    admUpdateStats();
+  }
+
+  // ════════════════════════════════════════════════════════════
+  //  REPORTS
+  // ════════════════════════════════════════════════════════════
+  function admLoadReports(){
+    var el=document.getElementById('adm-reports-table'); if(!el) return;
+    var reports=[]; try{ reports=JSON.parse(localStorage.getItem(ADM_REPORTS_KEY)||'[]'); }catch(e){}
+    if(!reports.length){ el.innerHTML='<div style="text-align:center;padding:40px;color:#94a3b8;"><i class="fas fa-flag" style="font-size:32px;margin-bottom:12px;display:block;"></i><p>No reports found.</p></div>'; return; }
+    var html='<div style="overflow-x:auto;"><table class="adm-tbl"><thead><tr><th>Type</th><th>Target</th><th>Reporter</th><th>Reason</th><th>Date</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
+    reports.forEach(function(r,i){
+      var statusBadge = r.status==='resolved'
+        ? '<span class="adm-badge adm-badge-resolved">Resolved</span>'
+        : r.status==='ignored'
+          ? '<span class="adm-badge" style="background:#f1f5f9;color:#64748b;">Ignored</span>'
+          : '<span class="adm-badge adm-badge-pending">Pending</span>';
+      html+='<tr>'+
+        '<td><span class="adm-badge" style="background:#eff6ff;color:#1d4ed8;">'+admEsc(r.type||'report')+'</span></td>'+
+        '<td><code style="font-size:10px;">'+admEsc(admShort(r.target||''))+'</code></td>'+
+        '<td><code style="font-size:10px;">'+admEsc(admShort(r.reporter||''))+'</code></td>'+
+        '<td style="max-width:160px;"><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+admEsc((r.reason||'').slice(0,60))+'</div></td>'+
+        '<td>'+new Date(r.ts||0).toLocaleDateString()+'</td>'+
+        '<td>'+statusBadge+'</td>'+
+        '<td><div style="display:flex;gap:5px;">'+
+        '<button class="ab ab-ignore" onclick="admHandleReport('+i+',\'ignore\')">Ignore</button>'+
+        '<button class="ab ab-release" onclick="admHandleReport('+i+',\'resolve\')">Resolve</button>'+
+        '<button class="ab ab-delete" onclick="admHandleReport('+i+',\'delete\')">Delete</button>'+
+        '</div></td></tr>';
+    });
+    html+='</tbody></table></div>';
+    el.innerHTML=html;
+  }
+
+  function admHandleReport(i, action){
+    var reports=[]; try{ reports=JSON.parse(localStorage.getItem(ADM_REPORTS_KEY)||'[]'); }catch(e){}
+    if(action==='delete') reports.splice(i,1);
+    else if(reports[i]) reports[i].status = action==='resolve'?'resolved':'ignored';
+    localStorage.setItem(ADM_REPORTS_KEY,JSON.stringify(reports));
+    admAudit('report_'+action, 'report#'+i, '');
+    admLoadReports();
+    showToast('Report '+action+'d','success');
+  }
+
+  // ════════════════════════════════════════════════════════════
+  //  AUDIT LOG
+  // ════════════════════════════════════════════════════════════
+  var ADM_ACTION_COLORS = {
+    dispute_resolve:     ['#dcfce7','#15803d','fa-gavel'],
+    product_delete:      ['#fee2e2','#dc2626','fa-trash'],
+    product_pause:       ['#fef3c7','#92400e','fa-pause'],
+    product_resume:      ['#d1fae5','#065f46','fa-play'],
+    user_ban:            ['#fce7f3','#9d174d','fa-ban'],
+    user_unban:          ['#ede9fe','#5b21b6','fa-unlock'],
+    report_resolve:      ['#dcfce7','#15803d','fa-check'],
+    report_ignore:       ['#f1f5f9','#64748b','fa-eye-slash'],
+    report_delete:       ['#fee2e2','#dc2626','fa-trash'],
+    admin_login:         ['#eff6ff','#1d4ed8','fa-sign-in-alt'],
+    unauthorized_access: ['#fff9f9','#dc2626','fa-exclamation-triangle']
+  };
+
+  function admRenderAudit(){
+    _admAllAudit = admGetAudit();
+    admFilterAudit();
+  }
+
+  function admFilterAudit(){
+    var q=(document.getElementById('adm-audit-search')||{}).value||'';
+    q=q.toLowerCase();
+    var filtered = q ? _admAllAudit.filter(function(e){ return (e.action+e.target+e.detail+e.admin).toLowerCase().includes(q); }) : _admAllAudit;
+    var el=document.getElementById('adm-audit-list'); if(!el) return;
+    document.getElementById('stat-audit').textContent = _admAllAudit.length;
+    if(!filtered.length){ el.innerHTML='<div style="text-align:center;padding:40px;color:#94a3b8;"><i class="fas fa-clipboard-list" style="font-size:32px;margin-bottom:12px;display:block;"></i><p>No audit entries found.</p></div>'; return; }
+    el.innerHTML = filtered.map(function(entry){
+      var colors = ADM_ACTION_COLORS[entry.action] || ['#f1f5f9','#64748b','fa-info-circle'];
+      return '<div class="adm-audit-entry">'+
+        '<div class="adm-audit-icon" style="background:'+colors[0]+';color:'+colors[1]+'"><i class="fas '+colors[2]+'"></i></div>'+
+        '<div style="flex:1;min-width:0;">'+
+        '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">'+
+        '<span style="font-weight:700;color:#1e293b;font-size:12px;">'+admEsc(entry.action)+'</span>'+
+        '<span style="font-size:10px;color:#94a3b8;white-space:nowrap;">'+new Date(entry.ts).toLocaleString()+'</span></div>'+
+        '<div style="font-size:11px;color:#64748b;margin-top:2px;">'+
+        '<span style="font-family:monospace;">'+admEsc(admShort(entry.admin))+'</span>'+
+        (entry.target&&entry.target!=='—'?' → <code style="font-size:10px;">'+admEsc(admShort(entry.target))+'</code>':'')+
+        (entry.detail?' — '+admEsc(entry.detail.slice(0,80)):'')+
+        '</div></div></div>';
     }).join('');
-    el.innerHTML = '<div style="overflow-x:auto;"><table class="admin-tbl"><thead><tr><th>Type</th><th>Target</th><th>Reporter</th><th>Reason</th><th>Date</th><th>Actions</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
   }
 
-  function adminIgnoreReport(i) {
-    var r = []; try { r = JSON.parse(localStorage.getItem(ADMIN_REPORTS_KEY)||'[]'); } catch(e){}
-    if(r[i]) { addSecLog('admin_ignore_report', _adminAddr, 'Ignored report '+i); r[i].status='ignored'; localStorage.setItem(ADMIN_REPORTS_KEY,JSON.stringify(r)); adminLoadReports(); showToast('Report ignored','info'); }
+  function admClearAudit(){
+    if(!confirm('Clear all audit log entries? This cannot be undone.')) return;
+    localStorage.removeItem(ADM_AUDIT_KEY);
+    _admAllAudit=[];
+    admRenderAudit();
+    showToast('Audit log cleared','info');
   }
-  function adminRemoveReport(i) {
-    var r = []; try { r = JSON.parse(localStorage.getItem(ADMIN_REPORTS_KEY)||'[]'); } catch(e){}
-    r.splice(i,1); localStorage.setItem(ADMIN_REPORTS_KEY,JSON.stringify(r)); addSecLog('admin_remove_report',_adminAddr,'Removed report '+i); adminLoadReports(); showToast('Report removed','success');
-  }
-  function adminFlagReport(i) { addSecLog('admin_flag_report',_adminAddr,'Flagged report '+i); showToast('Report flagged','info'); }
 
-  /* ── Security Log ── */
-  function adminRenderSecLog() {
-    var el = document.getElementById('admin-security-log');
-    if(!el) return;
-    var log = getSecLog();
-    if(!log.length) { el.innerHTML = '<p style="text-align:center;color:#94a3b8;padding:30px;">No security events logged.</p>'; return; }
-    var typeColors = { admin_resolve:'#dcfce7/#15803d', admin_remove_product:'#fee2e2/#dc2626', admin_ban_seller:'#fce7f3/#9d174d', admin_flag_product:'#fef3c7/#92400e', unauthorized_access:'#fee2e2/#dc2626' };
-    el.innerHTML = log.map(function(entry) {
-      var colors = (typeColors[entry.event]||'#f1f5f9/#64748b').split('/');
-      return '<div class="admin-sec-entry">' +
-        '<div class="admin-sec-icon" style="background:'+colors[0]+';color:'+colors[1]+'"><i class="fas fa-shield-alt"></i></div>' +
-        '<div style="flex:1;">' +
-        '<div style="display:flex;justify-content:space-between;gap:8px;">' +
-        '<span style="font-weight:700;color:#1e293b;font-size:12px;">'+escH(entry.event)+'</span>' +
-        '<span style="font-size:10px;color:#94a3b8;">'+new Date(entry.ts).toLocaleString()+'</span></div>' +
-        '<div style="font-size:11px;color:#64748b;margin-top:2px;">'+escH(entry.addr)+' — '+escH(entry.detail)+'</div>' +
-        '</div></div>';
-    }).join('');
+  function admExportAudit(){
+    var log=admGetAudit();
+    var csv='Timestamp,Action,Admin,Target,Detail\n'+
+      log.map(function(e){ return [e.ts,e.action,e.admin,e.target,e.detail].map(function(v){ return '"'+(v||'').replace(/"/g,'""')+'"'; }).join(','); }).join('\n');
+    var blob=new Blob([csv],{type:'text/csv'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a'); a.href=url; a.download='shukly-admin-audit-'+new Date().toISOString().slice(0,10)+'.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    showToast('Audit log exported','success');
   }
-  function adminClearSecLog() { if(confirm('Clear security log?')) { localStorage.removeItem(ADMIN_SECLOG_KEY); adminRenderSecLog(); showToast('Security log cleared','info'); } }
 
-  /* ── Whitelist ── */
-  function adminRenderWhitelist() {
-    var el = document.getElementById('admin-whitelist-list');
-    if(!el) return;
-    var list = getAdminWhitelist();
-    if(!list.length) { el.innerHTML = '<p style="color:#94a3b8;font-size:13px;">No addresses in whitelist yet.</p>'; return; }
-    el.innerHTML = list.map(function(addr, i) {
-      return '<div style="display:flex;align-items:center;justify-content:space-between;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px;margin-bottom:6px;">' +
-        '<code style="font-size:12px;color:#334155;">'+escH(addr)+'</code>' +
-        '<button onclick="adminRemoveWl('+i+')" style="background:#fee2e2;color:#dc2626;border:none;border-radius:6px;padding:3px 10px;font-size:11px;cursor:pointer;font-weight:700;">Remove</button>' +
+  // ════════════════════════════════════════════════════════════
+  //  WHITELIST / SETTINGS
+  // ════════════════════════════════════════════════════════════
+  function admRenderWhitelist(){
+    var el=document.getElementById('adm-whitelist-list'); if(!el) return;
+    var list=admGetWL();
+    if(!list.length){ el.innerHTML='<p style="color:#94a3b8;font-size:13px;">No addresses in whitelist.</p>'; return; }
+    el.innerHTML=list.map(function(addr,i){
+      return '<div style="display:flex;align-items:center;justify-content:space-between;background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;padding:9px 14px;margin-bottom:7px;">'+
+        '<div style="display:flex;align-items:center;gap:8px;">'+
+        '<div style="width:28px;height:28px;border-radius:8px;background:#dcfce7;display:flex;align-items:center;justify-content:center;"><i class="fas fa-shield-alt" style="color:#15803d;font-size:11px;"></i></div>'+
+        '<code style="font-size:12px;color:#334155;">'+admEsc(addr)+'</code>'+
+        (addr===_admAddr?'<span style="font-size:10px;background:#eff6ff;color:#1d4ed8;border-radius:5px;padding:2px 7px;font-weight:700;">You</span>':'')+
+        '</div>'+
+        '<button onclick="admRemoveWl('+i+')" style="background:#fee2e2;color:#dc2626;border:none;border-radius:7px;padding:4px 12px;font-size:11px;cursor:pointer;font-weight:700;">Remove</button>'+
         '</div>';
     }).join('');
   }
-  function adminAddWhitelist() {
-    var inp = document.getElementById('admin-wl-input');
-    var addr = inp ? inp.value.trim().toLowerCase() : '';
-    if(!addr || !addr.startsWith('0x') || addr.length < 40) { showToast('Invalid address','error'); return; }
-    var list = getAdminWhitelist();
-    if(list.includes(addr)) { showToast('Already in whitelist','info'); return; }
-    list.push(addr); saveAdminWhitelist(list); if(inp) inp.value='';
-    addSecLog('admin_add_whitelist', _adminAddr, 'Added '+addr);
-    adminRenderWhitelist(); showToast('Address added to whitelist','success');
-  }
-  function adminRemoveWl(i) {
-    var list = getAdminWhitelist(); list.splice(i,1); saveAdminWhitelist(list);
-    addSecLog('admin_remove_whitelist', _adminAddr, 'Removed index '+i);
-    adminRenderWhitelist(); showToast('Address removed','info');
+
+  function admAddWhitelist(){
+    var inp=document.getElementById('adm-wl-input');
+    var addr=inp?inp.value.trim().toLowerCase():'';
+    if(!addr||!addr.startsWith('0x')||addr.length<40){ showToast('Enter a valid 0x… wallet address','error'); return; }
+    var list=admGetWL();
+    if(list.includes(addr)){ showToast('Already in whitelist','info'); return; }
+    list.push(addr); admSaveWL(list);
+    if(inp) inp.value='';
+    admAudit('admin_add_whitelist', addr, 'Added by '+_admAddr);
+    admRenderWhitelist(); showToast('Admin address added','success');
   }
 
-  /* ── Init & Auth ── */
-  var _adminAddr = null;
+  function admRemoveWl(i){
+    if(!confirm('Remove this admin wallet?')) return;
+    var list=admGetWL(); var removed=list[i]||''; list.splice(i,1); admSaveWL(list);
+    admAudit('admin_remove_whitelist', removed, 'Removed by '+_admAddr);
+    admRenderWhitelist(); showToast('Address removed','info');
+  }
 
-  document.addEventListener('DOMContentLoaded', function() {
-    var w = (typeof getStoredWallet==='function') ? getStoredWallet() : null;
+  function admLoadSettings(){
+    var s=admGetSettings();
+    var m=document.getElementById('adm-maintenance'); if(m) m.checked=!!s.maintenance;
+    var r=document.getElementById('adm-registrations'); if(r) r.checked=s.registrations!==false;
+  }
+  function admToggleSetting(key){
+    var el=document.getElementById('adm-'+key); if(!el) return;
+    var s=admGetSettings(); s[key]=el.checked; admSaveSettings(s);
+    admAudit('setting_change', key, el.checked?'enabled':'disabled');
+    showToast('Setting updated','success');
+  }
+
+  // ════════════════════════════════════════════════════════════
+  //  INIT & AUTH
+  //  Hardcoded fallback wallets + dynamic whitelist
+  // ════════════════════════════════════════════════════════════
+  var HARDCODED_ADMINS = [
+    // Add your admin wallet addresses here (lowercase)
+    // '0xYOUR_WALLET_ADDRESS_HERE'
+  ];
+
+  document.addEventListener('DOMContentLoaded', function(){
+    var w   = typeof getStoredWallet==='function' ? getStoredWallet() : null;
     var addr = w && w.address ? w.address.toLowerCase() : null;
-    _adminAddr = addr;
+    _admAddr = addr;
 
-    // Ensure at least one default admin if whitelist is empty
-    var list = getAdminWhitelist();
-    // Check authorization
-    var authorized = addr && list.length > 0 && list.includes(addr);
+    var dynamicList = admGetWL();
+    var allAdmins   = HARDCODED_ADMINS.concat(dynamicList);
+    var authorized  = addr && allAdmins.includes(addr);
 
-    document.getElementById('admin-loading').style.display = 'none';
-
-    if(!authorized) {
-      // Log unauthorized attempt
-      if(addr) addSecLog('unauthorized_access', addr, 'Attempted to access /admin');
-      document.getElementById('admin-blocked').style.display = '';
+    // First-time setup: if whitelist is empty and user visits, show setup prompt
+    if(!authorized && dynamicList.length===0){
+      // Allow first admin to self-register if no whitelist exists yet
+      document.getElementById('adm-loading').style.display='none';
+      var root=document.getElementById('admin-root');
+      root.innerHTML='<div style="max-width:480px;margin:80px auto;text-align:center;">'+
+        '<div style="width:72px;height:72px;border-radius:50%;background:#eff6ff;display:flex;align-items:center;justify-content:center;margin:0 auto 18px;">'+
+        '<i class="fas fa-lock" style="color:#1d4ed8;font-size:30px;"></i></div>'+
+        '<h2 style="font-size:22px;font-weight:900;color:#1e293b;margin:0 0 10px;">Admin Setup</h2>'+
+        '<p style="color:#64748b;font-size:14px;margin:0 0 20px;">No admin wallets configured yet. Connect your wallet and claim the first admin seat.</p>'+
+        (addr
+          ? '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:18px;"><code style="font-size:12px;color:#334155;">'+admEsc(addr)+'</code></div>'+
+            '<button onclick="admFirstSetup(\''+admEsc(addr)+'\')" class="btn-primary" style="margin-bottom:12px;"><i class="fas fa-crown mr-1"></i> Claim Admin Access</button><br/>'
+          : '<p style="color:#dc2626;font-size:13px;margin-bottom:18px;">Please connect your wallet first.</p>')+
+        '<a href="/" class="btn-secondary">← Return Home</a>'+
+        '</div>';
       return;
     }
 
-    _adminAuthorized = true;
-    document.getElementById('admin-panel').style.display = '';
-    var badge = document.getElementById('admin-wallet-badge');
-    if(badge) badge.textContent = addr.slice(0,10)+'…'+addr.slice(-6);
-    addSecLog('admin_login', addr, 'Admin panel accessed');
-    adminLoadDisputes();
+    document.getElementById('adm-loading').style.display='none';
+
+    if(!authorized){
+      if(addr) admAudit('unauthorized_access', addr, 'Attempted access to /admin');
+      var bl=document.getElementById('adm-blocked'); if(bl) bl.style.display='';
+      var baddr=document.getElementById('adm-blocked-addr'); if(baddr&&addr) baddr.textContent='Wallet: '+addr;
+      return;
+    }
+
+    document.getElementById('adm-panel').style.display='';
+    var badge=document.getElementById('adm-wallet-badge');
+    if(badge) badge.textContent=addr.slice(0,10)+'…'+addr.slice(-6);
+    admAudit('admin_login', addr, 'Admin panel accessed');
+    admUpdateStats();
+    admLoadDisputes();
   });
+
+  function admFirstSetup(addr){
+    if(!confirm('Claim admin access with wallet: '+addr+'?\n\nThis wallet will have full admin rights.')) return;
+    var list=admGetWL(); if(!list.includes(addr)) list.push(addr); admSaveWL(list);
+    showToast('Admin access granted! Reloading…','success');
+    setTimeout(function(){ location.reload(); }, 800);
+  }
   </script>
   `)
 }
