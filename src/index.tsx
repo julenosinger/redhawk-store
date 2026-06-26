@@ -562,6 +562,30 @@ function slimItems(items: any[]): any[] {
   }))
 }
 
+// Escrow on-chain state → human status (shared by on-chain parse + persisted refresh)
+const ESCROW_STATUS_MAP: Record<number, string> = {
+  0: 'escrow_pending', 1: 'escrow_locked', 2: 'delivery_confirmed',
+  3: 'funds_released', 4: 'refunded', 5: 'disputed'
+}
+
+// Read the CURRENT escrow state for an orderId32 via getEscrow(bytes32).
+// Returns null if the escrow doesn't exist (buyer slot zero) or on any error,
+// so callers keep their stored status instead of wrongly downgrading it.
+async function fetchEscrowState(escrowAddress: string, orderId32: string): Promise<{ escrowState: number; status: string } | null> {
+  try {
+    if (!orderId32 || !/^0x[0-9a-fA-F]+$/.test(orderId32)) return null
+    const callData = '0x' + 'c1f8b5d1' + orderId32.replace('0x', '').padStart(64, '0')
+    const result: string = await arcRpc('eth_call', [{ to: escrowAddress, data: callData }, 'latest'])
+    if (result && result !== '0x' && result.length >= 2 + 6 * 64) {
+      const r = result.replace('0x', '')
+      if (/^0+$/.test(r.slice(0, 64))) return null   // escrow not found — keep stored status
+      const escrowState = parseInt(r.slice(256, 320), 16)
+      return { escrowState, status: ESCROW_STATUS_MAP[escrowState] || 'escrow_locked' }
+    }
+  } catch { /* ignore */ }
+  return null
+}
+
 // ─── Arc Network constants (server-side reference only) ─────────────
 const ARC = {
   chainId: 5042002,
@@ -934,13 +958,22 @@ app.patch('/api/products/:id', async (c) => {
 })
 
 // Orders: returns empty — orders come from real escrow contract state
-app.get('/api/orders', (c) => {
-  return c.json({
-    orders: [],
-    total: 0,
-    source: 'escrow_contract',
-    message: 'No orders yet.'
-  })
+// ─── GET /api/orders — durable persisted orders (RPC-free fast path) ──────────
+// Optional ?buyer=0x… / ?seller=0x… filter. Pure server-side: works even when the
+// Arc RPC is down/slow (unlike /api/orders/on-chain). Newest first.
+app.get('/api/orders', async (c) => {
+  try {
+    const buyerParam  = (c.req.query('buyer')  || '').trim().toLowerCase()
+    const sellerParam = (c.req.query('seller') || '').trim().toLowerCase()
+    const all = await ordersGetAll(c.env)
+    let orders = all
+    if (buyerParam)  orders = orders.filter(o => (o.buyerAddress  || '').toLowerCase() === buyerParam)
+    if (sellerParam) orders = orders.filter(o => (o.sellerAddress || '').toLowerCase() === sellerParam)
+    orders = orders.slice().sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
+    return c.json({ orders, total: orders.length, source: 'persisted' })
+  } catch (e: any) {
+    return c.json({ orders: [], total: 0, source: 'persisted', error: e?.message }, 200)
+  }
 })
 
 // ─── GET /api/orders/on-chain — fetch real escrow events from Arc Network ──────
@@ -1107,6 +1140,18 @@ app.get('/api/orders/on-chain', async (c) => {
           })
         }
         if (extras.length) {
+          // F.2: refresh CURRENT on-chain status for persisted-only entries (bounded,
+          // parallel, best-effort) so an old recovered order reflects its real escrow
+          // state (delivered / released / refunded / disputed) instead of a stale one.
+          if (latest > 0) {
+            try {
+              const toRefresh = extras.filter(e => e.orderId32).slice(0, 15)
+              await Promise.all(toRefresh.map(async (e: any) => {
+                const st = await fetchEscrowState(escrowAddress, e.orderId32)
+                if (st) { e.escrowState = st.escrowState; e.status = st.status }
+              }))
+            } catch { /* keep stored statuses */ }
+          }
           extras.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
           result = result.concat(extras)
           mergedSource = 'on_chain+persisted'
