@@ -12,6 +12,17 @@ type Bindings = {
 const app = new Hono<{ Bindings: Bindings }>()
 app.use('*', cors())
 
+// ─── Canonical site origin (production domain) ───────────────────────────────
+// Used for canonical URLs, og:url, sitemap and robots so Google indexes ONE
+// host instead of splitting signals between pages.dev and the custom domain.
+const SITE_URL = 'https://www.shuklystore.xyz'
+
+// Minimal XML entity escaper for sitemap values
+function xmlEsc(s: any): string {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&apos;')
+}
+
 // ─── Security Headers Middleware ─────────────────────────────────────────────
 // Applied at Worker level — works correctly on Cloudflare Pages with _worker.js
 app.use('*', async (c, next) => {
@@ -53,6 +64,18 @@ app.use('*', async (c, next) => {
     c.res.headers.set('Cache-Control', `public, max-age=${maxAge}${immutable}`)
   } else if (path.startsWith('/api/')) {
     c.res.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate')
+  }
+
+  // ── Canonical URL (HTTP Link header) — SEO ──
+  // Tells Google the one true URL for every HTML page (ignores query string and
+  // points to the production host), regardless of which domain served it.
+  const isHtmlPage = c.req.method === 'GET'
+    && !path.startsWith('/api/')
+    && !path.startsWith('/static/')
+    && !path.startsWith('/images/')
+    && !/\.[a-z0-9]+$/i.test(path)
+  if (isHtmlPage) {
+    c.res.headers.set('Link', `<${SITE_URL}${path}>; rel="canonical"`)
   }
 })
 
@@ -1324,6 +1347,47 @@ app.get('/deploy-escrow', (c) => c.html(deployEscrowPage()))
 app.get('/how-to-use', (c) => c.html(howToUsePage()))
 app.get('/admin', (c) => c.html(adminPage()))
 
+// ─── SEO: sitemap.xml — lists static pages + every active product ─────────────
+app.get('/sitemap.xml', async (c) => {
+  const staticPaths = ['/', '/marketplace', '/about', '/how-to-use', '/terms', '/privacy', '/disclaimer']
+  let productUrls = ''
+  try {
+    await initDB(c.env.DB)
+    const { products } = await store.list(c.env, {})
+    productUrls = (products || []).map((p) => {
+      const lastmod = p.updated_at ? `<lastmod>${xmlEsc(String(p.updated_at).slice(0, 10))}</lastmod>` : ''
+      return `  <url><loc>${SITE_URL}/product/${xmlEsc(p.id)}</loc>${lastmod}<changefreq>weekly</changefreq></url>`
+    }).join('\n')
+  } catch (e: any) {
+    console.error('[sitemap] product list error:', e?.message)
+  }
+  const staticUrls = staticPaths.map((pth) => {
+    const freq = (pth === '/' || pth === '/marketplace') ? 'daily' : 'monthly'
+    return `  <url><loc>${SITE_URL}${pth}</loc><changefreq>${freq}</changefreq></url>`
+  }).join('\n')
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${staticUrls}${productUrls ? '\n' + productUrls : ''}
+</urlset>`
+  return c.body(xml, 200, {
+    'Content-Type': 'application/xml; charset=utf-8',
+    'Cache-Control': 'public, max-age=3600'
+  })
+})
+
+// ─── SEO: robots.txt — allow crawling + advertise sitemap ────────────────────
+app.get('/robots.txt', (c) => {
+  const txt = `User-agent: *
+Allow: /
+
+Sitemap: ${SITE_URL}/sitemap.xml
+`
+  return c.body(txt, 200, {
+    'Content-Type': 'text/plain; charset=utf-8',
+    'Cache-Control': 'public, max-age=86400'
+  })
+})
+
 export default app
 
 // ─── ARC CONFIG (injected into every page for client-side use) ───────
@@ -1340,30 +1404,43 @@ const ARC_CLIENT_CONFIG = JSON.stringify({
 })
 
 // ─── HTML Shell ───────────────────────────────────────────────────────
-function shell(title: string, body: string, extraHead = '', catNav = '') {
+function shell(title: string, body: string, extraHead = '', catNav = '', meta: any = {}) {
+  // ── Per-page SEO metadata (falls back to generic marketplace values) ──
+  const _esc = (s: any) => String(s)
+    .replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const _genDesc = 'Decentralized marketplace powered by smart contracts on Arc Testnet. Explore, test, and experience Web3 commerce in a secure environment.'
+  const _path = meta.path || ''
+  const _ogUrl = _path ? SITE_URL + _path : SITE_URL + '/'
+  const _ogTitle = meta.ogTitle ? _esc(meta.ogTitle) : 'Shukly Store – Web3 Marketplace'
+  const _ogDesc = meta.ogDescription ? _esc(meta.ogDescription) : _genDesc
+  const _ogImage = meta.ogImage ? _esc(meta.ogImage) : 'https://www.genspark.ai/api/files/s/eSPDBk0I'
+  const _ogType = meta.ogType || 'website'
+  const _metaDesc = meta.description ? _esc(meta.description) : _genDesc
+  const _canonicalTag = _path ? `<link rel="canonical" href="${SITE_URL}${_path}"/>` : ''
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>${title} | Shukly Store</title>
-  
+  ${_canonicalTag}
   <!-- Open Graph Meta Tags -->
-  <meta property="og:title" content="Shukly Store – Web3 Marketplace"/>
-  <meta property="og:description" content="Decentralized marketplace powered by smart contracts on Arc Testnet. Explore, test, and experience Web3 commerce in a secure environment."/>
-  <meta property="og:image" content="https://www.genspark.ai/api/files/s/eSPDBk0I"/>
-  <meta property="og:url" content="https://shukly-store.pages.dev/"/>
-  <meta property="og:type" content="website"/>
+  <meta property="og:title" content="${_ogTitle}"/>
+  <meta property="og:description" content="${_ogDesc}"/>
+  <meta property="og:image" content="${_ogImage}"/>
+  <meta property="og:url" content="${_ogUrl}"/>
+  <meta property="og:type" content="${_ogType}"/>
   <meta property="og:site_name" content="Shukly Store"/>
   
   <!-- Twitter Card Meta Tags -->
   <meta name="twitter:card" content="summary_large_image"/>
-  <meta name="twitter:title" content="Shukly Store – Web3 Marketplace"/>
-  <meta name="twitter:description" content="Decentralized marketplace powered by smart contracts on Arc Testnet. Explore, test, and experience Web3 commerce in a secure environment."/>
-  <meta name="twitter:image" content="https://www.genspark.ai/api/files/s/eSPDBk0I"/>
+  <meta name="twitter:title" content="${_ogTitle}"/>
+  <meta name="twitter:description" content="${_ogDesc}"/>
+  <meta name="twitter:image" content="${_ogImage}"/>
   
   <!-- Additional Meta Tags -->
-  <meta name="description" content="Decentralized marketplace powered by smart contracts on Arc Testnet. Explore, test, and experience Web3 commerce in a secure environment."/>
+  <meta name="description" content="${_metaDesc}"/>
   <meta name="keywords" content="Web3, marketplace, decentralized, Arc Network, smart contracts, blockchain, DeFi, crypto commerce"/>
   <meta name="theme-color" content="#dc2626"/>
   
@@ -3994,7 +4071,7 @@ function homePage() {
     track.addEventListener('mousemove',  function(e) { if(!isDown) return; e.preventDefault(); var x=e.pageX-track.offsetLeft; track.scrollLeft=scrollL-(x-startX); });
   }
   </script>
-  `, '', catNavHTML())
+  `, '', catNavHTML(), { path: '/' })
 }
 
 
@@ -4284,7 +4361,7 @@ function marketplacePage() {
     }
   }
   </script>
-  `)
+  `, '', '', { path: '/marketplace' })
 }
 
 // ─── PAGE: PRODUCT NOT FOUND (no real product data yet) ────────────────
@@ -4328,6 +4405,35 @@ function productPage(p: any) {
   const stockN = parseInt(p.stock) || 0
   const delivType = p.delivery_type || 'manual'
   const isDigital = delivType === 'instant' || delivType === 'digital'
+
+  // ── SEO: Product structured data (JSON-LD) + per-page OG/canonical ──
+  const _pid = p.id || ''
+  const _ogImg = (imgUrl && /^https?:/i.test(imgUrl)) ? imgUrl : ''
+  const _curr = tok === 'EURC' ? 'EUR' : 'USD'
+  const _productLd = JSON.stringify({
+    '@context': 'https://schema.org/',
+    '@type': 'Product',
+    name: p.title || 'Untitled',
+    description: (p.description || '').slice(0, 5000),
+    ...( _ogImg ? { image: [_ogImg] } : {}),
+    category: p.category || 'Other',
+    sku: _pid,
+    offers: {
+      '@type': 'Offer',
+      price: price,
+      priceCurrency: _curr,
+      availability: stockN > 0 ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
+      url: SITE_URL + '/product/' + _pid
+    }
+  }).replace(/</g, '\\u003c')
+  const _productHead = '<script type="application/ld+json">' + _productLd + '</script>'
+  const _productMeta = {
+    path: '/product/' + _pid,
+    ogTitle: p.title || 'Untitled',
+    ogDescription: (p.description || '').slice(0, 200),
+    ogImage: _ogImg || undefined,
+    ogType: 'product'
+  }
 
   return shell(title, `
   <style>
@@ -4903,7 +5009,7 @@ function productPage(p: any) {
     }, { passive: true });
   })();
   </script>
-  `)
+  `, _productHead, '', _productMeta)
 }
 
 // ─── PAGE: CART ────────────────────────────────────────────────────────
@@ -9722,15 +9828,17 @@ function aboutPage() {
     </div><!-- /main grid -->
   </div>
   `,
-  /* extraHead — JSON-LD + page-specific meta */
-  `<!-- About page: override meta description and inject JSON-LD -->
-  <meta name="description" content="Testnet-only platform built on Arc Network. No real funds, no financial risk. Designed for development and testing."/>
+  /* extraHead — JSON-LD (page-specific OG/canonical handled via meta arg below) */
+  `<!-- About page: robots + Organization JSON-LD -->
   <meta name="robots" content="index,follow"/>
-  <meta name="keywords" content="testnet environment, no real assets, non-custodial, security-focused development, Arc Network, experimental platform, blockchain testing"/>
-  <meta property="og:title" content="About Us | Shukly Store"/>
-  <meta property="og:description" content="Testnet-only platform built on Arc Network. No real funds, no financial risk. Designed for development and testing."/>
-  <meta property="og:url" content="https://shukly-store.pages.dev/about"/>
-  <script type="application/ld+json">${jsonLd}</script>`)
+  <script type="application/ld+json">${jsonLd}</script>`,
+  '',
+  {
+    path: '/about',
+    ogTitle: 'About Us | Shukly Store',
+    ogDescription: 'Testnet-only platform built on Arc Network. No real funds, no financial risk. Designed for development and testing.',
+    description: 'Testnet-only platform built on Arc Network. No real funds, no financial risk. Designed for development and testing.'
+  })
 }
 
 // ─── PAGE: DEPLOY ESCROW ──────────────────────────────────────────────────
