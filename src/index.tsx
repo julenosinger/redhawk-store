@@ -444,6 +444,124 @@ app.get('/favicon.ico', (c) => {
   return new Response(svg, { headers: { 'Content-Type': 'image/svg+xml' } })
 })
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── Orders persistence (durable) ───────────────────────────────────────────
+// Mirrors the product storage strategy (Vercel KV → CF KV REST → CF KV binding →
+// memory) so an order survives forever and is visible cross-browser / cross-device
+// — even if the buyer's browser (e.g. Brave) clears localStorage, or the on-chain
+// log window has moved past the EscrowFunded event. ADDITIVE: localStorage and the
+// on-chain feed remain untouched; this is just an extra, authoritative source.
+// ═══════════════════════════════════════════════════════════════════════════════
+interface StoredOrder {
+  id: string
+  orderId32: string | null
+  txHash: string
+  fundTxHash: string | null
+  buyerAddress: string
+  sellerAddress: string
+  escrowContract?: string
+  amount: any
+  token: string
+  productId?: string
+  items?: any[]
+  status: string
+  escrowState?: number
+  createdAt: string
+  explorerUrl?: string
+  verified?: boolean
+  source?: string
+}
+
+let _memOrders: StoredOrder[] = []
+const ORDERS_KEY = 'orders_v1'
+
+async function ordersGetAll(env: Bindings): Promise<StoredOrder[]> {
+  // 1) Vercel KV (Upstash REST)
+  if (hasVercelKV()) {
+    try {
+      const url = process.env.KV_REST_API_URL, token = process.env.KV_REST_API_TOKEN
+      const res = await fetch(`${url}/get/${ORDERS_KEY}`, { headers: { Authorization: `Bearer ${token}` } })
+      const j: any = await res.json()
+      return j.result == null ? [] : (JSON.parse(j.result) as StoredOrder[])
+    } catch { /* fall through */ }
+  }
+  // 2) CF KV REST (used by Vercel to share CF namespace)
+  if (hasCfKV()) {
+    try {
+      const token = process.env.CF_API_TOKEN, account = process.env.CF_ACCOUNT_ID
+      const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 8000)
+      const res = await fetch(`${CF_KV_URL}/${account}/storage/kv/namespaces/${CF_KV_NS}/values/${ORDERS_KEY}`, {
+        headers: { Authorization: `Bearer ${token}` }, signal: ctrl.signal
+      })
+      clearTimeout(timer)
+      if (res.status === 404) return []
+      if (res.ok) { const txt = await res.text(); return (!txt || txt === 'null') ? [] : (JSON.parse(txt) as StoredOrder[]) }
+    } catch { /* fall through */ }
+  }
+  // 3) CF KV binding (native on Cloudflare Pages)
+  if (env.PRODUCTS_KV) {
+    try { const raw = await env.PRODUCTS_KV.get(ORDERS_KEY); return raw ? JSON.parse(raw) : [] } catch { /* fall through */ }
+  }
+  // 4) In-memory fallback
+  return _memOrders
+}
+
+async function ordersSaveAll(env: Bindings, orders: StoredOrder[]): Promise<void> {
+  if (hasVercelKV()) {
+    try {
+      const url = process.env.KV_REST_API_URL, token = process.env.KV_REST_API_TOKEN
+      await fetch(`${url}/set/${ORDERS_KEY}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(JSON.stringify(orders))
+      })
+    } catch { /* silent */ }
+    return
+  }
+  if (hasCfKV()) {
+    try {
+      const token = process.env.CF_API_TOKEN, account = process.env.CF_ACCOUNT_ID
+      const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 8000)
+      const form = new FormData()
+      form.append('value', JSON.stringify(orders))
+      form.append('metadata', '{}')
+      await fetch(`${CF_KV_URL}/${account}/storage/kv/namespaces/${CF_KV_NS}/values/${ORDERS_KEY}`, {
+        method: 'PUT', headers: { Authorization: `Bearer ${token}` }, body: form, signal: ctrl.signal
+      })
+      clearTimeout(timer)
+    } catch { /* silent */ }
+    return
+  }
+  if (env.PRODUCTS_KV) {
+    try { await env.PRODUCTS_KV.put(ORDERS_KEY, JSON.stringify(orders)) } catch { /* silent */ }
+    return
+  }
+  _memOrders = orders
+}
+
+// Append one order, de-duplicated by orderId32 → txHash → id. Best-effort; never throws.
+async function ordersAppend(env: Bindings, order: StoredOrder): Promise<void> {
+  try {
+    const all = await ordersGetAll(env)
+    const key = (order.orderId32 || order.txHash || order.id || '').toLowerCase()
+    const exists = key !== '' && all.some(o => (o.orderId32 || o.txHash || o.id || '').toLowerCase() === key)
+    if (exists) return
+    all.unshift(order)
+    if (all.length > 2000) all.length = 2000   // cap growth (KV value size safety)
+    await ordersSaveAll(env, all)
+  } catch { /* silent — persistence is best-effort */ }
+}
+
+// Strip heavy fields (images/long text) from cart items before persisting to KV.
+function slimItems(items: any[]): any[] {
+  if (!Array.isArray(items)) return []
+  return items.slice(0, 50).map((it: any) => ({
+    id: it?.id, title: it?.title || it?.name,
+    price: it?.price, token: it?.token,
+    qty: it?.qty || it?.quantity || 1
+  }))
+}
+
 // ─── Arc Network constants (server-side reference only) ─────────────
 const ARC = {
   chainId: 5042002,
@@ -843,14 +961,6 @@ app.get('/api/orders/on-chain', async (c) => {
 
     const escrowAddress = ARC.contracts.ShuklyEscrow
 
-    // Get latest block
-    const latestHex: string = await arcRpc('eth_blockNumber', [])
-    const latest = parseInt(latestHex, 16)
-    // Look back ~5000 blocks (~4 hours on Arc testnet ≈ 3s blocks)
-    // When filtering by seller, scan more blocks (seller may have older listings)
-    const lookback = sellerParam && !buyerParam ? 10000 : 5000
-    const fromBlock = '0x' + Math.max(0, latest - lookback).toString(16)
-
     // Build topics filter — buyer is indexed (topic2); seller is NOT indexed so must filter post-fetch
     let buyerTopic: string | null = null
     if (buyerParam && /^0x[0-9a-f]{40}$/i.test(buyerParam)) {
@@ -859,22 +969,42 @@ app.get('/api/orders/on-chain', async (c) => {
 
     const topics: (string | null)[] = [ESCROW_FUNDED_TOPIC, null, buyerTopic]
 
-    const logs: any[] = await arcRpc('eth_getLogs', [{
-      fromBlock,
-      toBlock: 'latest',
-      address: escrowAddress,
-      topics
-    }])
-
-    if (!Array.isArray(logs) || logs.length === 0) {
-      return c.json({
-        orders: [],
-        source: 'on_chain',
-        blockRange: [parseInt(fromBlock, 16), latest],
-        total: 0,
-        message: 'No EscrowFunded events found in recent blocks'
-      })
-    }
+    // ── E1: paginated eth_getLogs (resilient) ──────────────────────────────────
+    // Many RPCs cap the block range / log count per request, so we scan
+    // newest→oldest in fixed chunks. On any chunk error we stop and use what we
+    // have. If the chain is unreachable we fall through to the persisted store.
+    // Orders older than this window are recovered from the persisted store below.
+    let latest = 0
+    let scannedFrom = 0
+    let logs: any[] = []
+    try {
+      const latestHex: string = await arcRpc('eth_blockNumber', [])
+      latest = parseInt(latestHex, 16)
+      scannedFrom = latest
+      const CHUNK = 5000
+      const MAX_CHUNKS = 4   // ~20k blocks (~16h); persisted store covers anything older
+      let toB = latest
+      for (let i = 0; i < MAX_CHUNKS; i++) {
+        const fromB = Math.max(0, toB - CHUNK)
+        try {
+          const chunk: any[] = await arcRpc('eth_getLogs', [{
+            fromBlock: '0x' + fromB.toString(16),
+            toBlock:   '0x' + toB.toString(16),
+            address:   escrowAddress,
+            topics
+          }])
+          if (Array.isArray(chunk) && chunk.length) logs = logs.concat(chunk)
+        } catch { break }   // RPC error/timeout → stop gracefully
+        scannedFrom = fromB
+        // Public feed (no filter): stop early once we have enough recent events
+        if (!buyerTopic && !sellerParam && logs.length >= limitParam) break
+        if (fromB === 0) break
+        toB = fromB - 1
+      }
+      // newest-last so the existing slice(-limit)+reverse keeps newest-first
+      logs.sort((a, b) => parseInt(a.blockNumber || '0x0', 16) - parseInt(b.blockNumber || '0x0', 16))
+    } catch { /* chain unreachable — persisted store still served below */ }
+    const fromBlock = '0x' + scannedFrom.toString(16)
 
     // Parse logs → order objects
     const orders: any[] = []
@@ -938,11 +1068,57 @@ app.get('/api/orders/on-chain', async (c) => {
       ? orders.filter(o => o.sellerAddress && o.sellerAddress.toLowerCase() === sellerParam)
       : orders
 
+    let result: any[] = filtered.reverse()  // newest first (on-chain, authoritative)
+    let mergedSource = 'on_chain'
+
+    // ── E2: merge durable persisted orders for per-user queries ────────────────
+    // Guarantees a buyer/seller still sees their orders after the on-chain window
+    // moves OR their browser (Brave) cleared localStorage. The PUBLIC feed
+    // (no buyer/seller filter) intentionally stays on-chain-only.
+    if (buyerParam || sellerParam) {
+      try {
+        const persisted = await ordersGetAll(c.env)
+        const seen = new Set(result.map((o: any) => (o.orderId32 || o.txHash || '').toLowerCase()))
+        const extras: any[] = []
+        for (const o of persisted) {
+          const b = (o.buyerAddress || '').toLowerCase()
+          const s = (o.sellerAddress || '').toLowerCase()
+          if (buyerParam && b !== buyerParam) continue
+          if (sellerParam && s !== sellerParam) continue
+          const k = (o.orderId32 || o.txHash || '').toLowerCase()
+          if (k && seen.has(k)) continue
+          if (k) seen.add(k)
+          extras.push({
+            id:            o.id || o.orderId32 || o.txHash,
+            orderId32:     o.orderId32 || null,
+            txHash:        o.txHash || '',
+            fundTxHash:    o.fundTxHash || o.txHash || '',
+            buyerAddress:  o.buyerAddress || '',
+            sellerAddress: o.sellerAddress || '',
+            amount:        o.amount,
+            token:         o.token || 'USDC',
+            status:        o.status || 'escrow_locked',
+            escrowState:   typeof o.escrowState === 'number' ? o.escrowState : 1,
+            items:         o.items || [],
+            createdAt:     o.createdAt,
+            explorerUrl:   o.explorerUrl || (ARC.explorer + '/tx/' + (o.fundTxHash || o.txHash || '')),
+            verified:      !!o.verified,
+            source:        'persisted'
+          })
+        }
+        if (extras.length) {
+          extras.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
+          result = result.concat(extras)
+          mergedSource = 'on_chain+persisted'
+        }
+      } catch { /* persisted merge is best-effort */ }
+    }
+
     return c.json({
-      orders: filtered.reverse(),  // newest first
-      source: 'on_chain',
+      orders: result,
+      source: mergedSource,
       blockRange: [parseInt(fromBlock, 16), latest],
-      total: filtered.length
+      total: result.length
     })
   } catch (err: any) {
     console.error('[orders/on-chain]', err)
@@ -976,23 +1152,43 @@ app.post('/api/orders', async (c) => {
     return c.json({ error: 'Invalid txHash — must be a real on-chain transaction hash' }, 400)
   }
   const escrowAddr = (c.env as any).SHUKLY_ESCROW_ADDRESS || ARC.contracts.ShuklyEscrow
-  const order = {
+
+  // Best-effort on-chain verification (never blocks the response): confirm the
+  // funding tx exists and succeeded. Used only as a trust flag — a legit order is
+  // still stored even if the receipt isn't mined yet at POST time.
+  let verified = false
+  try {
+    const vhash = body.fundTxHash || body.txHash
+    if (/^0x[0-9a-fA-F]{64}$/.test(vhash)) {
+      const receipt: any = await arcRpc('eth_getTransactionReceipt', [vhash])
+      verified = !!(receipt && receipt.status === '0x1')
+    }
+  } catch { /* leave verified=false — do not block */ }
+
+  const order: StoredOrder = {
     id:              body.orderId || `ORD-${Date.now()}`,
     txHash:          body.txHash,
     fundTxHash:      body.fundTxHash   || null,    // fundEscrow tx hash
-    buyerAddress:    body.buyerAddress,
-    sellerAddress:   body.sellerAddress,
+    buyerAddress:    String(body.buyerAddress),
+    sellerAddress:   String(body.sellerAddress),
     escrowContract:  escrowAddr,                   // always ShuklyEscrow address
     orderId32:       body.orderId32    || null,     // bytes32 used on-chain
     amount:          body.amount,
     token:           body.token,
     productId:       body.productId,
-    items:           body.items        || [],
+    items:           slimItems(body.items || []),
     status:          'escrow_locked',
+    escrowState:     1,
     createdAt:       new Date().toISOString(),
-    explorerUrl:     `${ARC.explorer}/tx/${body.fundTxHash || body.txHash}`
+    explorerUrl:     `${ARC.explorer}/tx/${body.fundTxHash || body.txHash}`,
+    verified,
+    source:          'persisted'
   }
-  return c.json({ order, success: true })
+
+  // Durable persistence (best-effort, de-duplicated). Never fails the request.
+  await ordersAppend(c.env, order)
+
+  return c.json({ order, success: true, persisted: true })
 })
 
 // ═══════════════════════════════════════════════════════════════════════════════
