@@ -1629,6 +1629,43 @@ Sitemap: ${SITE_URL}/sitemap.xml
   })
 })
 
+// ─── PWA: web app manifest (installable / app-like) ──────────────────────────
+app.get('/manifest.webmanifest', (c) => {
+  const manifest = {
+    name: 'Shukly Store',
+    short_name: 'Shukly',
+    description: 'Decentralized marketplace on Arc Network — escrow-protected Web3 commerce.',
+    start_url: '/',
+    scope: '/',
+    display: 'standalone',
+    orientation: 'portrait',
+    background_color: '#0f172a',
+    theme_color: '#dc2626',
+    icons: [
+      { src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }
+    ]
+  }
+  return c.body(JSON.stringify(manifest), 200, {
+    'Content-Type': 'application/manifest+json; charset=utf-8',
+    'Cache-Control': 'public, max-age=86400'
+  })
+})
+
+// ─── PWA / favicon: Shukly app icon (SVG, scalable) ──────────────────────────
+app.get('/icon.svg', (c) => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">'
+    + '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+    + '<stop offset="0" stop-color="#ef4444"/><stop offset="1" stop-color="#991b1b"/></linearGradient></defs>'
+    + '<rect width="512" height="512" rx="112" fill="url(#g)"/>'
+    + '<path transform="translate(106 106) scale(12.5)" d="M12 2L3 9v13h7v-7h4v7h7V9L12 2z" fill="#ffffff" opacity="0.96"/>'
+    + '<path transform="translate(106 106) scale(12.5)" d="M9 14l3-3 3 3" stroke="#991b1b" stroke-width="1.5" stroke-linecap="round" fill="none"/>'
+    + '</svg>'
+  return c.body(svg, 200, {
+    'Content-Type': 'image/svg+xml; charset=utf-8',
+    'Cache-Control': 'public, max-age=604800'
+  })
+})
+
 export default app
 
 // ─── ARC CONFIG (injected into every page for client-side use) ───────
@@ -1663,7 +1700,7 @@ function shell(title: string, body: string, extraHead = '', catNav = '', meta: a
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
   <title>${title} | Shukly Store</title>
   ${_canonicalTag}
   <!-- Open Graph Meta Tags -->
@@ -1796,6 +1833,7 @@ function shell(title: string, body: string, extraHead = '', catNav = '', meta: a
   <script src="/static/txAlerts.js" defer></script>
   <!-- SellerNotify — Seller purchase alert service (non-destructive, additive) -->
   <script src="/static/sellerNotify.js" defer></script>
+  ${mobileHead()}
 </head>
 <body>
   <!-- Testnet Banner -->
@@ -1826,8 +1864,127 @@ function shell(title: string, body: string, extraHead = '', catNav = '', meta: a
   ${chatWidget()}
   ${toastContainer()}
   ${globalScript()}
+  ${mobileBottomNav()}
 </body>
 </html>`
+}
+
+// ─── Mobile layer (additive) — PWA head + responsive CSS ───────────────
+// All visual rules are gated behind @media (max-width:768px) so desktop is
+// untouched. No markup/JS of existing pages is modified.
+function mobileHead() {
+  return `
+  <!-- PWA / app-like -->
+  <link rel="manifest" href="/manifest.webmanifest"/>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml"/>
+  <link rel="apple-touch-icon" href="/icon.svg"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="Shukly"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <style>
+    /* ===== SHUKLY MOBILE LAYER (additive; mobile-only) ===== */
+    :root { --sk-bottomnav-h: 60px; }
+
+    /* Bottom nav hidden by default → desktop never shows it */
+    #sk-bottom-nav { display: none; }
+
+    @media (max-width: 768px) {
+      html { scroll-behavior: smooth; }
+      body { -webkit-text-size-adjust: 100%; }
+
+      /* Reserve space so the fixed bottom nav never hides content */
+      body { padding-bottom: calc(var(--sk-bottomnav-h) + env(safe-area-inset-bottom, 0px)) !important; }
+
+      /* Respect top safe-area on notched phones */
+      #testnet-banner { padding-top: calc(8px + env(safe-area-inset-top, 0px)); font-size: 12px; }
+
+      /* Bigger touch targets */
+      .btn-primary, .btn-secondary { min-height: 46px; padding: 12px 18px; font-size: 15px; }
+      a, button { -webkit-tap-highlight-color: rgba(220,38,38,.15); }
+
+      /* Smoother card feel + render perf */
+      .product-card, .card { content-visibility: auto; }
+      .product-card { border-radius: 14px; }
+
+      /* Hide the home "Trust Bar" on mobile (kept on desktop & in markup) */
+      .home-trust-bar { display: none !important; }
+
+      /* Keep other fixed-bottom UI above the bottom nav */
+      #sn-footer-alert { bottom: calc(var(--sk-bottomnav-h) + env(safe-area-inset-bottom,0px) + 12px) !important; }
+      #chat-panel, .chat-panel, #chat-fab, .chat-fab { bottom: calc(var(--sk-bottomnav-h) + env(safe-area-inset-bottom,0px) + 14px) !important; }
+
+      /* ===== Bottom navigation ===== */
+      #sk-bottom-nav {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        position: fixed; left: 0; right: 0; bottom: 0; z-index: 1200;
+        background: rgba(255,255,255,.98);
+        backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+        border-top: 1px solid #f1f5f9;
+        box-shadow: 0 -2px 16px rgba(0,0,0,.07);
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+        height: calc(var(--sk-bottomnav-h) + env(safe-area-inset-bottom, 0px));
+      }
+      #sk-bottom-nav a {
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 3px; text-decoration: none; color: #94a3b8; font-size: 10px; font-weight: 600;
+        height: var(--sk-bottomnav-h); position: relative;
+        transition: color .15s ease, transform .12s ease;
+      }
+      #sk-bottom-nav a i { font-size: 18px; line-height: 1; }
+      #sk-bottom-nav a.sk-active { color: #dc2626; }
+      #sk-bottom-nav a.sk-active i { transform: translateY(-1px); }
+      #sk-bottom-nav a:active { transform: scale(.9); }
+      #sk-bottom-nav .sk-badge {
+        position: absolute; top: 5px; left: 50%; margin-left: 4px;
+        min-width: 16px; height: 16px; padding: 0 4px; border-radius: 9999px;
+        background: #dc2626; color: #fff; font-size: 9px; font-weight: 800;
+        display: none; align-items: center; justify-content: center; line-height: 1;
+        box-shadow: 0 0 0 2px #fff;
+      }
+    }
+
+    @media (display-mode: standalone) {
+      /* Slightly more top room when launched as an installed app */
+      #testnet-banner { padding-top: calc(8px + env(safe-area-inset-top, 0px)); }
+    }
+  </style>`
+}
+
+// Fixed bottom navigation (rendered on every page; shown only on mobile via CSS)
+function mobileBottomNav() {
+  return `
+  <nav id="sk-bottom-nav" aria-label="Mobile navigation">
+    <a href="/" data-route="/"><i class="fas fa-home"></i><span>Home</span></a>
+    <a href="/marketplace" data-route="/marketplace"><i class="fas fa-search"></i><span>Buscar</span></a>
+    <a href="/cart" data-route="/cart"><i class="fas fa-shopping-cart"></i><span id="sk-cart-badge" class="sk-badge">0</span><span>Carrinho</span></a>
+    <a href="/orders" data-route="/orders"><i class="fas fa-receipt"></i><span>Pedidos</span></a>
+    <a href="/profile" data-route="/profile"><i class="fas fa-user"></i><span>Perfil</span></a>
+  </nav>
+  <script>
+  (function(){
+    try {
+      var path = location.pathname.replace(/\\/+$/, '') || '/';
+      document.querySelectorAll('#sk-bottom-nav a').forEach(function(a){
+        var r = a.getAttribute('data-route');
+        var active = (r === '/') ? (path === '/') : (path === r || path.indexOf(r + '/') === 0);
+        if (active) a.classList.add('sk-active');
+      });
+      function syncCart(){
+        try {
+          var items = JSON.parse(localStorage.getItem('cart') || '[]') || [];
+          var n = items.reduce(function(s,i){ return s + (i.qty || i.quantity || 1); }, 0);
+          var b = document.getElementById('sk-cart-badge');
+          if (b) { if (n > 0) { b.textContent = n > 99 ? '99+' : String(n); b.style.display = 'flex'; } else { b.style.display = 'none'; } }
+        } catch(e){}
+      }
+      syncCart();
+      window.addEventListener('storage', syncCart);
+      document.addEventListener('DOMContentLoaded', syncCart);
+    } catch(e){}
+  })();
+  </script>`
 }
 
 // ─── Global Script (Arc wallet + balance logic) ───────────────────────
@@ -9571,17 +9728,59 @@ function notificationsPage() {
     </div>
   </div>
   <script>
-  document.addEventListener('DOMContentLoaded', () => {
+  document.addEventListener('DOMContentLoaded', async () => {
     const w=getStoredWallet();
     const container=document.getElementById('notif-list');
     const sellerSection=document.getElementById('seller-notif-section');
     const orders=JSON.parse(localStorage.getItem('rh_orders')||'[]');
     const notifs=[];
 
-    // ── Seller purchase notifications (via SellerNotify module) ──────────────
+    // ── Seller purchase notifications (via SellerNotify module) — same-browser instant ──
     if(typeof SellerNotify !== 'undefined') {
       SellerNotify.markAllRead();   // opening the page marks all as read
       SellerNotify.renderList(sellerSection, w ? w.address : null);
+    }
+
+    // ── G2: server-backed seller SALES (cross-device) ────────────────────────
+    // A seller on ANY device/browser (same wallet) sees the orders for products
+    // they sold — fetched from the durable server store, not just localStorage.
+    if (w && w.address) {
+      try {
+        const shownIds = new Set(Array.from(sellerSection.querySelectorAll('a[href^="/orders/"]'))
+          .map(a => decodeURIComponent((a.getAttribute('href')||'').replace('/orders/','')).toLowerCase()));
+        const fetchJSON = async (url, ms) => {
+          const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), ms);
+          try { const r = await fetch(url, { signal: ctrl.signal }); clearTimeout(t); return r.ok ? await r.json() : null; }
+          catch(e){ clearTimeout(t); return null; }
+        };
+        let sales = [];
+        const a1 = await fetchJSON('/api/orders?seller=' + encodeURIComponent(w.address), 6000);
+        if (a1 && a1.orders) sales = a1.orders;
+        if (!sales.length) {
+          const a2 = await fetchJSON('/api/orders/on-chain?seller=' + encodeURIComponent(w.address) + '&limit=50', 9000);
+          if (a2 && a2.orders) sales = a2.orders;
+        }
+        const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        const html = (sales||[]).filter(o => {
+          const oid = String(o.id||o.orderId32||o.txHash||'').toLowerCase();
+          return oid && !shownIds.has(oid);
+        }).map(o => {
+          const oid = o.id||o.orderId32||o.txHash;
+          const name = (o.items && o.items[0] && (o.items[0].title||o.items[0].name)) || 'Product';
+          const amt = parseFloat(o.amount||0).toFixed(2);
+          const tok = o.token||'USDC';
+          const h = o.fundTxHash||o.txHash||'';
+          const shortH = h ? (h.slice(0,8)+'…'+h.slice(-6)) : '';
+          const time = o.createdAt ? new Date(o.createdAt).toLocaleString() : '';
+          return '<a href="/orders/'+encodeURIComponent(oid)+'" class="sn-notif-item notification-item" style="text-decoration:none;">'
+            +'<div class="sn-ni-icon"><i class="fas fa-shopping-bag"></i></div>'
+            +'<div class="sn-ni-content"><div class="sn-ni-title">🛒 New purchase received</div>'
+            +'<div class="sn-ni-msg"><strong>'+esc(name)+'</strong> &nbsp;·&nbsp; <strong style="color:#16a34a;">'+amt+' '+tok+'</strong>'
+            +(shortH ? ' &nbsp;·&nbsp; <span style="font-family:monospace;font-size:11px;color:#2563eb;">'+shortH+'</span>' : '')
+            +'</div><div class="sn-ni-time">'+time+'</div></div></a>';
+        }).join('');
+        if (html) sellerSection.insertAdjacentHTML('beforeend', html);
+      } catch(e) { /* server sales are additive — ignore failures */ }
     }
 
     // ── Buyer order-status notifications (existing logic, unchanged) ──────────
