@@ -16,6 +16,8 @@
   const ARC_CHAIN_HEX     = '0x4CE2D2';
   const ARC_RPC           = 'https://rpc.testnet.arc.network';
   const ARC_RPC_ALT       = 'https://rpc.blockdaemon.testnet.arc.network';
+  const ARC_RPC_DRPC      = 'https://arc-testnet.drpc.org';
+  const ARC_RPC_DRPC_WS   = 'wss://arc-testnet.drpc.org';
   const ARC_EXPLORER      = 'https://testnet.arcscan.app';
   const USDC_ADDRESS      = '0x3600000000000000000000000000000000000000';
   const EURC_ADDRESS      = '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a';
@@ -89,13 +91,19 @@
       return p;
     }
 
-    // Fall back to RPC provider (try primary then alt)
+    // Fall back to RPC provider (try primary → alt → drpc)
     try {
       const p = new ethers.JsonRpcProvider(ARC_RPC);
-      await p.getBlockNumber(); // quick liveness check
+      await p.getBlockNumber();
       return p;
     } catch (_) {
-      return new ethers.JsonRpcProvider(ARC_RPC_ALT);
+      try {
+        const p = new ethers.JsonRpcProvider(ARC_RPC_ALT);
+        await p.getBlockNumber();
+        return p;
+      } catch (_2) {
+        return new ethers.JsonRpcProvider(ARC_RPC_DRPC);
+      }
     }
   }
 
@@ -111,7 +119,18 @@
 
     if ((wallet.type === 'internal' || wallet.type === 'imported') &&
         wallet.privateKey && !wallet.privateKey.startsWith('[')) {
-      const provider = new ethers.JsonRpcProvider(ARC_RPC);
+      let provider;
+      try {
+        provider = new ethers.JsonRpcProvider(ARC_RPC);
+        await provider.getBlockNumber();
+      } catch (_) {
+        try {
+          provider = new ethers.JsonRpcProvider(ARC_RPC_ALT);
+          await provider.getBlockNumber();
+        } catch (_2) {
+          provider = new ethers.JsonRpcProvider(ARC_RPC_DRPC);
+        }
+      }
       return new ethers.Wallet(wallet.privateKey, provider);
     }
 
@@ -148,7 +167,7 @@
               chainId:           ARC_CHAIN_HEX,
               chainName:         'Arc Testnet',
               nativeCurrency:    { name: 'USDC', symbol: 'USDC', decimals: 6 },
-              rpcUrls:           [ARC_RPC, ARC_RPC_ALT],
+              rpcUrls:           [ARC_RPC, ARC_RPC_ALT, ARC_RPC_DRPC],
               blockExplorerUrls: [ARC_EXPLORER],
             }],
           });
@@ -278,7 +297,7 @@
 
         if (allowance < amountWei) {
           try {
-            const approveTx = await erc20.approve(escrowAddr, ethers.MaxUint256);
+            const approveTx = await erc20.approve(escrowAddr, ethers.MaxUint256, { gasLimit: 100000 });
             status('approve', `Approve tx sent: ${approveTx.hash.slice(0, 14)}… Waiting…`);
             approveTxHash = approveTx.hash;
             const approveReceipt = await approveTx.wait(1);
@@ -379,7 +398,18 @@
         const escrowAddr = getEscrowAddr();
         if (!escrowAddr) return { exists: false, state: 0 };
 
-        const provider = new ethers.JsonRpcProvider(ARC_RPC);
+        let provider;
+        try {
+          provider = new ethers.JsonRpcProvider(ARC_RPC);
+          await provider.getBlockNumber();
+        } catch (_) {
+          try {
+            provider = new ethers.JsonRpcProvider(ARC_RPC_ALT);
+            await provider.getBlockNumber();
+          } catch (_2) {
+            provider = new ethers.JsonRpcProvider(ARC_RPC_DRPC);
+          }
+        }
         const escrow   = new ethers.Contract(escrowAddr, ESCROW_ABI, provider);
         const orderId32 = ethers.id(orderId);
 
@@ -440,7 +470,18 @@
     async getBalance(walletAddress, token = 'USDC') {
       try {
         const tokenAddr = token === 'EURC' ? EURC_ADDRESS : USDC_ADDRESS;
-        const provider  = new ethers.JsonRpcProvider(ARC_RPC);
+        let provider;
+        try {
+          provider = new ethers.JsonRpcProvider(ARC_RPC);
+          await provider.getBlockNumber();
+        } catch (_) {
+          try {
+            provider = new ethers.JsonRpcProvider(ARC_RPC_ALT);
+            await provider.getBlockNumber();
+          } catch (_2) {
+            provider = new ethers.JsonRpcProvider(ARC_RPC_DRPC);
+          }
+        }
         const erc20     = new ethers.Contract(tokenAddr, ERC20_ABI, provider);
         const raw       = await erc20.balanceOf(walletAddress);
         return { ok: true, balance: fromWei(raw), raw };
@@ -461,6 +502,9 @@
         chainHex:   ARC_CHAIN_HEX,
         name:       'Arc Testnet',
         rpc:        ARC_RPC,
+        rpcAlt:     ARC_RPC_ALT,
+        rpcDrpc:    ARC_RPC_DRPC,
+        rpcDrpcWs:  ARC_RPC_DRPC_WS,
         explorer:   ARC_EXPLORER,
         faucet:     FAUCET_URL,
         usdc:       USDC_ADDRESS,

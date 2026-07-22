@@ -48,7 +48,7 @@ app.use('*', async (c, next) => {
     "style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://fonts.googleapis.com",
     "font-src 'self' data: https://cdn.jsdelivr.net https://fonts.gstatic.com",
     "img-src 'self' data: blob: https: ipfs: https://ipfs.io https://cloudflare-ipfs.com https://gateway.pinata.cloud https://www.genspark.ai",
-    "connect-src 'self' https://rpc.testnet.arc.network https://rpc.blockdaemon.testnet.arc.network https://api.circle.com https://testnet.arcscan.app https://faucet.circle.com https://ipfs.io wss:",
+    "connect-src 'self' https://rpc.testnet.arc.network https://rpc.blockdaemon.testnet.arc.network https://arc-testnet.drpc.org https://api.circle.com https://testnet.arcscan.app https://faucet.circle.com https://ipfs.io wss://arc-testnet.drpc.org wss:",
     "frame-src https://www.youtube-nocookie.com https://www.youtube.com",
     "object-src 'none'",
     "base-uri 'self'",
@@ -592,6 +592,8 @@ const ARC = {
   chainIdHex: '0x4CE2D2',
   rpc: 'https://rpc.testnet.arc.network',
   rpcAlt: 'https://rpc.blockdaemon.testnet.arc.network',
+  rpcDrpc: 'https://arc-testnet.drpc.org',
+  rpcDrpcWs: 'wss://arc-testnet.drpc.org',
   explorer: 'https://testnet.arcscan.app',
   faucet: 'https://faucet.circle.com',
   networkName: 'Arc Testnet',
@@ -1674,6 +1676,8 @@ const ARC_CLIENT_CONFIG = JSON.stringify({
   chainIdHex: ARC.chainIdHex,
   rpc: ARC.rpc,
   rpcAlt: ARC.rpcAlt,
+  rpcDrpc: ARC.rpcDrpc,
+  rpcDrpcWs: ARC.rpcDrpcWs,
   explorer: ARC.explorer,
   faucet: ARC.faucet,
   networkName: ARC.networkName,
@@ -2034,7 +2038,7 @@ if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout !== 'functi
 // ══════════════════════════════════════════════════════════════
 //  ARC NETWORK — Real wallet integration
 //  Chain ID: 5042002 (Arc Testnet)
-//  RPC: https://rpc.testnet.arc.network
+//  RPC: https://rpc.testnet.arc.network | https://arc-testnet.drpc.org
 //  USDC: 0x3600000000000000000000000000000000000000 (6 dec)
 //  EURC: 0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a (6 dec)
 // ══════════════════════════════════════════════════════════════
@@ -2042,6 +2046,8 @@ if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout !== 'functi
 const ARC_CHAIN_ID = window.ARC.chainId;
 const ARC_CHAIN_ID_HEX = window.ARC.chainIdHex;
 const ARC_RPC = window.ARC.rpc;
+const ARC_RPC_ALT = window.ARC.rpcAlt;
+const ARC_RPC_DRPC = window.ARC.rpcDrpc || 'https://arc-testnet.drpc.org';
 const ARC_EXPLORER = window.ARC.explorer;
 const USDC_ADDRESS = window.ARC.contracts.USDC;
 const EURC_ADDRESS = window.ARC.contracts.EURC;
@@ -2375,7 +2381,7 @@ async function switchToArc() {
             chainId: ARC_CHAIN_ID_HEX,
             chainName: 'Arc Testnet',
             nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 6 },
-            rpcUrls: [ARC_RPC, 'https://rpc.blockdaemon.testnet.arc.network'],
+            rpcUrls: [ARC_RPC, 'https://rpc.blockdaemon.testnet.arc.network', ARC_RPC_DRPC],
             blockExplorerUrls: [ARC_EXPLORER]
           }]
         });
@@ -2398,7 +2404,18 @@ async function isOnArcNetwork() {
 async function fetchArcBalances(address) {
   if (!address) return { usdc: '0.00', eurc: '0.00', raw: { usdc: 0n, eurc: 0n } };
   try {
-    const provider = new ethers.JsonRpcProvider(ARC_RPC);
+    let provider;
+    try {
+      provider = new ethers.JsonRpcProvider(ARC_RPC);
+      await provider.getBlockNumber();
+    } catch (_) {
+      try {
+        provider = new ethers.JsonRpcProvider(ARC_RPC_ALT);
+        await provider.getBlockNumber();
+      } catch (_2) {
+        provider = new ethers.JsonRpcProvider(ARC_RPC_DRPC);
+      }
+    }
 
     // USDC: Arc native (also ERC-20 with 6 decimals)
     let usdcRaw = 0n;
